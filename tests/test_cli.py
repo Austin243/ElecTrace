@@ -292,19 +292,23 @@ def test_inspect_malformed_analysis_returns_json_error(tmp_path: Path) -> None:
     assert payload["error"]["message"] == "analysis frames must be an array"
 
 
-def test_inspect_deeply_nested_analysis_returns_json_error(tmp_path: Path) -> None:
+def test_inspect_json_recursion_failure_returns_json_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     analysis = tmp_path / "analysis.json"
-    nested = "[" * 1_200 + "0" + "]" * 1_200
-    analysis.write_text(
-        '{"project":' + nested + ',"frames":[],"tracks":[],"events":[],"warnings":[]}',
-        encoding="utf-8",
-    )
+    analysis.write_text("{}", encoding="utf-8")
+    original_loads = json.loads
+
+    def fail_recursively(_document: str) -> object:
+        raise RecursionError("simulated JSON nesting limit")
+
+    monkeypatch.setattr("electrace.cli.json.loads", fail_recursively)
 
     result = runner.invoke(app, ["inspect", str(analysis), "--json"])
 
     assert result.exit_code == 2
     assert result.stderr == ""
-    payload = json.loads(result.stdout)
+    payload = original_loads(result.stdout)
     assert payload["command"] == "inspect"
     assert payload["error"]["code"] == "invalid_input"
     assert payload["error"]["message"].startswith(f"Cannot read {analysis}:")
