@@ -1,0 +1,4 @@
+interface:
+  display_name: "ElecTrace"
+  short_description: "Track electronic evidence across VASP paths"
+  default_prompt: "Use $electrace to track Bader, ELF/QTAIM, or LOBSTER evidence across an ordered VASP path."

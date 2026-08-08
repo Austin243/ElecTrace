@@ -101,8 +101,8 @@ same path analysis.
 
 ## Learn more
 
-See the [quick start](docs/quickstart.md), [workflow guide](docs/workflows.md), and
-[scientific scope](docs/scientific-scope.md) for detailed configuration and supported
-data formats.
+See the [quick start](docs/quickstart.md), [workflow guide](docs/workflows.md),
+[coding-agent guide](docs/agents.md), and [scientific scope](docs/scientific-scope.md)
+for detailed configuration and supported data formats.
 
 ElecTrace is available under the [BSD 3-Clause License](LICENSE).

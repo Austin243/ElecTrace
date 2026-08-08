@@ -10,13 +10,15 @@ capabilities from planned or scientifically unvalidated work.
    an ordered VASP path.
 2. [External calculation workflows](workflows.md) — stage, explicitly execute or
    submit, collect, and analyze a VASP→descriptor workflow.
-3. [Scientific scope and limitations](scientific-scope.md) — understand what a
+3. [Coding agents](agents.md) — install the ElecTrace skill and use the CLI through a
+   compact, approval-aware agent workflow.
+4. [Scientific scope and limitations](scientific-scope.md) — understand what a
    ElecTrace event does and does not mean.
-4. [Synthetic benchmark](benchmarking.md) — run and interpret the versioned offline
+5. [Synthetic benchmark](benchmarking.md) — run and interpret the versioned offline
    regression cases without mistaking them for physical validation.
-5. [Reproducibility](reproducibility.md) — preserve enough information to audit and
+6. [Reproducibility](reproducibility.md) — preserve enough information to audit and
    repeat an analysis.
-6. [Pre-release namespace migration](migration.md) — update development environments,
+7. [Pre-release namespace migration](migration.md) — update development environments,
    scripts, configurations, and serialized artifacts for `0.1.0a2`.
 
 ## Design and integration

@@ -35,6 +35,7 @@ jobs:
             .github/**/*.md
             docs/*.md
             docs/**/*.md
+            skills/**/*.md
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
