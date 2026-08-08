@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: >-
+  If you use ElecTrace in research, cite the archived software release
+  and the external electronic-structure tools used in your workflow.
+title: "ElecTrace: time-resolved electronic-topology tracking"
+type: software
+authors:
+  - family-names: Ellis
+    given-names: Austin
+version: 0.1.0a3
+license: BSD-3-Clause
+abstract: >-
+  ElecTrace is a research-software framework for tracking electronic-topology
+  evidence across ordered periodic structures, with an initial focus on VASP NEB
+  images and static pressure series.
+keywords:
+  - electronic structure
+  - chemical bonding
+  - QTAIM
+  - electron localization function
+  - Bader charge
+  - nudged elastic band
+  - periodic systems
+repository-code: "https://github.com/Austin243/ElecTrace"

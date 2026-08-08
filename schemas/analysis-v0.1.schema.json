@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Austin243/ElecTrace/schemas/analysis-v0.1.schema.json",
+  "title": "ElecTrace analysis",
+  "type": "object",
+  "required": ["schema_version", "project", "frames", "transitions", "events", "tracks"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "software_version": {"type": "string"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "project": {"type": "object", "additionalProperties": true},
+    "configuration": {"type": "object", "additionalProperties": true},
+    "provenance": {"type": "object", "additionalProperties": true},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "frames": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "transitions": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "type",
+          "start_frame",
+          "confidence",
+          "confidence_label",
+          "persistence",
+          "persistence_status",
+          "persistent"
+        ],
+        "properties": {
+          "event_id": {"type": "string"},
+          "type": {"type": "string"},
+          "start_frame": {"type": "integer", "minimum": 0},
+          "end_frame": {"type": ["integer", "null"], "minimum": 0},
+          "source_ids": {"type": "array", "items": {"type": "string"}},
+          "target_ids": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "confidence_label": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "Deterministic configured-threshold label; not a calibrated probability."
+          },
+          "persistence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of observable frames supporting the event state."
+          },
+          "persistence_status": {
+            "type": "string",
+            "enum": ["transient", "confirmed", "right_censored", "unknown"],
+            "description": "Deterministic persistence classification under configured settings."
+          },
+          "persistent": {
+            "type": "boolean",
+            "description": "True only when persistence_status is confirmed."
+          },
+          "description": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "tracks": {"type": "array", "items": {"type": "object", "additionalProperties": true}}
+  },
+  "additionalProperties": true
+}

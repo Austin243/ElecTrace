@@ -1,0 +1,55 @@
+name: Bug report
+description: Report reproducible incorrect software behavior.
+title: "[Bug]: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not include credentials, licensed files, unpublished structures, or security
+        vulnerabilities. Follow SECURITY.md for sensitive reports.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include exact commands and the smallest redistributable input layout.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ElecTrace version or commit
+      placeholder: electrace --version / git rev-parse HEAD
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and doctor output
+      description: OS, Python version, installation method, and redacted `electrace doctor` output.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact usernames, private paths, hostnames, tokens, and scientific data.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data and security confirmation
+      options:
+        - label: I removed secrets and data I am not authorized to disclose.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

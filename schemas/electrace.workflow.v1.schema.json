@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Austin243/ElecTrace/schemas/electrace.workflow.v1.schema.json",
+  "title": "ElecTrace external workflow manifest",
+  "description": "A versioned, shell-free plan for selecting periodic frames and ordering external scientific-tool steps.",
+  "$comment": "WorkflowManifest additionally enforces unique step ids, executable references, dependency references, acyclic dependencies, and dependencies that name earlier steps. Those cross-record constraints are not expressible in portable JSON Schema draft 2020-12.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "frames",
+    "executables",
+    "scheduler",
+    "steps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "electrace.workflow.v1"
+    },
+    "project": {
+      "$ref": "#/$defs/project"
+    },
+    "frames": {
+      "description": "Canonical zero-based frame indices: 'all', an explicit index, a Python-style slice, or a comma-separated mixture.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/trimmedString"
+        },
+        {
+          "oneOf": [
+            {
+              "const": "all"
+            },
+            {
+              "pattern": "^(?:(?:\\+?[0-9]+|-0+)|(?:(?:[+-]?[0-9]+)?\\s*:\\s*(?:[+-]?[0-9]+)?(?:\\s*:\\s*(?:[+-]?[0-9]+)?)?))(?:\\s*,\\s*(?:(?:\\+?[0-9]+|-0+)|(?:(?:[+-]?[0-9]+)?\\s*:\\s*(?:[+-]?[0-9]+)?(?:\\s*:\\s*(?:[+-]?[0-9]+)?)?)))*$"
+            }
+          ]
+        },
+        {
+          "not": {
+            "pattern": "(?:^|,)\\s*(?:[+-]?[0-9]+)?\\s*:\\s*(?:[+-]?[0-9]+)?\\s*:\\s*[+-]?0+\\s*(?:,|$)"
+          }
+        }
+      ]
+    },
+    "executables": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/identifier"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/executable"
+      }
+    },
+    "scheduler": {
+      "$ref": "#/$defs/scheduler"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "controlFreeString": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])[\\s\\S]*$"
+    },
+    "trimmedString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])(?!\\s)(?:[\\s\\S]*\\S)?$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "basename": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/trimmedString"
+        },
+        {
+          "pattern": "^[^/\\\\]+$"
+        },
+        {
+          "not": {
+            "enum": [
+              ".",
+              ".."
+            ]
+          }
+        }
+      ]
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "root",
+        "series_kind",
+        "workspace",
+        "structure",
+        "fallback"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/trimmedString"
+        },
+        "series_kind": {
+          "enum": [
+            "auto",
+            "neb",
+            "ordered",
+            "pressure",
+            "static"
+          ]
+        },
+        "workspace": {
+          "$ref": "#/$defs/trimmedString"
+        },
+        "structure": {
+          "$ref": "#/$defs/basename"
+        },
+        "fallback": {
+          "$ref": "#/$defs/basename"
+        }
+      },
+      "additionalProperties": false
+    },
+    "executable": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/trimmedString"
+        },
+        "argv_prefix": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trimmedString"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "jsonScalar": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/controlFreeString"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "jsonValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/jsonScalar"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/jsonObject"
+        }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/controlFreeString"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/jsonValue"
+      }
+    },
+    "schedulerDirectiveName": {
+      "allOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        {
+          "not": {
+            "enum": [
+              "command",
+              "job-name",
+              "script",
+              "wrap"
+            ]
+          }
+        }
+      ]
+    },
+    "schedulerDirectiveValue": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_./,:@%+=\\[\\]*?{}~-]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "scheduler": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "local",
+            "slurm"
+          ]
+        },
+        "directives": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/schedulerDirectiveName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/schedulerDirectiveValue"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "local"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "directives": {
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "executable"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "bader",
+            "baderkit",
+            "critic2",
+            "lobster",
+            "vasp"
+          ]
+        },
+        "executable": {
+          "$ref": "#/$defs/identifier"
+        },
+        "capability": {
+          "$ref": "#/$defs/capability"
+        },
+        "template_dir": {
+          "$ref": "#/$defs/trimmedString"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "options": {
+          "$ref": "#/$defs/jsonObject"
+        },
+        "resources": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

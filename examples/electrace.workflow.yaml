@@ -1,0 +1,102 @@
+# Public, non-proprietary workflow example. It names conventional VASP files but
+# contains no pseudopotential, executable, or scientific input data.
+schema_version: electrace.workflow.v1
+
+project:
+  root: ./vasp-neb
+  series_kind: neb
+  workspace: ./.electrace-work
+  structure: CONTCAR
+  fallback: POSCAR
+
+# Canonical frame indices: endpoint 0 plus every other interior image through 6.
+frames: "0,2:7:2"
+
+# Executables are explicit argument vectors. Resolve these names through the
+# authorized environment; ElecTrace neither installs nor licenses the programs.
+executables:
+  vasp:
+    path: vasp_std
+    argv_prefix:
+      - srun
+  baderkit:
+    path: baderkit
+  lobster:
+    path: lobster
+
+# Active Slurm example. In particular, `exclude` can keep work off reserved nodes.
+scheduler:
+  kind: slurm
+  directives:
+    partition: compute
+    time: "00:30:00"
+    nodes: 1
+    ntasks: 1
+    cpus-per-task: 8
+    exclude: "node[1-8]"
+
+# For explicit local execution instead, replace the scheduler block above with:
+# scheduler:
+#   kind: local
+#   directives: {}
+
+steps:
+  - id: vasp
+    kind: vasp
+    executable: vasp
+    template_dir: templates/vasp
+    options:
+      required_inputs:
+        - INCAR
+        - KPOINTS
+        - POSCAR
+        - POTCAR
+      expected_outputs:
+        - CHGCAR
+        - ELFCAR
+        - WAVECAR
+        - CONTCAR
+      # These are necessary outputs, not a substitute for convergence review.
+      # The template must also use congruent CHGCAR/ELFCAR FFT grids, and the
+      # LOBSTER branch needs a scientifically chosen NBANDS and k-point mesh.
+      incar_overrides:
+        LELF: true
+        LCHARG: true
+        LWAVE: true
+        NSW: 0
+        ISYM: -1
+    resources:
+      cpus: 8
+      memory_gb: 32
+
+  # BadELF is planned through BaderKit after the density and ELF grids exist.
+  - id: badelf
+    kind: baderkit
+    executable: baderkit
+    capability: elf_basins
+    depends_on:
+      - vasp
+    options:
+      charge_file: CHGCAR
+      elf_file: ELFCAR
+    resources:
+      cpus: 4
+      memory_gb: 8
+
+  # LOBSTER branches from the same VASP step. POTCAR is referenced by filename
+  # only and must be supplied under its own license; it is not redistributed.
+  - id: lobster
+    kind: lobster
+    executable: lobster
+    capability: cohp
+    template_dir: templates/lobster
+    depends_on:
+      - vasp
+    options:
+      input_file: lobsterin
+      wavecar: WAVECAR
+      structure_file: POSCAR
+      potcar: POTCAR
+    resources:
+      cpus: 8
+      memory_gb: 16

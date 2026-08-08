@@ -1,0 +1,59 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: Markdown and schema checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@v24.2.0
+        with:
+          config: .github/markdownlint.jsonc
+          globs: |
+            README.md
+            CHANGELOG.md
+            CODE_OF_CONDUCT.md
+            CONTRIBUTING.md
+            SECURITY.md
+            .github/**/*.md
+            docs/*.md
+            docs/**/*.md
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install documentation dependencies
+        run: python -m pip install -e ".[docs]"
+      - name: Build documentation
+        run: mkdocs build --strict
+      - name: Validate feature schema example
+        run: |
+          python -m json.tool schemas/electrace.features.v1.schema.json > /dev/null
+          python -m json.tool docs/examples/electrace.features.v1.example.json > /dev/null
+          python -c 'import json; from jsonschema import Draft202012Validator as V; s=json.load(open("schemas/electrace.features.v1.schema.json")); d=json.load(open("docs/examples/electrace.features.v1.example.json")); V.check_schema(s); V(s).validate(d)'
+      - name: Generate and validate demo analysis
+        run: |
+          electrace demo --output .ci-demo
+          python -m json.tool .ci-demo/electrace-results/analysis.json > /dev/null
+          python -c 'import json; from jsonschema import Draft202012Validator as V; s=json.load(open("schemas/analysis-v0.1.schema.json")); d=json.load(open(".ci-demo/electrace-results/analysis.json")); V.check_schema(s); V(s).validate(d)'
+      - name: Generate and validate synthetic benchmark
+        run: |
+          electrace benchmark --output .ci-benchmark.json
+          python -m json.tool .ci-benchmark.json > /dev/null
+          python -c 'import json; from jsonschema import Draft202012Validator as V; s=json.load(open("schemas/benchmark-v0.1.schema.json")); d=json.load(open(".ci-benchmark.json")); V.check_schema(s); V(s).validate(d)'

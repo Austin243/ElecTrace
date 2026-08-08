@@ -1,0 +1,36 @@
+site_name: ElecTrace
+site_description: Persistent electronic topology across periodic structure sequences
+site_url: https://Austin243.github.io/ElecTrace/
+repo_url: https://github.com/Austin243/ElecTrace
+repo_name: Austin243/ElecTrace
+strict: true
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+  palette:
+    scheme: slate
+    primary: teal
+    accent: cyan
+nav:
+  - Overview: index.md
+  - Quickstart: quickstart.md
+  - External workflows: workflows.md
+  - Scientific scope: scientific-scope.md
+  - Architecture: architecture.md
+  - Integration:
+      - Plugin protocol v1: spec/plugin-protocol-v1.md
+  - Synthetic benchmark: benchmarking.md
+  - Reproducibility: reproducibility.md
+  - Pre-release migration: migration.md
+  - Roadmap: roadmap.md
+  - Governance: governance.md
+  - Sources: sources.md
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true

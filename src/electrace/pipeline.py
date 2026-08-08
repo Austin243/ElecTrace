@@ -1,0 +1,587 @@
+"""End-to-end ElecTrace analysis orchestration."""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
+
+import numpy as np
+
+from electrace import __version__
+from electrace._files import atomic_write_text
+from electrace.config import ElecTraceConfig, load_config
+from electrace.events import EventDetectionConfig, track_sequence
+from electrace.export import (
+    write_events_csv,
+    write_hdf5,
+    write_json,
+    write_tracks_csv,
+)
+from electrace.io import load_sequence
+from electrace.matching import AtomMatchConfig, FeatureMatchConfig
+from electrace.models import Feature, Frame, MatchRelation, Sequence, TrackingResult
+from electrace.provenance import environment_record, fingerprint_files, sha256_file
+from electrace.report import render_html_report
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisArtifacts:
+    """A completed in-memory analysis and its written products."""
+
+    analysis: dict[str, Any]
+    output_directory: Path
+    files: tuple[Path, ...]
+
+
+def _resolve(base: Path, value: str | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+
+def _matching_configs(config: ElecTraceConfig) -> tuple[AtomMatchConfig, FeatureMatchConfig]:
+    settings = config.matching
+    atom = AtomMatchConfig(
+        max_distance=settings.max_atom_displacement,
+        ambiguity_tolerance=settings.ambiguity_tolerance,
+    )
+    feature = FeatureMatchConfig(
+        max_distance=settings.max_feature_displacement,
+        max_cost=settings.match_threshold,
+        distance_weight=settings.position_weight,
+        charge_weight=settings.charge_weight,
+        volume_weight=settings.volume_weight,
+        neighbor_weight=settings.neighbor_weight,
+        voxel_weight=settings.overlap_weight,
+        descriptor_weight=settings.descriptor_weight,
+        descriptor_scales=settings.descriptor_scales,
+        ambiguity_tolerance=settings.ambiguity_tolerance,
+        conservation_tolerance=settings.conservation_tolerance,
+        min_split_merge_confidence=settings.split_merge_threshold,
+    )
+    return atom, feature
+
+
+def _event_config(config: ElecTraceConfig) -> EventDetectionConfig:
+    settings = config.events
+    return EventDetectionConfig(
+        charge_change_threshold=settings.charge_change_threshold,
+        volume_relative_threshold=settings.volume_change_fraction,
+        descriptor_thresholds=settings.descriptor_thresholds,
+        min_event_confidence=settings.minimum_event_confidence,
+        min_persistence=settings.minimum_persistence,
+        hysteresis_frames=settings.hysteresis_frames,
+        include_transient=True,
+    )
+
+
+def _cell_volume(frame: Frame) -> float:
+    return abs(float(np.linalg.det(np.asarray(frame.cell, dtype=float))))
+
+
+def _frame_record(frame: Frame) -> dict[str, Any]:
+    kinds = Counter(feature.kind for feature in frame.features)
+    return {
+        **frame.to_dict(),
+        "atom_count": len(frame.atoms),
+        "feature_count": len(frame.features),
+        "feature_kinds": dict(sorted(kinds.items())),
+        "cell_volume": _cell_volume(frame),
+    }
+
+
+def _source_files(sequence: Sequence, config_path: Path | None) -> list[Path]:
+    files: list[Path] = []
+    if config_path is not None:
+        files.append(config_path)
+    for frame in sequence.frames:
+        structure = frame.metadata.get("structure_source")
+        if isinstance(structure, str):
+            files.append(Path(structure))
+        for descriptor in frame.metadata.get("descriptor_sources", []):
+            if isinstance(descriptor, str):
+                files.append(Path(descriptor))
+        energy_name = frame.metadata.get("energy_source")
+        directory = frame.metadata.get("frame_directory")
+        if isinstance(energy_name, str) and isinstance(directory, str):
+            files.append(Path(directory) / energy_name)
+    return files
+
+
+def _descriptor_provenance(
+    sequence: Sequence,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collect deterministic per-frame descriptor records and parser warnings."""
+
+    records: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for frame in sequence.frames:
+        raw_documents = frame.metadata.get("descriptor_documents", [])
+        if not isinstance(raw_documents, list):
+            continue
+        for raw_document in raw_documents:
+            if not isinstance(raw_document, Mapping):
+                continue
+            document = dict(raw_document)
+            records.append(
+                {
+                    "frame": {"index": frame.index, "label": frame.label},
+                    **document,
+                }
+            )
+            producer = document.get("producer", {})
+            producer_name = (
+                str(producer.get("name", "unknown")) if isinstance(producer, Mapping) else "unknown"
+            )
+            document_metadata = document.get("metadata", {})
+            if not isinstance(document_metadata, Mapping):
+                continue
+            raw_warnings = document_metadata.get("warnings", [])
+            if not isinstance(raw_warnings, list):
+                continue
+            warnings.extend(
+                f"Descriptor warning ({frame.label}, {producer_name}): {warning}"
+                for warning in raw_warnings
+                if isinstance(warning, str)
+            )
+    return records, warnings
+
+
+def _new_track(counter: list[int]) -> str:
+    counter[0] += 1
+    return f"T{counter[0]:05d}"
+
+
+def _observation(
+    track_id: str,
+    frame: Frame,
+    feature: Feature,
+    *,
+    confidence: float,
+    parent_track_ids: Iterable[str] = (),
+) -> dict[str, Any]:
+    position = feature.fractional_position
+    return {
+        "track_id": track_id,
+        "frame": frame.index,
+        "frame_label": frame.label,
+        "feature_id": feature.id,
+        "kind": feature.kind,
+        "fractional_x": position[0],
+        "fractional_y": position[1],
+        "fractional_z": position[2],
+        "charge": feature.charge,
+        "volume": feature.volume,
+        "confidence": confidence,
+        "parent_track_ids": sorted(set(parent_track_ids)),
+        "neighbor_atom_indices": list(feature.neighbor_atom_indices),
+        "attributes": dict(feature.attributes),
+    }
+
+
+def _build_tracks(
+    sequence: Sequence, feature_matches: Iterable[Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build deterministic lineage observations from adjacent-frame hyperedges."""
+
+    frames = sequence.frames
+    if not frames:
+        return [], []
+    warnings: list[str] = []
+    counter = [0]
+    active: dict[str, str] = {}
+    observations: list[dict[str, Any]] = []
+    for feature in sorted(frames[0].features, key=lambda item: item.id):
+        track = _new_track(counter)
+        active[feature.id] = track
+        observations.append(_observation(track, frames[0], feature, confidence=1.0))
+
+    for transition_index, result in enumerate(feature_matches):
+        current = frames[transition_index + 1]
+        next_active: dict[str, str] = {}
+        incoming_confidence: dict[str, float] = {}
+        incoming_parents: dict[str, set[str]] = {}
+        candidates: dict[str, list[tuple[float, str, tuple[str, ...]]]] = {}
+
+        for edge in result.edges:
+            if edge.ambiguous:
+                continue
+            parent_tracks = tuple(
+                sorted({active[str(source)] for source in edge.source_ids if str(source) in active})
+            )
+            for target in edge.target_ids:
+                target_id = str(target)
+                if edge.relation is MatchRelation.ONE_TO_ONE and len(parent_tracks) == 1:
+                    candidate_track = parent_tracks[0]
+                    parents: tuple[str, ...] = ()
+                else:
+                    # A split or merge starts a new lineage node and retains
+                    # explicit parentage instead of pretending identity is unique.
+                    candidate_track = ""
+                    parents = parent_tracks
+                candidates.setdefault(target_id, []).append(
+                    (edge.confidence, candidate_track, parents)
+                )
+
+        for feature in sorted(current.features, key=lambda item: item.id):
+            options = sorted(candidates.get(feature.id, []), key=lambda item: (-item[0], item[1]))
+            if options:
+                confidence, candidate_track, parents = options[0]
+                if len(options) > 1:
+                    warnings.append(
+                        f"Frame {current.label} feature {feature.id} had multiple incoming lineage candidates; the highest-confidence edge was used."
+                    )
+                track = candidate_track or _new_track(counter)
+                incoming_confidence[feature.id] = confidence
+                incoming_parents[feature.id] = set(parents)
+            else:
+                track = _new_track(counter)
+                incoming_confidence[feature.id] = 0.75
+                incoming_parents[feature.id] = set()
+            next_active[feature.id] = track
+            observations.append(
+                _observation(
+                    track,
+                    current,
+                    feature,
+                    confidence=incoming_confidence[feature.id],
+                    parent_track_ids=incoming_parents[feature.id],
+                )
+            )
+        active = next_active
+    return observations, warnings
+
+
+def _normalize_events(
+    events: Iterable[Any],
+    minimum_persistence: int,
+    *,
+    medium_confidence_threshold: float = 0.55,
+    high_confidence_threshold: float = 0.80,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for number, event in enumerate(events, start=1):
+        record = event.to_dict()
+        status = str(record.get("metadata", {}).get("persistence_status", "unknown"))
+        persistence = int(record.get("persistence", 1))
+        confidence = float(record.get("confidence", 0.0))
+        if confidence >= high_confidence_threshold:
+            confidence_label = "high"
+        elif confidence >= medium_confidence_threshold:
+            confidence_label = "medium"
+        else:
+            confidence_label = "low"
+        start = int(record["frame_after"])
+        end = int(record.get("metadata", {}).get("persistence_end_frame", start))
+        normalized.append(
+            {
+                "event_id": f"E{number:05d}",
+                "type": record["type"],
+                "start_frame": start,
+                "end_frame": end,
+                "frame_before": record["frame_before"],
+                "frame_after": record["frame_after"],
+                "source_ids": [str(item) for item in record.get("source_ids", [])],
+                "target_ids": [str(item) for item in record.get("target_ids", [])],
+                "confidence": confidence,
+                "confidence_label": confidence_label,
+                "persistence": persistence,
+                "persistence_status": status,
+                "persistent": status == "confirmed",
+                "description": record.get("description", ""),
+                "evidence": record.get("evidence", {}),
+                "metadata": record.get("metadata", {}),
+            }
+        )
+    return normalized
+
+
+def _matching_ambiguity_warnings(tracking: TrackingResult) -> list[str]:
+    warnings: list[str] = []
+    for entity, results in (
+        ("atom", tracking.atom_matches),
+        ("feature", tracking.feature_matches),
+    ):
+        for result in results:
+            raw = result.diagnostics.get("ambiguities", [])
+            ambiguities = raw if isinstance(raw, list) else []
+            if not ambiguities:
+                continue
+            tolerance = float(result.diagnostics.get("ambiguity_tolerance", 0.0))
+            consequence = (
+                "ambiguous atom mappings were excluded from feature-neighbor evidence"
+                if entity == "atom"
+                else "affected lineage and event claims were suppressed"
+            )
+            warnings.append(
+                f"Ambiguous {entity} correspondence for transition "
+                f"{result.previous_frame_index}→{result.current_frame_index}: "
+                f"{len(ambiguities)} selected decision(s) have a complete alternative "
+                f"assignment within {tolerance:g} cost units; {consequence}."
+            )
+    return warnings
+
+
+def analyze_sequence(
+    sequence: Sequence,
+    config: ElecTraceConfig,
+    *,
+    config_path: str | Path | None = None,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """Run matching, event detection, lineage construction, and provenance."""
+
+    if len(sequence.frames) < 2:
+        raise ValueError("ElecTrace requires at least two ordered frames")
+    atom_config, feature_config = _matching_configs(config)
+    event_config = _event_config(config)
+    tracking = track_sequence(sequence, atom_config, feature_config, event_config)
+    ambiguity_warnings = _matching_ambiguity_warnings(tracking)
+    if strict and ambiguity_warnings:
+        raise ValueError(
+            "Ambiguous correspondence in strict mode. "
+            + " ".join(ambiguity_warnings)
+            + " Re-run with --permissive to retain diagnostics while suppressing affected claims."
+        )
+    tracks, track_warnings = _build_tracks(sequence, tracking.feature_matches)
+    descriptor_documents, descriptor_warnings = _descriptor_provenance(sequence)
+
+    warnings = [*ambiguity_warnings, *track_warnings, *descriptor_warnings]
+    missing_features = [frame.label for frame in sequence.frames if not frame.features]
+    if missing_features:
+        warnings.append(
+            "No electronic features were loaded for frame(s): " + ", ".join(missing_features)
+        )
+    missing_energies = [frame.label for frame in sequence.frames if frame.energy is None]
+    if missing_energies:
+        warnings.append("No VASP energy was found for frame(s): " + ", ".join(missing_energies))
+    inferred_symbols = [
+        frame.label for frame in sequence.frames if frame.metadata.get("symbols_inferred") is True
+    ]
+    if inferred_symbols:
+        warnings.append(
+            "VASP 4 element symbols were inferred for frame(s): " + ", ".join(inferred_symbols)
+        )
+
+    path = Path(config_path).resolve() if config_path is not None else None
+    sources = fingerprint_files(_source_files(sequence, path))
+    transitions = []
+    for atom_matches, feature_matches in zip(
+        tracking.atom_matches, tracking.feature_matches, strict=True
+    ):
+        transitions.append(
+            {
+                "frame_before": atom_matches.previous_frame_index,
+                "frame_after": atom_matches.current_frame_index,
+                "atom_matches": atom_matches.to_dict(),
+                "feature_matches": feature_matches.to_dict(),
+            }
+        )
+    events = _normalize_events(
+        tracking.events,
+        event_config.min_persistence,
+        medium_confidence_threshold=config.events.medium_confidence_threshold,
+        high_confidence_threshold=config.events.high_confidence_threshold,
+    )
+    series_kind = str(sequence.metadata.get("series_kind", config.series_kind))
+    return {
+        "schema_version": "0.1",
+        "software_version": __version__,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "project": {
+            "name": config.project_name,
+            "series_kind": series_kind,
+            "description": "Deformation-aware correspondence of atoms and electronic features across an ordered periodic sequence.",
+            "metadata": dict(config.metadata),
+        },
+        "configuration": config.to_dict(),
+        "provenance": {
+            "environment": environment_record(
+                project_directory=path.parent if path is not None else Path.cwd()
+            ),
+            "source_files": sources,
+            "source_root": sequence.metadata.get("source_root"),
+            "descriptor_producers": sorted(
+                {
+                    str(producer)
+                    for frame in sequence.frames
+                    for producer in frame.metadata.get("descriptor_producers", [])
+                }
+            ),
+            "descriptor_documents": descriptor_documents,
+        },
+        "warnings": warnings,
+        "frames": [_frame_record(frame) for frame in sequence.frames],
+        "transitions": transitions,
+        "events": events,
+        "tracks": tracks,
+        "diagnostics": tracking.diagnostics,
+    }
+
+
+def load_and_analyze(
+    config_path: str | Path,
+    *,
+    strict: bool = True,
+) -> tuple[dict[str, Any], ElecTraceConfig]:
+    """Load a configured VASP path and return its analysis plus configuration."""
+
+    path = Path(config_path).expanduser().resolve()
+    config = load_config(path)
+    input_root = _resolve(path.parent, config.inputs.root)
+    if input_root is None:  # pragma: no cover - dataclass invariant
+        raise ValueError("inputs.root is required")
+    descriptor_dir = _resolve(path.parent, config.inputs.descriptor_dir)
+    sequence = load_sequence(
+        input_root,
+        descriptor_dir=descriptor_dir,
+        prefer_contcar=config.inputs.prefer_contcar,
+        mode=config.series_kind,
+        strict=strict,
+        label=config.project_name,
+        structure_name=config.inputs.structure_name,
+        fallback_structure_name=config.inputs.fallback_structure_name,
+        descriptor_name=config.inputs.descriptor_name,
+        descriptor_source=config.inputs.descriptor_source,
+    )
+    return analyze_sequence(sequence, config, config_path=path, strict=strict), config
+
+
+def _prepare_output(directory: Path, overwrite: bool) -> None:
+    if directory.exists() and any(directory.iterdir()) and not overwrite:
+        raise FileExistsError(
+            f"Output directory is not empty: {directory}. Use overwrite=True to replace known artifacts."
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+
+
+_KNOWN_BUNDLE_ARTIFACTS = frozenset(
+    {
+        "analysis.json",
+        "events.csv",
+        "feature_tracks.csv",
+        "analysis.h5",
+        "report.html",
+        "manifest.json",
+    }
+)
+
+
+def _selected_bundle_artifacts(config: ElecTraceConfig) -> set[str]:
+    selected = {"manifest.json"}
+    if config.outputs.json:
+        selected.add("analysis.json")
+    if config.outputs.csv:
+        selected.update(("events.csv", "feature_tracks.csv"))
+    if config.outputs.hdf5:
+        selected.add("analysis.h5")
+    if config.outputs.html_report:
+        selected.add("report.html")
+    return selected
+
+
+def _remove_unselected_bundle_artifacts(directory: Path, selected: set[str]) -> None:
+    """Remove only reserved ElecTrace files disabled for this overwrite."""
+
+    for name in sorted(_KNOWN_BUNDLE_ARTIFACTS - selected):
+        artifact = directory / name
+        if artifact.is_file() or artifact.is_symlink():
+            artifact.unlink()
+
+
+def _publish_staged_bundle(staging: Path, directory: Path, selected: set[str]) -> None:
+    """Publish a complete staged bundle without following reserved symlinks."""
+
+    for name in sorted(selected):
+        artifact = directory / name
+        if artifact.is_dir() and not artifact.is_symlink():
+            raise IsADirectoryError(f"Reserved bundle artifact path is a directory: {artifact}")
+    # Writers never create symlinks. A reserved symlink is therefore not a
+    # valid prior artifact; unlink only its directory entry, never its target.
+    for name in sorted(_KNOWN_BUNDLE_ARTIFACTS):
+        artifact = directory / name
+        if artifact.is_symlink():
+            artifact.unlink()
+    _remove_unselected_bundle_artifacts(directory, selected)
+    for name in sorted(selected - {"manifest.json"}):
+        (staging / name).replace(directory / name)
+    (staging / "manifest.json").replace(directory / "manifest.json")
+
+
+def write_analysis_bundle(
+    analysis: Mapping[str, Any],
+    config: ElecTraceConfig,
+    output_directory: str | Path,
+    *,
+    overwrite: bool = False,
+) -> AnalysisArtifacts:
+    """Write selected JSON/CSV/HDF5/HTML products and an integrity manifest."""
+
+    directory = Path(output_directory).expanduser().resolve()
+    _prepare_output(directory, overwrite)
+    selected = _selected_bundle_artifacts(config)
+    written_names: list[str]
+    with TemporaryDirectory(prefix=".electrace-stage-", dir=directory) as temporary:
+        staging = Path(temporary)
+        staged: list[Path] = []
+        if config.outputs.json:
+            staged.append(write_json(analysis, staging / "analysis.json"))
+        if config.outputs.csv:
+            staged.append(write_events_csv(analysis.get("events", []), staging / "events.csv"))
+            staged.append(
+                write_tracks_csv(analysis.get("tracks", []), staging / "feature_tracks.csv")
+            )
+        if config.outputs.hdf5:
+            staged.append(write_hdf5(analysis, staging / "analysis.h5"))
+        if config.outputs.html_report:
+            staged.append(render_html_report(analysis, staging / "report.html"))
+
+        manifest = {
+            "schema_version": "electrace.bundle.v1",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "files": [
+                {
+                    "path": item.name,
+                    "size_bytes": item.stat().st_size,
+                    "sha256": sha256_file(item),
+                }
+                for item in staged
+            ],
+        }
+        manifest_path = staging / "manifest.json"
+        atomic_write_text(
+            manifest_path,
+            json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        )
+        written_names = [item.name for item in staged]
+        _publish_staged_bundle(staging, directory, selected)
+
+    written = tuple(directory / name for name in (*written_names, "manifest.json"))
+    return AnalysisArtifacts(dict(analysis), directory, written)
+
+
+def run_project(
+    config_path: str | Path,
+    *,
+    output_directory: str | Path | None = None,
+    strict: bool = True,
+    overwrite: bool = False,
+) -> AnalysisArtifacts:
+    """Load, analyze, and write a configured ElecTrace project."""
+
+    path = Path(config_path).expanduser().resolve()
+    analysis, config = load_and_analyze(path, strict=strict)
+    configured_output = Path(config.outputs.directory).expanduser()
+    output = (
+        Path(output_directory).expanduser() if output_directory is not None else configured_output
+    )
+    if not output.is_absolute():
+        output = path.parent / output
+    return write_analysis_bundle(analysis, config, output, overwrite=overwrite)

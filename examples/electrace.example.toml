@@ -1,0 +1,76 @@
+# ElecTrace example for an ordered VASP NEB or static pressure series.
+[project]
+name = "Electronic rearrangement along a VASP path"
+series_kind = "auto" # auto, neb, pressure, or static
+
+[inputs]
+root = "."
+# descriptor_dir = "normalized-features" # Optional flat or frame-mirrored directory.
+structure_name = "CONTCAR"
+fallback_structure_name = "POSCAR"
+descriptor_name = "features.json"
+descriptor_source = "auto" # auto, local, external, or merge
+prefer_contcar = true
+
+[matching]
+max_atom_displacement = 1.5
+max_feature_displacement = 2.0
+position_weight = 1.0
+charge_weight = 0.35
+volume_weight = 0.25
+neighbor_weight = 0.75
+overlap_weight = 1.0
+descriptor_weight = 0.35
+match_threshold = 3.0
+# Maximum total-cost gap for a complete alternative assignment.
+ambiguity_tolerance = 0.05
+conservation_tolerance = 0.35
+split_merge_threshold = 0.55
+
+[matching.descriptor_scales]
+icohp = 0.5
+icobi = 0.1
+
+[events]
+minimum_persistence = 2
+hysteresis_frames = 1
+minimum_event_confidence = 0.10
+charge_change_threshold = 0.10
+volume_change_fraction = 0.20
+high_confidence_threshold = 0.80
+medium_confidence_threshold = 0.55
+
+[events.descriptor_thresholds]
+icohp = 0.5
+icobi = 0.1
+bond_order = 0.1
+elf = 0.1
+
+[outputs]
+directory = "electrace-results"
+html_report = true
+json = true
+csv = true
+hdf5 = false
+
+# Plugins are inspected and planned by ElecTrace, but never executed implicitly.
+[plugins.baderkit]
+enabled = true
+executable = "baderkit"
+
+[plugins.critic2]
+enabled = true
+executable = "critic2"
+
+[plugins.lobster]
+enabled = false
+executable = "lobster"
+
+[plugins.chargemol]
+enabled = false
+executable = "chargemol"
+
+[metadata]
+system = ""
+method = "VASP"
+notes = "Review plugin command plans and convergence settings before execution."

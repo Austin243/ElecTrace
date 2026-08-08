@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Austin243/ElecTrace/schemas/electrace.features.v1.schema.json",
+  "title": "ElecTrace electronic-feature descriptor",
+  "description": "Plugin-neutral electronic features associated with one periodic frame.",
+  "type": "object",
+  "required": ["schema_version", "producer", "features"],
+  "properties": {
+    "schema_version": {"const": "electrace.features.v1"},
+    "producer": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "frame": {
+      "type": "object",
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "label": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "features": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/feature"}
+    },
+    "metadata": {"type": "object", "additionalProperties": true}
+  },
+  "$defs": {
+    "feature": {
+      "type": "object",
+      "required": ["id", "kind", "fractional_position"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Lowercase feature vocabulary; unknown extension values are allowed.",
+          "examples": ["elf_basin", "non_nuclear_attractor", "bond_critical_point"]
+        },
+        "fractional_position": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "charge": {"type": ["number", "null"]},
+        "volume": {"type": ["number", "null"], "minimum": 0},
+        "neighbor_atom_indices": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0},
+          "uniqueItems": true
+        },
+        "voxel_indices": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "integer"}, {"type": "integer"}, {"type": "integer"}],
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "uniqueItems": true
+        },
+        "attributes": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "features": {
+            "contains": {
+              "type": "object",
+              "required": ["charge"],
+              "properties": {"charge": {"type": "number"}}
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["metadata"],
+        "properties": {
+          "metadata": {
+            "required": ["charge_convention"],
+            "properties": {
+              "charge_convention": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

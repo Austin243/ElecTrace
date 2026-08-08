@@ -1,0 +1,55 @@
+{
+  "schema_version": "electrace.features.v1",
+  "producer": {
+    "name": "critic2-adapter",
+    "version": "0.1.0"
+  },
+  "frame": {
+    "index": 5,
+    "label": "05"
+  },
+  "features": [
+    {
+      "id": "bcp-12",
+      "kind": "bond_critical_point",
+      "fractional_position": [0.125, 0.5, 0.875],
+      "neighbor_atom_indices": [3, 8],
+      "attributes": {
+        "rho_e_per_angstrom3": 0.42,
+        "critic2:laplacian_e_per_angstrom5": -1.7
+      }
+    },
+    {
+      "id": "nna-2",
+      "kind": "non_nuclear_attractor",
+      "fractional_position": [0.992, 0.04, 0.51],
+      "charge": -0.18,
+      "volume": 3.6,
+      "neighbor_atom_indices": [1, 4, 7],
+      "voxel_indices": [[31, 2, 16], [31, 2, 17]],
+      "attributes": {
+        "elf_at_attractor": 0.91,
+        "grid_shape": [32, 32, 32],
+        "grid_order": "C",
+        "grid_origin_fractional": [0.0, 0.0, 0.0],
+        "grid_periodic": true
+      }
+    }
+  ],
+  "metadata": {
+    "charge_convention": "Net basin charge in units of e; negative denotes electron excess.",
+    "provenance": {
+      "external_tool": {
+        "name": "critic2",
+        "version": "RECORD_ACTUAL_VERSION"
+      },
+      "source_sha256": {
+        "CONTCAR": "a3f1f0d403c8c9a157e00c6fc186bbdc5f256249ce47db240bc4d89e88502b7a"
+      },
+      "argv": ["critic2", "critic2.in"],
+      "input_sha256": "8b5819c2b48925151d3cf84e7d1186157e21737e7b96e424002a42f3b411c681",
+      "output_sha256": "3e2f947a06245f0c1ddfda454e0df12d7343da152b577182096560e3ce749fe3"
+    },
+    "warnings": []
+  }
+}

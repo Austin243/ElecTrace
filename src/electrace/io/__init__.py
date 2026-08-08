@@ -1,0 +1,65 @@
+"""VASP path discovery, lightweight parsing, and plugin descriptor ingestion."""
+
+from .descriptors import (
+    MAX_DESCRIPTOR_BYTES,
+    SCHEMA_VERSION,
+    DescriptorDocument,
+    DescriptorError,
+    attach_descriptors,
+    descriptor_from_dict,
+    dump_descriptor,
+    load_descriptor,
+)
+from .discovery import (
+    DiscoveredPath,
+    DiscoveryError,
+    FrameSource,
+    SeriesKind,
+    discover_neb,
+    discover_path,
+    discover_pressure_series,
+    discover_static_series,
+    iter_structure_directories,
+    pressure_from_label,
+    pressure_from_outcar,
+)
+from .loader import DescriptorSource, load_path, load_sequence
+from .vasp import (
+    PoscarData,
+    VaspParseError,
+    parse_poscar,
+    poscar_to_frame,
+    read_poscar,
+    read_vasp_energy,
+)
+
+__all__ = [
+    "MAX_DESCRIPTOR_BYTES",
+    "SCHEMA_VERSION",
+    "DescriptorDocument",
+    "DescriptorError",
+    "DescriptorSource",
+    "DiscoveredPath",
+    "DiscoveryError",
+    "FrameSource",
+    "PoscarData",
+    "SeriesKind",
+    "VaspParseError",
+    "attach_descriptors",
+    "descriptor_from_dict",
+    "discover_neb",
+    "discover_path",
+    "discover_pressure_series",
+    "discover_static_series",
+    "dump_descriptor",
+    "iter_structure_directories",
+    "load_descriptor",
+    "load_path",
+    "load_sequence",
+    "parse_poscar",
+    "poscar_to_frame",
+    "pressure_from_label",
+    "pressure_from_outcar",
+    "read_poscar",
+    "read_vasp_energy",
+]

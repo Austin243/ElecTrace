@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+  PYTHONUTF8: "1"
+
+jobs:
+  quality:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Reject retired project names
+        run: |
+          if git grep -I -n -i -E 'topo[c]hron|path[b]ond' || \
+             git ls-files | grep -E -i 'topo[c]hron|path[b]ond'; then
+            echo "A retired project name remains in a tracked file."
+            exit 1
+          fi
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format
+        run: ruff format --check .
+      - name: Type check
+        run: mypy src
+      - name: Repository hygiene hooks
+        env:
+          SKIP: ruff-check,ruff-format
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.11"
+            extras: test
+          - python-version: "3.12"
+            extras: test
+          - python-version: "3.13"
+            extras: test,all
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[${{ matrix.extras }}]"
+      - name: Run tests
+        run: >-
+          pytest -ra --strict-config --strict-markers
+          --cov=electrace --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-python-3.13
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Build package
+    needs: [quality, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install wheel and smoke-test CLI
+        run: |
+          python -m pip install dist/*.whl
+          python -m pip check
+          python -c "import electrace; print(electrace.__version__)"
+          python -m electrace --version
+          electrace --version
+          electrace --help
+          electrace benchmark --output .ci-benchmark.json
+          electrace demo --output .ci-demo
+          electrace inspect .ci-demo/electrace-results

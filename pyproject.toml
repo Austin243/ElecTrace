@@ -1,0 +1,124 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "electrace"
+version = "0.1.0a3"
+description = "Persistent electronic-topology tracking across periodic reaction paths and structure series"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Austin Ellis" },
+]
+keywords = [
+  "computational-chemistry",
+  "electronic-structure",
+  "NEB",
+  "QTAIM",
+  "ELF",
+  "Bader",
+  "VASP",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Typing :: Typed",
+]
+dependencies = [
+  "numpy>=1.26",
+  "PyYAML>=6.0",
+  "rich>=13.7",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+accelerate = ["scipy>=1.11"]
+hdf5 = ["h5py>=3.10"]
+docs = [
+  "jsonschema>=4.23,<5",
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+]
+test = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+]
+dev = [
+  "build>=1.2",
+  "mypy>=1.11",
+  "pre-commit>=3.7",
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "ruff>=0.6",
+]
+all = [
+  "h5py>=3.10",
+  "scipy>=1.11",
+]
+
+[project.scripts]
+electrace = "electrace.cli:app"
+
+[project.urls]
+Repository = "https://github.com/Austin243/ElecTrace"
+Issues = "https://github.com/Austin243/ElecTrace/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/electrace"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.github",
+  "/.pre-commit-config.yaml",
+  "/AGENTS.md",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["electrace"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501"]
+allowed-confusables = ["–"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+"src/electrace/cli.py" = ["B008"]
+
+[tool.mypy]
+strict = true
+packages = ["electrace"]
+warn_unreachable = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "h5py.*"]
+ignore_missing_imports = true
