@@ -38,11 +38,11 @@ Use this route when the ordered frames already contain supported Bader/BaderKit,
 critic2, LOBSTER, Chargemol, or normalized ElecTrace descriptor files.
 
 ```bash
-electrace init electrace.toml --images /absolute/path/to/frames
+electrace init electrace.toml --images /absolute/path/to/frames --json
 # Review electrace.toml and configure descriptor_source/descriptor_dir.
 electrace doctor --config electrace.toml --json
-electrace analyze electrace.toml
-electrace inspect electrace-results
+electrace analyze electrace.toml --json
+electrace inspect electrace-results --json
 ```
 
 Treat the generated `analysis.json` as the canonical result. Treat CSV and HTML as
@@ -58,36 +58,43 @@ Use this route when VASP or descriptor calculations must be staged across select
 frames.
 
 ```bash
-electrace workflow init electrace-workflow.yaml --images /absolute/path/to/frames
+electrace workflow init electrace-workflow.yaml --images /absolute/path/to/frames --json
 # Review executables, templates, dependencies, resources, scheduler, and frames.
-electrace workflow stage electrace-workflow.yaml
-electrace workflow status electrace-workflow.yaml
+electrace workflow validate electrace-workflow.yaml --json
+electrace workflow stage electrace-workflow.yaml --json
+electrace workflow status electrace-workflow.yaml --json
 ```
 
-Staging writes an isolated, marker-protected workspace but runs no external program.
-Inspect the generated job records and inputs before execution.
+Validation resolves the complete plan without writing anything. Staging then writes an
+isolated, marker-protected workspace but runs no external program. Inspect the resolved
+commands, generated job records, and inputs before execution.
 
 For local execution, add `--yes` only when the user explicitly authorizes all staged
 commands:
 
 ```bash
-electrace workflow run electrace-workflow.yaml --yes --max-parallel 2
+electrace workflow run electrace-workflow.yaml --yes --max-parallel 2 --json
 ```
 
 For Slurm, prepare scripts without submitting, review them, then submit only with
 explicit authorization:
 
 ```bash
-electrace workflow submit electrace-workflow.yaml --job-name electrace
+electrace workflow submit electrace-workflow.yaml --job-name electrace --json
 # Review scripts and scheduler directives.
-electrace workflow submit electrace-workflow.yaml --job-name electrace --yes --force
+electrace workflow submit electrace-workflow.yaml --job-name electrace --yes --force --json
 ```
+
+If authorized submission exits `1`, inspect `error.details.partial_submissions` and
+`record_path`, then read `slurm/submissions.json`. Do not blindly resubmit scripts whose
+job IDs were already accepted. ElecTrace blocks a new submission while that journal
+exists, including with `--force`; remove or archive it only after reconciliation.
 
 After expected outputs exist:
 
 ```bash
-electrace workflow status electrace-workflow.yaml
-electrace workflow analyze electrace-workflow.yaml
+electrace workflow status electrace-workflow.yaml --json
+electrace workflow analyze electrace-workflow.yaml --json
 ```
 
 Do not assume filesystem completion proves electronic, projection, grid, or scientific
@@ -95,11 +102,16 @@ convergence. Inspect external-tool outputs and surface failures.
 
 ## Plan and inspect without execution
 
-- Use `electrace plan PLUGIN FRAME --capability CAPABILITY` for one JSON command plan.
+- Use `electrace plan PLUGIN FRAME --capability CAPABILITY --json` for one command plan.
 - Add `--all-frames` to plan across a discovered path.
 - Use `electrace volume ELFCAR --json` to summarize a plain VASP scalar grid.
-- Use `electrace volume ELFCAR --sample X,Y,Z` for periodic fractional sampling.
-- Use `electrace workflow status MANIFEST` for machine-readable filesystem status.
+- Use `electrace volume ELFCAR --sample X,Y,Z --json` for periodic fractional sampling.
+- Use `electrace workflow validate MANIFEST --json` for a strictly read-only resolved plan.
+- Use `electrace workflow status MANIFEST --json` for machine-readable filesystem status.
+
+With `--json`, consume the single `electrace.cli.v1` envelope. Check `ok` and the process
+exit code before reading `data`; on failure, read `error.code` and `error.message`. Treat
+`warnings` and `artifacts` as first-class outputs rather than scraping terminal prose.
 
 Planning never executes a tool. `workflow submit` without `--yes` writes Slurm scripts
 but does not call `sbatch`.

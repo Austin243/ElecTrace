@@ -8,6 +8,9 @@ follow [Semantic Versioning](https://semver.org/) after the initial development 
 
 ### Changed
 
+- Standardized opt-in machine output on the versioned `electrace.cli.v1` success and
+  error envelope, including parse-time CLI failures and stable exit semantics; the
+  Typer minimum is now 0.20, the oldest validated release for this command surface.
 - Published the source under the BSD 3-Clause License with clean public package and
   citation metadata.
 - Consolidated the distribution, Python package, command, configuration filename,
@@ -50,6 +53,8 @@ follow [Semantic Versioning](https://semver.org/) after the initial development 
 
 ### Added
 
+- Added strictly read-only `electrace workflow validate --json` planning for resolved
+  frames, commands, inputs, outputs, dependencies, scheduler settings, and warnings.
 - Added a compact coding-agent guide and installable ElecTrace skill for routing
   existing-output analysis and approval-gated local or Slurm workflows through the
   public CLI.

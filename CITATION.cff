@@ -7,7 +7,7 @@ type: software
 authors:
   - family-names: Ellis
     given-names: Austin
-version: 0.1.0a3
+version: 0.1.0a4
 license: BSD-3-Clause
 abstract: >-
   ElecTrace is a research-software framework for tracking electronic-topology

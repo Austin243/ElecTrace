@@ -27,6 +27,8 @@ capabilities from planned or scientifically unvalidated work.
 - [Plugin protocol v1](spec/plugin-protocol-v1.md)
 - [`electrace.features.v1` JSON Schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.features.v1.schema.json)
 - [`electrace.workflow.v1` JSON Schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.workflow.v1.schema.json)
+- [`electrace.cli.v1` JSON Schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.cli.v1.schema.json)
+- [`electrace.workflow-validation.v1` JSON Schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.workflow-validation.v1.schema.json)
 - [Public workflow YAML example](https://github.com/Austin243/ElecTrace/blob/main/examples/electrace.workflow.yaml)
 - [`electrace.benchmark.v0.1` JSON Schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/benchmark-v0.1.schema.json)
 - [Example normalized feature document](examples/electrace.features.v1.example.json)

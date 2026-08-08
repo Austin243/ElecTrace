@@ -78,8 +78,13 @@ Create the manifest, edit it for the calculation, and stage the selected frames:
 electrace workflow init electrace-workflow.yaml \
   --images /absolute/path/to/neb-images
 # Set executable paths, templates, frames, and scheduler settings in the YAML.
+electrace workflow validate electrace-workflow.yaml --json
 electrace workflow stage electrace-workflow.yaml
 ```
+
+Validation resolves the selected frames, commands, inputs, outputs, dependencies, and
+scheduler settings without creating a workspace. Commands also accept `--json` for a
+common `electrace.cli.v1` response envelope suitable for scripts and coding agents.
 
 Run locally and analyze the collected outputs:
 

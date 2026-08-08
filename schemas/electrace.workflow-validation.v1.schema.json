@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Austin243/ElecTrace/schemas/electrace.workflow-validation.v1.schema.json",
+  "title": "ElecTrace resolved workflow validation",
+  "description": "The deterministic read-only plan returned by electrace workflow validate.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "manifest",
+    "workspace",
+    "selected_frames",
+    "resolved_jobs",
+    "scheduler",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "electrace.workflow-validation.v1"
+    },
+    "manifest": {
+      "$ref": "#/$defs/path"
+    },
+    "workspace": {
+      "$ref": "#/$defs/path"
+    },
+    "selected_frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/frame"
+      }
+    },
+    "resolved_jobs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/job"
+      }
+    },
+    "scheduler": {
+      "$ref": "#/$defs/scheduler"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "frame": {
+      "type": "object",
+      "required": [
+        "index",
+        "label",
+        "analysis_label",
+        "source_directory",
+        "structure",
+        "workspace_directory",
+        "energy_ev"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "analysis_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_directory": {
+          "$ref": "#/$defs/path"
+        },
+        "structure": {
+          "$ref": "#/$defs/path"
+        },
+        "workspace_directory": {
+          "$ref": "#/$defs/path"
+        },
+        "energy_ev": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "job": {
+      "type": "object",
+      "required": [
+        "id",
+        "frame_index",
+        "frame_label",
+        "task",
+        "cwd",
+        "argv",
+        "stdin",
+        "stdout_path",
+        "stderr_path",
+        "required_inputs",
+        "expected_outputs",
+        "dependencies",
+        "environment"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "frame_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "$ref": "#/$defs/path"
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "stdin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stdout_path": {
+          "$ref": "#/$defs/path"
+        },
+        "stderr_path": {
+          "$ref": "#/$defs/path"
+        },
+        "required_inputs": {
+          "$ref": "#/$defs/pathArray"
+        },
+        "expected_outputs": {
+          "$ref": "#/$defs/pathArray"
+        },
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "pathArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/path"
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "required": [
+        "kind",
+        "directives"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "local",
+            "slurm"
+          ]
+        },
+        "directives": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "null",
+              "boolean",
+              "number",
+              "string"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

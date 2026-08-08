@@ -35,6 +35,7 @@ def test_runtime_extras_match_import_boundaries() -> None:
     assert _names(optional["all"]) == {"h5py", "scipy"}
     optional_names = {name for requirements in optional.values() for name in _names(requirements)}
     assert optional_names.isdisjoint({"ase", "mkdocstrings", "types-setuptools"})
+    assert "typer>=0.20" in project["dependencies"]
 
 
 def test_python_metadata_matches_the_doctor_support_window() -> None:

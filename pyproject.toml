@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "electrace"
-version = "0.1.0a3"
+version = "0.1.0a4"
 description = "Persistent electronic-topology tracking across periodic reaction paths and structure series"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -37,7 +37,7 @@ dependencies = [
   "numpy>=1.26",
   "PyYAML>=6.0",
   "rich>=13.7",
-  "typer>=0.12",
+  "typer>=0.20",
 ]
 
 [project.optional-dependencies]

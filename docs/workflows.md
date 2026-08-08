@@ -195,6 +195,23 @@ Comma-separated items are evaluated left to right. An out-of-range explicit inde
 an empty result, a zero slice step, or selecting one frame twice is an error. Quote
 selectors containing `:` so YAML cannot reinterpret them.
 
+## Validate without writing
+
+Resolve the manifest, frame selector, templates, executable vectors, scheduler,
+dependencies, required inputs, and expected outputs before creating a workspace:
+
+```bash
+electrace workflow validate electrace-workflow.yaml --json
+```
+
+Validation is strictly read-only. It does not create the configured workspace, copy a
+template, render a Slurm script, or launch a command. Missing executables are reported
+as warnings because they may be supplied later by a compute-node module environment;
+invalid templates, unresolved inputs, unsafe paths, and invalid job graphs are errors.
+The resolved plan is returned inside an `electrace.cli.v1` response envelope and
+follows the public
+[`electrace.workflow-validation.v1` schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.workflow-validation.v1.schema.json).
+
 ## Stage and inspect without executing
 
 Staging discovers the selected frames, copies templates and structures, applies
@@ -203,7 +220,7 @@ It does not launch a program:
 
 ```bash
 electrace workflow stage electrace-workflow.yaml
-electrace workflow status electrace-workflow.yaml
+electrace workflow status electrace-workflow.yaml --json
 ```
 
 Use `workflow status` as a filesystem snapshot only. It reports required inputs and
@@ -284,6 +301,12 @@ confirmation. `--yes` invokes `sbatch` (or the executable supplied with
 `--submit-command`). Submission returns a scheduler job ID, not a successful
 calculation. Use your site's scheduler tools and then `workflow status` to review the
 jobs and files.
+
+ElecTrace journals every accepted ID in `slurm/submissions.json`. If an authorized
+submission exits `1`, inspect `error.details.partial_submissions`, `record_path`, and
+that journal before retrying. A prior journal blocks another submission even with
+`--force`; archive or remove it only after reconciling every accepted ID. Never
+resubmit an already accepted script blindly.
 
 ## Collect, analyze, and report
 
