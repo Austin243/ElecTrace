@@ -50,6 +50,9 @@ follow [Semantic Versioning](https://semver.org/) after the initial development 
 
 ### Added
 
+- Added a compact coding-agent guide and installable ElecTrace skill for routing
+  existing-output analysis and approval-gated local or Slurm workflows through the
+  public CLI.
 - Added a deterministic `electrace benchmark` command, versioned benchmark JSON
   schema, and 15 labeled synthetic cases spanning periodic wrapping, coordinate and
   cell perturbations, ordering, direct events, conservation-backed split/merge,

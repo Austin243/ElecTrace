@@ -18,6 +18,7 @@ nav:
   - Overview: index.md
   - Quickstart: quickstart.md
   - External workflows: workflows.md
+  - Coding agents: agents.md
   - Scientific scope: scientific-scope.md
   - Architecture: architecture.md
   - Integration:
