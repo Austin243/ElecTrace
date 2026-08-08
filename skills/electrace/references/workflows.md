@@ -34,17 +34,17 @@ Selections preserve expression order and reject duplicate or empty resolution.
 
 Use `electrace doctor --config CONFIG --json` to check configured executables and
 required inputs across discovered frames. Use `electrace plan PLUGIN FRAME
---capability CAPABILITY` to inspect the exact argument vector, standard input,
+--capability CAPABILITY --json` to inspect the exact argument vector, standard input,
 required inputs, expected outputs, and working directory without execution.
 
 ## Existing-output route
 
 ```bash
-electrace init electrace.toml --images /absolute/path/to/frames
+electrace init electrace.toml --images /absolute/path/to/frames --json
 # Set series_kind, descriptor_source, and descriptor_dir as required.
 electrace doctor --config electrace.toml --json
-electrace analyze electrace.toml
-electrace inspect electrace-results
+electrace analyze electrace.toml --json
+electrace inspect electrace-results --json
 ```
 
 Use this route for existing Chargemol/DDEC results. Do not add `chargemol` to a
@@ -53,31 +53,41 @@ workflow manifest.
 ## Calculation route
 
 ```bash
-electrace workflow init electrace-workflow.yaml --images /absolute/path/to/frames
+electrace workflow init electrace-workflow.yaml --images /absolute/path/to/frames --json
 # Configure frames, executables, templates, steps, dependencies, and scheduler.
-electrace workflow stage electrace-workflow.yaml
-electrace workflow status electrace-workflow.yaml
+electrace workflow validate electrace-workflow.yaml --json
+electrace workflow stage electrace-workflow.yaml --json
+electrace workflow status electrace-workflow.yaml --json
 ```
 
 For local work, run only after authorization:
 
 ```bash
-electrace workflow run electrace-workflow.yaml --yes --max-parallel 2
+electrace workflow run electrace-workflow.yaml --yes --max-parallel 2 --json
 ```
 
 For Slurm, prepare first and submit second:
 
 ```bash
-electrace workflow submit electrace-workflow.yaml --job-name electrace
-electrace workflow submit electrace-workflow.yaml --job-name electrace --yes --force
+electrace workflow submit electrace-workflow.yaml --job-name electrace --json
+electrace workflow submit electrace-workflow.yaml --job-name electrace --yes --force --json
 ```
+
+On exit `1`, use `error.details.partial_submissions` and `record_path`, and inspect the
+`slurm/submissions.json` journal before retrying. Never duplicate an already accepted
+submission. A prior journal blocks another submission even with `--force`; remove or
+archive it only after reconciling accepted IDs.
 
 Then collect and analyze:
 
 ```bash
-electrace workflow status electrace-workflow.yaml
-electrace workflow analyze electrace-workflow.yaml
+electrace workflow status electrace-workflow.yaml --json
+electrace workflow analyze electrace-workflow.yaml --json
 ```
+
+Every `--json` response uses the versioned `electrace.cli.v1` envelope. Check `ok`,
+`error`, `warnings`, and `artifacts`; do not scrape human-formatted output. Workflow
+validation resolves the plan without creating the workspace or any generated file.
 
 ## Current boundaries
 

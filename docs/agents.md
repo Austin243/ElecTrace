@@ -19,8 +19,8 @@ electrace doctor --json
 The built-in demo requires no external scientific program:
 
 ```bash
-electrace demo --output .electrace-demo
-electrace inspect .electrace-demo/electrace-results
+electrace demo --output .electrace-demo --json
+electrace inspect .electrace-demo/electrace-results --json
 ```
 
 ## Install the Codex skill
@@ -51,10 +51,22 @@ electrace --help
 electrace doctor --json
 ```
 
+Every operational subcommand accepts `--json`. Successful and handled-error responses
+use one compact, unstyled `electrace.cli.v1` document with the fields `schema_version`,
+`ok`, `command`, `data` or `error`, `warnings`, and `artifacts`. Help and version output
+remain human-readable; request them without `--json`. Exit code `0` means the operation
+succeeded, `1` means a completed benchmark or external execution reported failure, and
+`2` means the request or a prerequisite was invalid. The public contract is the
+[`electrace.cli.v1` schema](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.cli.v1.schema.json).
+Resolved workflow plans in `data` follow
+[`electrace.workflow-validation.v1`](https://github.com/Austin243/ElecTrace/blob/main/schemas/electrace.workflow-validation.v1.schema.json).
+
 If supported descriptor results already exist, it should create and review
-`electrace.toml`, run `electrace analyze`, and consume `analysis.json` as the canonical
-result. If calculations are missing, it should create and review
-`electrace-workflow.yaml`, stage the selected frames, and inspect workflow status.
+`electrace.toml`, run `electrace analyze --json`, and consume `analysis.json` as the
+canonical result. If calculations are missing, it should create and review
+`electrace-workflow.yaml`, run
+`electrace workflow validate electrace-workflow.yaml --json`, then stage the selected
+frames and inspect workflow status with `--json`.
 Local execution and Slurm submission remain explicit actions; the skill does not add
 `--yes` unless the user authorizes the reviewed job scope.
 

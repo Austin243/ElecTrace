@@ -174,19 +174,44 @@ def test_full_fake_external_workflow_collects_and_analyzes_changes(tmp_path: Pat
 def test_workflow_cli_runs_collects_and_analyzes_end_to_end(tmp_path: Path) -> None:
     manifest = _end_to_end_manifest(tmp_path)
 
-    staged = runner.invoke(app, ["workflow", "stage", str(manifest)])
+    validated = runner.invoke(app, ["workflow", "validate", str(manifest), "--json"])
+    assert validated.exit_code == 0, validated.output
+    assert not (tmp_path / "workspace").exists()
+    validation = json.loads(validated.stdout)
+    assert validation["schema_version"] == "electrace.cli.v1"
+    assert validation["command"] == "workflow.validate"
+    assert len(validation["data"]["selected_frames"]) == 2
+    assert len(validation["data"]["resolved_jobs"]) == 8
+
+    staged = runner.invoke(app, ["workflow", "stage", str(manifest), "--json"])
     executed = runner.invoke(
         app,
-        ["workflow", "run", str(manifest), "--yes", "--max-parallel", "2"],
+        [
+            "workflow",
+            "run",
+            str(manifest),
+            "--yes",
+            "--max-parallel",
+            "2",
+            "--json",
+        ],
     )
-    collected = runner.invoke(app, ["workflow", "collect", str(manifest)])
-    analyzed = runner.invoke(app, ["workflow", "analyze", str(manifest)])
+    status = runner.invoke(app, ["workflow", "status", str(manifest), "--json"])
+    collected = runner.invoke(app, ["workflow", "collect", str(manifest), "--json"])
+    analyzed = runner.invoke(app, ["workflow", "analyze", str(manifest), "--json"])
 
     assert staged.exit_code == 0, staged.output
     assert executed.exit_code == 0, executed.output
+    assert status.exit_code == 0, status.output
     assert collected.exit_code == 0, collected.output
     assert analyzed.exit_code == 0, analyzed.output
-    assert "2 frames" in Text.from_ansi(analyzed.stdout).plain
+    assert json.loads(staged.stdout)["command"] == "workflow.stage"
+    assert json.loads(executed.stdout)["data"]["counts"]["succeeded"] == 8
+    assert json.loads(status.stdout)["data"]["complete"] is True
+    assert json.loads(collected.stdout)["command"] == "workflow.collect"
+    analysis_payload = json.loads(Text.from_ansi(analyzed.stdout).plain)
+    assert analysis_payload["command"] == "workflow.analyze"
+    assert analysis_payload["data"]["counts"]["frames"] == 2
 
 
 def test_volume_cli_reads_and_samples_plain_elfcar(tmp_path: Path) -> None:
@@ -203,5 +228,6 @@ def test_volume_cli_reads_and_samples_plain_elfcar(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     payload = json.loads(Text.from_ansi(result.stdout).plain)
-    assert payload["shape"] == [2, 1, 1]
-    assert payload["sample"]["value"] == 0.5
+    assert payload["schema_version"] == "electrace.cli.v1"
+    assert payload["data"]["shape"] == [2, 1, 1]
+    assert payload["data"]["sample"]["value"] == 0.5

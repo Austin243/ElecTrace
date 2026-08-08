@@ -211,6 +211,27 @@ def test_workspace_inside_source_tree_is_rejected(tmp_path: Path) -> None:
         stage_workflow(manifest)
 
 
+def test_source_inside_managed_workspace_is_rejected_without_data_loss(tmp_path: Path) -> None:
+    manifest = _workflow_fixture(tmp_path)
+    staged = stage_workflow(manifest)
+    nested_source = staged.workspace / "images"
+    for index in range(2):
+        frame = nested_source / f"{index:02d}"
+        frame.mkdir(parents=True)
+        (frame / "POSCAR").write_text(POSCAR, encoding="utf-8")
+    sentinel = nested_source / "00/POSCAR"
+
+    document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    document["project"]["root"] = "workspace/images"
+    manifest.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"must not contain"):
+        stage_workflow(manifest, overwrite=True)
+
+    assert sentinel.read_text(encoding="utf-8") == POSCAR
+    assert staged.record_path.is_file()
+
+
 def test_symlinked_source_root_cannot_hide_workspace_inside_real_source(
     tmp_path: Path,
 ) -> None:

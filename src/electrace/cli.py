@@ -7,15 +7,18 @@ import platform
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Never, cast
+from typing import Any, Never, Protocol, cast
 
 import typer
+import typer.core as typer_core
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+from typer.core import TyperGroup
 
 from electrace import __version__
 from electrace.benchmark import benchmark_passed, run_synthetic_benchmark
+from electrace.cli_output import failure, normalize_error_code, serialize, success
 from electrace.config import ElecTraceConfig, load_config, write_default_config
 from electrace.demo import generate_demo
 from electrace.export import ExportDependencyError, write_json
@@ -31,12 +34,13 @@ from electrace.plugins import (
     plan_plugin_path,
 )
 from electrace.volume import read_vasp_grid
-from electrace.workflow import dump_starter_manifest
+from electrace.workflow import dump_starter_manifest, validate_workflow
 from electrace.workflow.collection import (
     analyze_collected_workflow,
     collect_workflow_outputs,
 )
 from electrace.workflow.operations import (
+    SlurmSubmissionError,
     prepare_slurm_scripts,
     run_staged_workflow,
     submit_staged_workflow,
@@ -44,8 +48,97 @@ from electrace.workflow.operations import (
 )
 from electrace.workflow.staging import stage_workflow
 
+_CLICK_RUNTIME = cast(Any, typer_core.__dict__.get("_click") or typer_core.__dict__["click"])
+_CLICK_EXCEPTION = cast(type[BaseException], _CLICK_RUNTIME.exceptions.ClickException)
+_CLICK_EXIT = cast(type[BaseException], _CLICK_RUNTIME.exceptions.Exit)
+
+
+class _ClickExceptionLike(Protocol):
+    exit_code: int
+
+    def format_message(self) -> str: ...
+
+
+def _command_from_args(args: Sequence[str]) -> str:
+    """Return a stable command identifier from a raw CLI argument vector."""
+
+    tokens = [token for token in args if not token.startswith("-")]
+    if not tokens:
+        return "electrace"
+    if tokens[0] == "workflow":
+        return f"workflow.{tokens[1]}" if len(tokens) > 1 else "workflow"
+    return tokens[0]
+
+
+def _click_error_code(exc: BaseException) -> str:
+    if type(exc).__name__ == "BadParameter" and "does not exist" in str(exc).casefold():
+        return "not_found"
+    return {
+        "NoSuchOption": "invalid_option",
+        "MissingParameter": "missing_parameter",
+        "BadParameter": "invalid_input",
+        "UsageError": "invalid_usage",
+    }.get(type(exc).__name__, "invalid_input")
+
+
+class _JsonAwareGroup(TyperGroup):
+    """Render parse-time Click failures as JSON whenever ``--json`` is present."""
+
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: Any,
+    ) -> Any:
+        arguments = list(sys.argv[1:] if args is None else args)
+        json_requested = any(
+            argument == "--json" or argument.startswith("--json=") for argument in arguments
+        )
+        if not json_requested:
+            return super().main(
+                args=arguments,
+                prog_name=prog_name,
+                complete_var=complete_var,
+                standalone_mode=standalone_mode,
+                windows_expand_args=windows_expand_args,
+                **extra,
+            )
+        try:
+            result = super().main(
+                args=arguments,
+                prog_name=prog_name,
+                complete_var=complete_var,
+                standalone_mode=False,
+                windows_expand_args=windows_expand_args,
+                **extra,
+            )
+        except _CLICK_EXCEPTION as raw_exc:
+            exc = cast(_ClickExceptionLike, raw_exc)
+            sys.stdout.write(
+                serialize(
+                    failure(
+                        _command_from_args(arguments),
+                        _click_error_code(raw_exc),
+                        exc.format_message(),
+                    )
+                )
+            )
+            if standalone_mode:
+                raise SystemExit(exc.exit_code) from raw_exc
+            raise _CLICK_EXIT(exc.exit_code) from raw_exc
+        if isinstance(result, int) and result != 0:
+            if standalone_mode:
+                raise SystemExit(result)
+            raise _CLICK_EXIT(result)
+        return result
+
+
 app = typer.Typer(
     name="electrace",
+    cls=_JsonAwareGroup,
     help="Track electronic features across periodic VASP paths.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
@@ -92,18 +185,127 @@ def main(
     """ElecTrace tracks electronic features across ordered periodic paths."""
 
 
-def _fail(message: str, *, code: int = 2) -> Never:
+def _emit_json(
+    command: str,
+    data: object | None = None,
+    *,
+    warnings: Sequence[str] = (),
+    artifacts: Sequence[object] = (),
+) -> None:
+    """Write one versioned JSON success envelope without terminal styling."""
+
+    sys.stdout.write(
+        serialize(
+            success(
+                command,
+                data,
+                warnings=warnings,
+                artifacts=artifacts,
+            )
+        )
+    )
+
+
+def _exception_code(exc: BaseException) -> str:
+    """Map handled CLI exceptions to stable machine-readable error codes."""
+
+    if isinstance(exc, PermissionError):
+        message = str(exc).casefold()
+        return (
+            "authorization_required"
+            if "confirmed=true" in message or "--yes" in message
+            else "permission_denied"
+        )
+    if isinstance(exc, ExportDependencyError):
+        return "dependency_unavailable"
+    if isinstance(exc, KeyError):
+        return "unknown_resource"
+    if isinstance(exc, RuntimeError):
+        return "execution_error"
+    return normalize_error_code(exc)
+
+
+def _fail(
+    message: str,
+    *,
+    code: int = 2,
+    as_json: bool = False,
+    command: str = "electrace",
+    error_code: str = "invalid_input",
+    details: object | None = None,
+    artifacts: Sequence[object] = (),
+) -> Never:
+    if as_json:
+        sys.stdout.write(
+            serialize(
+                failure(
+                    command,
+                    error_code,
+                    message,
+                    details=details,
+                    artifacts=artifacts,
+                )
+            )
+        )
+        raise typer.Exit(code=code)
     error_console.print(f"[bold red]Error:[/bold red] {escape(message)}")
     raise typer.Exit(code=code)
+
+
+def _fail_exception(
+    exc: BaseException,
+    *,
+    command: str,
+    as_json: bool,
+    code: int = 2,
+) -> Never:
+    message = str(exc).strip() or type(exc).__name__
+    _fail(
+        message,
+        code=code,
+        as_json=as_json,
+        command=command,
+        error_code=_exception_code(exc),
+    )
 
 
 def _load_optional_config(path: Path | None) -> ElecTraceConfig | None:
     if path is None:
         return None
-    try:
-        return load_config(path)
-    except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+    return load_config(path)
+
+
+def _artifact(path: Path, role: str) -> dict[str, str]:
+    return {"path": str(path.expanduser().resolve()), "role": role}
+
+
+def _analysis_summary(analysis: dict[str, Any], source: Path) -> dict[str, Any]:
+    project = analysis.get("project", {})
+    if not isinstance(project, dict):
+        raise ValueError("analysis project must be an object")
+    collections: dict[str, list[Any]] = {}
+    for name in ("frames", "tracks", "events", "warnings"):
+        value = analysis.get(name, [])
+        if not isinstance(value, list):
+            raise ValueError(f"analysis {name} must be an array")
+        collections[name] = value
+    return {
+        "source": str(source.expanduser().resolve()),
+        "project": project,
+        "counts": {
+            "frames": len(collections["frames"]),
+            "feature_observations": len(collections["tracks"]),
+            "events": len(collections["events"]),
+            "warnings": len(collections["warnings"]),
+        },
+    }
+
+
+def _analysis_warnings(analysis: dict[str, Any]) -> tuple[str, ...]:
+    value = analysis.get("warnings", [])
+    if not isinstance(value, list):
+        raise ValueError("analysis warnings must be an array")
+    return tuple(str(item) for item in value)
 
 
 @app.command()
@@ -123,13 +325,21 @@ def init(
         help="Ordered VASP image or static-series root.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace an existing configuration."),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Create a reviewed starter configuration for an existing VASP path."""
 
     try:
         output = write_default_config(config, input_root=images, overwrite=force)
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="init", as_json=as_json)
+    if as_json:
+        _emit_json(
+            "init",
+            {"configuration": str(output.resolve()), "images": str(images.resolve())},
+            artifacts=(_artifact(output, "configuration"),),
+        )
+        return
     console.print(f"[green]Created[/green] {output}")
     console.print("Review matching thresholds and plugin settings before analysis.")
 
@@ -149,7 +359,10 @@ def doctor(
 ) -> None:
     """Check the Python runtime, plugins, and configured frame inputs."""
 
-    loaded = _load_optional_config(config)
+    try:
+        loaded = _load_optional_config(config)
+    except (OSError, TypeError, ValueError) as exc:
+        _fail_exception(exc, command="doctor", as_json=as_json)
     plugin_config = loaded.plugins if loaded is not None else None
     frame_reports: tuple[FrameDoctorReport, ...] = ()
     reports: tuple[DoctorReport, ...] = ()
@@ -182,7 +395,8 @@ def doctor(
         "frames": [report.to_dict() for report in frame_reports],
     }
     if as_json:
-        console.print_json(data=payload)
+        warnings = (discovery_error,) if discovery_error is not None else ()
+        _emit_json("doctor", payload, warnings=warnings)
         return
     table = Table(title="ElecTrace environment")
     table.add_column("Component")
@@ -245,6 +459,7 @@ def demo(
         "--analyze/--no-analyze",
         help="Run the generated demonstration through the full pipeline.",
     ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Generate a deterministic synthetic path and optionally analyze it."""
 
@@ -252,7 +467,24 @@ def demo(
         config_path = generate_demo(output, overwrite=force)
         artifacts = run_project(config_path, overwrite=force) if analyze else None
     except (OSError, TypeError, ValueError, ExportDependencyError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="demo", as_json=as_json)
+    if as_json:
+        written = [_artifact(config_path, "configuration")]
+        data: dict[str, Any] = {
+            "output_directory": str(output.resolve()),
+            "configuration": str(config_path.resolve()),
+            "analyzed": artifacts is not None,
+        }
+        warnings: Sequence[str] = ()
+        if artifacts is not None:
+            written.extend(_artifact(path, "analysis_artifact") for path in artifacts.files)
+            data["analysis"] = _analysis_summary(
+                artifacts.analysis,
+                artifacts.output_directory,
+            )
+            warnings = tuple(str(item) for item in artifacts.analysis.get("warnings", []))
+        _emit_json("demo", data, warnings=warnings, artifacts=written)
+        return
     console.print(f"[green]Generated demo[/green] at {output.resolve()}")
     if artifacts is not None:
         console.print(
@@ -270,6 +502,7 @@ def benchmark(
         help="Path for the deterministic JSON benchmark report.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace an existing report."),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Run the offline synthetic matching and event regression benchmark."""
 
@@ -281,11 +514,29 @@ def benchmark(
         report = run_synthetic_benchmark()
         write_json(report, output)
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="benchmark", as_json=as_json)
     summary = cast(dict[str, Any], report["summary"])
     passed = benchmark_passed(report)
     status = "passed" if passed else "failed"
     color = "green" if passed else "red"
+    if as_json:
+        artifact = _artifact(output.resolve(), "benchmark_report")
+        if passed:
+            _emit_json(
+                "benchmark",
+                {"passed": True, "summary": summary},
+                artifacts=(artifact,),
+            )
+            return
+        _fail(
+            "synthetic benchmark failed",
+            code=1,
+            as_json=True,
+            command="benchmark",
+            error_code="benchmark_failed",
+            details={"passed": False, "summary": summary},
+            artifacts=(artifact,),
+        )
     console.print(
         f"[{color}]Synthetic benchmark {status}[/{color}]: "
         f"{summary['passed']}/{summary['cases']} cases · "
@@ -318,6 +569,7 @@ def analyze(
         help="Fail on incomplete discovery or ambiguous atom/feature correspondence.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace known result artifacts."),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Run periodic correspondence, event detection, and report generation."""
 
@@ -329,8 +581,17 @@ def analyze(
             overwrite=force,
         )
     except (OSError, TypeError, ValueError, ExportDependencyError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="analyze", as_json=as_json)
     analysis = artifacts.analysis
+    if as_json:
+        warnings = tuple(str(item) for item in analysis.get("warnings", []))
+        _emit_json(
+            "analyze",
+            _analysis_summary(analysis, artifacts.output_directory),
+            warnings=warnings,
+            artifacts=tuple(_artifact(path, "analysis_artifact") for path in artifacts.files),
+        )
+        return
     console.print(f"[green]Analysis complete[/green]: {artifacts.output_directory}")
     console.print(
         f"{len(analysis['frames'])} frames · {len(analysis['tracks'])} feature observations · "
@@ -346,10 +607,10 @@ def _read_analysis(target: Path) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(candidate.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        _fail(f"Cannot read {candidate}: {exc}")
+    except (OSError, RecursionError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read {candidate}: {exc}") from exc
     if not isinstance(payload, dict):
-        _fail(f"{candidate} does not contain an analysis object")
+        raise ValueError(f"{candidate} does not contain an analysis object")
     return cast(dict[str, Any], payload)
 
 
@@ -372,26 +633,77 @@ def inspect(
     target: Path = typer.Argument(
         ..., exists=True, resolve_path=True, help="Config, input path, or result bundle."
     ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Summarize a configuration, source series, or analysis bundle read-only."""
 
-    analysis = _read_analysis(target)
+    try:
+        analysis = _read_analysis(target)
+    except (OSError, TypeError, ValueError) as exc:
+        _fail_exception(exc, command="inspect", as_json=as_json)
     if analysis is not None:
-        _print_analysis_summary(analysis)
+        try:
+            summary = _analysis_summary(analysis, target)
+            warnings = _analysis_warnings(analysis)
+            if as_json:
+                _emit_json(
+                    "inspect",
+                    {"kind": "analysis", **summary},
+                    warnings=warnings,
+                )
+                return
+            _print_analysis_summary(analysis)
+        except (OSError, TypeError, ValueError) as exc:
+            _fail_exception(exc, command="inspect", as_json=as_json)
         return
     if target.is_file() and target.suffix.lower() == ".toml":
         try:
             configured_analysis, _ = load_and_analyze(target)
         except (OSError, TypeError, ValueError) as exc:
-            _fail(str(exc))
-        _print_analysis_summary(configured_analysis)
+            _fail_exception(exc, command="inspect", as_json=as_json)
+        try:
+            summary = _analysis_summary(configured_analysis, target)
+            warnings = _analysis_warnings(configured_analysis)
+            if as_json:
+                _emit_json(
+                    "inspect",
+                    {"kind": "configuration", **summary},
+                    warnings=warnings,
+                )
+                return
+            _print_analysis_summary(configured_analysis)
+        except (OSError, TypeError, ValueError) as exc:
+            _fail_exception(exc, command="inspect", as_json=as_json)
         return
     if not target.is_dir():
-        _fail("Expected electrace.toml, analysis.json, or an input directory")
+        _fail(
+            "Expected electrace.toml, analysis.json, or an input directory",
+            as_json=as_json,
+            command="inspect",
+        )
     try:
         sequence = load_sequence(target)
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="inspect", as_json=as_json)
+    if as_json:
+        _emit_json(
+            "inspect",
+            {
+                "kind": "ordered_series",
+                "target": str(target),
+                "frames": [
+                    {
+                        "index": frame.index,
+                        "label": frame.label,
+                        "atom_count": len(frame.atoms),
+                        "feature_count": len(frame.features),
+                        "energy_ev": frame.energy,
+                    }
+                    for frame in sequence.frames
+                ],
+            },
+        )
+        return
     table = Table(title=f"Ordered series: {target.name}")
     table.add_column("Index", justify="right")
     table.add_column("Label")
@@ -432,10 +744,18 @@ def plan(
         "--all-frames",
         help="Plan deterministically for every frame discovered below FRAME.",
     ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Wrap the command plan in the versioned CLI JSON envelope.",
+    ),
 ) -> None:
     """Print an external-tool command plan without executing it."""
 
-    loaded = _load_optional_config(config)
+    try:
+        loaded = _load_optional_config(config)
+    except (OSError, TypeError, ValueError) as exc:
+        _fail_exception(exc, command="plan", as_json=as_json)
     plugin_name = plugin.strip().lower()
     plugin_config = loaded.plugins.get(plugin_name, {}) if loaded is not None else None
     try:
@@ -452,13 +772,15 @@ def plan(
                     loaded.inputs.fallback_structure_name if loaded is not None else "POSCAR"
                 ),
             )
-            console.print_json(
-                data={
-                    "plugin": plugin_name,
-                    "path": str(frame),
-                    "plans": [command.to_dict() for command in commands],
-                }
-            )
+            payload = {
+                "plugin": plugin_name,
+                "path": str(frame),
+                "plans": [command.to_dict() for command in commands],
+            }
+            if as_json:
+                _emit_json("plan", payload)
+            else:
+                console.print_json(data=payload)
             return
         if loaded is not None and plugin_name == "critic2":
             plugin_config = dict(plugin_config or {})
@@ -470,8 +792,11 @@ def plan(
             configuration=plugin_config,
         )
     except (KeyError, OSError, ValueError, TypeError) as exc:
-        _fail(str(exc))
-    console.print_json(data=command.to_dict())
+        _fail_exception(exc, command="plan", as_json=as_json)
+    if as_json:
+        _emit_json("plan", command.to_dict())
+    else:
+        console.print_json(data=command.to_dict())
 
 
 def _fractional_coordinate(value: str) -> tuple[float, float, float]:
@@ -513,8 +838,11 @@ def volume(
                 "value": grid.sample(coordinate),
             }
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
-    if as_json or sample is not None:
+        _fail_exception(exc, command="volume", as_json=as_json)
+    if as_json:
+        _emit_json("volume", payload)
+        return
+    if sample is not None:
         console.print_json(data=payload)
         return
     table = Table(title=f"VASP grid: {path.name}")
@@ -550,15 +878,63 @@ def workflow_init(
         help="Ordered VASP NEB or static-series root.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace an existing manifest."),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Create a reviewed YAML workflow with explicit executable settings."""
 
     try:
         output = dump_starter_manifest(manifest, root=str(images), overwrite=force)
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="workflow.init", as_json=as_json)
+    if as_json:
+        _emit_json(
+            "workflow.init",
+            {"manifest": str(output.resolve()), "images": str(images)},
+            artifacts=(_artifact(output.resolve(), "workflow_manifest"),),
+        )
+        return
     console.print(f"[green]Created workflow[/green] {output.resolve()}")
     console.print("Set executable paths and provide reviewed VASP/template inputs before staging.")
+
+
+@workflow_app.command("validate")
+def workflow_validate(
+    manifest: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+        help="ElecTrace workflow YAML.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Resolve and validate the complete workflow plan without writing anything."""
+
+    try:
+        validation = validate_workflow(manifest)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        _fail(
+            str(exc),
+            as_json=as_json,
+            command="workflow.validate",
+            error_code="validation_failed",
+        )
+    payload = validation.to_dict()
+    if as_json:
+        _emit_json(
+            "workflow.validate",
+            payload,
+            warnings=validation.warnings,
+        )
+        return
+    console.print(
+        f"[green]Workflow valid[/green]: {len(validation.resolved_jobs)} jobs across "
+        f"{len(validation.selected_frames)} selected frames"
+    )
+    console.print(f"Workspace: {validation.workspace}")
+    console.print(f"Scheduler: {validation.scheduler.kind}")
+    for warning in validation.warnings:
+        console.print(f"[yellow]Warning:[/yellow] {escape(warning)}")
 
 
 @workflow_app.command("stage")
@@ -575,13 +951,21 @@ def workflow_stage(
         "--force",
         help="Replace only an existing marker-protected ElecTrace workspace.",
     ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Select frames and stage auditable jobs without executing anything."""
 
     try:
         staged = stage_workflow(manifest, overwrite=force)
     except (OSError, TypeError, ValueError, KeyError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="workflow.stage", as_json=as_json)
+    if as_json:
+        _emit_json(
+            "workflow.stage",
+            staged.to_dict(),
+            artifacts=(_artifact(staged.record_path, "workspace_record"),),
+        )
+        return
     console.print(f"[green]Staged[/green] {len(staged.jobs)} jobs in {staged.workspace}")
     console.print(f"Selected frames: {', '.join(frame.label for frame in staged.frames)}")
 
@@ -611,6 +995,7 @@ def workflow_run(
         "--keep-going",
         help="Continue starting independent jobs after a failure.",
     ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Execute a staged local DAG; external commands require ``--yes``."""
 
@@ -622,8 +1007,28 @@ def workflow_run(
             stop_on_error=not keep_going,
         )
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="workflow.run", as_json=as_json)
     failures = [result for result in results if not result.succeeded]
+    payload = {
+        "jobs": [result.to_dict() for result in results],
+        "counts": {
+            "total": len(results),
+            "succeeded": len(results) - len(failures),
+            "failed": len(failures),
+        },
+    }
+    if as_json:
+        if failures:
+            _fail(
+                f"{len(failures)} workflow job(s) failed",
+                code=1,
+                as_json=True,
+                command="workflow.run",
+                error_code="workflow_jobs_failed",
+                details=payload,
+            )
+        _emit_json("workflow.run", payload)
+        return
     console.print(
         f"[{'red' if failures else 'green'}]Workflow finished[/]: "
         f"{len(results) - len(failures)}/{len(results)} jobs succeeded"
@@ -659,12 +1064,24 @@ def workflow_submit(
         help="sbatch-compatible executable or wrapper path.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace generated Slurm scripts."),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Prepare Slurm scripts and optionally submit one job per selected frame."""
 
     try:
         if not confirmed:
             scripts = prepare_slurm_scripts(manifest, job_name=job_name, overwrite=force)
+            if as_json:
+                _emit_json(
+                    "workflow.submit",
+                    {
+                        "submitted": False,
+                        "job_name": job_name,
+                        "scripts": [str(path) for path in scripts],
+                    },
+                    artifacts=tuple(_artifact(path, "slurm_script") for path in scripts),
+                )
+                return
             console.print(f"[green]Prepared[/green] {len(scripts)} Slurm scripts")
             for script_path in scripts:
                 console.print(f"  [dim]{script_path}[/dim]")
@@ -677,8 +1094,47 @@ def workflow_submit(
             confirmed=True,
             overwrite_scripts=force,
         )
+    except SlurmSubmissionError as exc:
+        details = {
+            "phase": exc.phase,
+            "failed_script": str(exc.failed_script) if exc.failed_script is not None else None,
+            "partial_submissions": dict(exc.partial_submissions),
+            "submission_complete": exc.submission_complete,
+            "record_path": str(exc.record_path),
+        }
+        partial_artifacts = tuple(
+            _artifact(Path(path), "submitted_slurm_script") for path in exc.partial_submissions
+        )
+        _fail(
+            str(exc),
+            code=1,
+            as_json=as_json,
+            command="workflow.submit",
+            error_code="slurm_submission_failed",
+            details=details,
+            artifacts=(
+                *partial_artifacts,
+                _artifact(exc.record_path, "slurm_submission_record"),
+            ),
+        )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="workflow.submit", as_json=as_json)
+    if as_json:
+        record_path = Path(next(iter(submissions))).parent / "submissions.json"
+        _emit_json(
+            "workflow.submit",
+            {
+                "submitted": True,
+                "job_name": job_name,
+                "submissions": submissions,
+                "submission_record": str(record_path),
+            },
+            artifacts=(
+                *(_artifact(Path(path), "submitted_slurm_script") for path in submissions),
+                _artifact(record_path, "slurm_submission_record"),
+            ),
+        )
+        return
     console.print(f"[green]Submitted[/green] {len(submissions)} Slurm jobs")
     for submitted_script, job_id in submissions.items():
         console.print(f"  {job_id}: [dim]{submitted_script}[/dim]")
@@ -693,14 +1149,22 @@ def workflow_status_command(
         resolve_path=True,
         help="Staged workflow YAML.",
     ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Wrap status in the versioned CLI JSON envelope.",
+    ),
 ) -> None:
     """Report which staged inputs and expected outputs currently exist."""
 
     try:
         payload = workflow_status(manifest)
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
-    console.print_json(data=payload)
+        _fail_exception(exc, command="workflow.status", as_json=as_json)
+    if as_json:
+        _emit_json("workflow.status", payload)
+    else:
+        console.print_json(data=payload)
 
 
 @workflow_app.command("collect")
@@ -717,13 +1181,26 @@ def workflow_collect(
         "--force",
         help="Replace only the marker-protected collected analysis tree.",
     ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Validate and collect every selected descriptor output for analysis."""
 
     try:
         collected = collect_workflow_outputs(manifest, overwrite=force)
     except (OSError, TypeError, ValueError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="workflow.collect", as_json=as_json)
+    if as_json:
+        _emit_json(
+            "workflow.collect",
+            {
+                "configuration": str(collected.config_path),
+                "input_root": str(collected.input_root),
+                "descriptor_root": str(collected.descriptor_root),
+                "files": [str(path) for path in collected.files],
+            },
+            artifacts=tuple(_artifact(path, "collected_artifact") for path in collected.files),
+        )
+        return
     console.print(f"[green]Collected[/green] workflow evidence at {collected.config_path.parent}")
     console.print(f"Analysis configuration: {collected.config_path}")
 
@@ -747,6 +1224,7 @@ def workflow_analyze(
         "--force",
         help="Replace marker-protected collected evidence and known result artifacts.",
     ),
+    as_json: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Collect completed outputs, track changes, and generate the result bundle."""
 
@@ -757,8 +1235,17 @@ def workflow_analyze(
             overwrite=force,
         )
     except (OSError, TypeError, ValueError, ExportDependencyError) as exc:
-        _fail(str(exc))
+        _fail_exception(exc, command="workflow.analyze", as_json=as_json)
     analysis = artifacts.analysis
+    if as_json:
+        warnings = tuple(str(item) for item in analysis.get("warnings", []))
+        _emit_json(
+            "workflow.analyze",
+            _analysis_summary(analysis, artifacts.output_directory),
+            warnings=warnings,
+            artifacts=tuple(_artifact(path, "analysis_artifact") for path in artifacts.files),
+        )
+        return
     console.print(f"[green]Workflow analysis complete[/green]: {artifacts.output_directory}")
     console.print(
         f"{len(analysis['frames'])} frames · {len(analysis['tracks'])} feature observations · "

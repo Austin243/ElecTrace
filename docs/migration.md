@@ -22,13 +22,22 @@ identifiers.
 | HDF5 schema label | `electrace.analysis` |
 | Default result directory | `electrace-results/` |
 | Default demo directory | `.electrace-demo/` |
-| Version field from `doctor --json` | `electrace_version` |
+| Version field from `doctor --json` | `data.electrace_version` in `electrace.cli.v1` |
 | Built-in demo producer | `electrace-demo` |
 
 Existing TOML table names and previously supported keys are unchanged. New checkouts
 also expose `inputs.descriptor_source` to select local, external, or merged descriptor
 discovery explicitly; newly generated configurations select `auto`. The canonical
 filename, generated defaults, program identifiers, and namespaces changed.
+
+## Machine-readable CLI output in 0.1.0a4
+
+Explicit `--json` output now uses the `electrace.cli.v1` envelope on every operational
+subcommand. Consumers of the earlier pre-release shapes must read the former
+`doctor --json` and `volume --json` payloads below `data`. `plan` and `workflow status`
+retain their original raw JSON when `--json` is omitted; adding the flag requests the
+new envelope. Help and version output remain human-readable and should be requested
+without `--json`.
 
 ## Migrate a development checkout
 

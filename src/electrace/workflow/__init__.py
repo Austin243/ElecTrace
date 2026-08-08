@@ -42,6 +42,11 @@ from .staging import (
     load_staged_workflow,
     stage_workflow,
 )
+from .validation import (
+    WORKFLOW_VALIDATION_SCHEMA_VERSION,
+    WorkflowValidation,
+    validate_workflow,
+)
 
 __all__ = [
     "COLLECTION_DIRECTORY",
@@ -49,6 +54,7 @@ __all__ = [
     "COLLECTION_SCHEMA_VERSION",
     "MAX_WORKFLOW_MANIFEST_BYTES",
     "WORKFLOW_SCHEMA_VERSION",
+    "WORKFLOW_VALIDATION_SCHEMA_VERSION",
     "WORKSPACE_RECORD",
     "WORKSPACE_SCHEMA_VERSION",
     "CollectionArtifacts",
@@ -65,6 +71,7 @@ __all__ = [
     "WorkflowManifestError",
     "WorkflowProject",
     "WorkflowStep",
+    "WorkflowValidation",
     "analyze_collected_workflow",
     "collect_workflow_outputs",
     "descriptor_outputs",
@@ -77,4 +84,5 @@ __all__ = [
     "stage_workflow",
     "starter_workflow_manifest",
     "validate_frame_selection",
+    "validate_workflow",
 ]

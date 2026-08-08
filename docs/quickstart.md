@@ -38,10 +38,10 @@ records. Without a configuration it checks the runtime and adapter executables; 
 initialization, `electrace doctor --config electrace.toml` deterministically checks
 every discovered frame and its required plugin inputs.
 
-With `--json`, unconfigured executable checks appear in the top-level `plugins` array.
-A configured path check uses the top-level `frames` array, whose entries identify each
-frame and contain that frame's plugin reports; consumers should not mistake an empty
-top-level `plugins` array for a skipped configured-path check.
+With `--json`, unconfigured executable checks appear in the `data.plugins` array. A
+configured path check uses `data.frames`, whose entries identify each frame and contain
+that frame's plugin reports; consumers should not mistake an empty `data.plugins` array
+for a skipped configured-path check.
 
 ## 3. Run the deterministic demo
 
@@ -149,20 +149,20 @@ shell-free plan for one plugin, frame, and capability:
 
 ```bash
 electrace plan critic2 /absolute/path/to/neb-images/03 \
-  --capability qtaim_critical_points --config electrace.toml
+  --capability qtaim_critical_points --config electrace.toml --json
 ```
 
 Generate a deterministic plan for every discovered frame by passing the path root:
 
 ```bash
 electrace plan critic2 /absolute/path/to/neb-images --all-frames \
-  --capability qtaim_critical_points --config electrace.toml
+  --capability qtaim_critical_points --config electrace.toml --json
 ```
 
-The one-frame form emits a command-plan object directly. The batch form emits
-`{"plugin": ..., "path": ..., "plans": [...]}`, with `plans` in deterministic frame
-order. Each element contains a canonical `frame` record and a `command` that follows
-the same command-plan contract as the one-frame form.
+With `--json`, the one-frame or batch plan is returned under `data` in an
+`electrace.cli.v1` envelope. Batch `data.plans` remains in deterministic frame order.
+Each element contains a canonical `frame` record and a `command` that follows the same
+command-plan contract as the one-frame form.
 
 The command prints JSON containing the argument vector, working directory, standard
 input, required inputs, and expected outputs. Review it before an authorized workflow
@@ -182,9 +182,13 @@ manifest:
 electrace workflow init electrace-workflow.yaml \
   --images /absolute/path/to/neb-images
 # Edit and review the YAML, executable paths, templates, frames, and scheduler.
+electrace workflow validate electrace-workflow.yaml --json
 electrace workflow stage electrace-workflow.yaml
-electrace workflow status electrace-workflow.yaml
+electrace workflow status electrace-workflow.yaml --json
 ```
+
+`workflow validate` resolves the complete selected job graph without creating the
+workspace or writing any file.
 
 For `scheduler.kind: local`, execution requires an explicit gate:
 

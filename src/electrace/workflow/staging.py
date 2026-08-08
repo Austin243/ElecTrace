@@ -25,6 +25,7 @@ from electrace.provenance import sha256_file
 from ._files import (
     absolute_lexical,
     atomic_write_json,
+    atomic_write_text,
     read_limited_text,
     symlink_component,
 )
@@ -273,7 +274,7 @@ def _apply_incar_overrides(path: Path, raw: JSONValue | None) -> None:
     for key, value in overrides.items():
         if key not in written:
             result.append(f"{key} = {value}")
-    path.write_text("\n".join(result).rstrip() + "\n", encoding="utf-8")
+    atomic_write_text(path, "\n".join(result).rstrip() + "\n")
 
 
 def _step_outputs(step: WorkflowStep) -> tuple[str, ...]:
@@ -548,9 +549,14 @@ def _workspace_paths(manifest_path: Path, manifest: WorkflowManifest) -> tuple[P
     # symlink while placing the workspace inside that symlink's real target.
     source_root = _resolve_from(base, manifest.project.root).resolve()
     workspace = _resolve_from(base, manifest.project.workspace)
-    if workspace == source_root or source_root in workspace.parents:
+    if (
+        workspace == source_root
+        or source_root in workspace.parents
+        or workspace in source_root.parents
+    ):
         raise ValueError(
-            "project.workspace must be outside project.root so source calculations remain read-only"
+            "project.workspace must be outside project.root and must not contain it so "
+            "source calculations remain read-only"
         )
     if workspace == Path(workspace.anchor) or workspace == Path.home():
         raise ValueError(f"refusing unsafe workflow workspace: {workspace}")
