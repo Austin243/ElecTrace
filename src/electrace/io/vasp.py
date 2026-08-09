@@ -236,54 +236,6 @@ def parse_poscar(path: str | Path) -> PoscarData:
     )
 
 
-def poscar_to_frame(
-    data: PoscarData,
-    *,
-    index: int = 0,
-    label: str = "",
-    energy: float | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> Frame:
-    """Convert parsed POSCAR data into ElecTrace's core ``Frame`` model."""
-
-    atoms = []
-    for atom_index, (element, position, flags) in enumerate(
-        zip(
-            data.elements,
-            data.fractional_positions,
-            data.selective_dynamics,
-            strict=True,
-        )
-    ):
-        attributes: dict[str, Any] = {}
-        if flags is not None:
-            attributes["selective_dynamics"] = flags
-        atoms.append(
-            Atom(
-                index=atom_index,
-                element=element,
-                fractional_position=position,
-                attributes=attributes,
-            )
-        )
-    frame_metadata: dict[str, Any] = {
-        "comment": data.comment,
-        "coordinate_mode": data.coordinate_mode,
-        "symbols_inferred": data.symbols_inferred,
-    }
-    if metadata:
-        frame_metadata.update(metadata)
-    return Frame(
-        index=index,
-        label=label or str(index),
-        cell=data.cell,
-        atoms=tuple(atoms),
-        features=(),
-        energy=energy,
-        metadata=frame_metadata,
-    )
-
-
 def read_poscar(
     path: str | Path,
     *,
@@ -295,13 +247,31 @@ def read_poscar(
     """Read a POSCAR/CONTCAR directly into an ElecTrace ``Frame``."""
 
     source = Path(path)
-    frame_metadata = {"structure_source": str(source)}
+    data = parse_poscar(source)
+    frame_metadata: dict[str, Any] = {
+        "structure_source": str(source),
+        "comment": data.comment,
+        "coordinate_mode": data.coordinate_mode,
+        "symbols_inferred": data.symbols_inferred,
+    }
     if metadata:
         frame_metadata.update(metadata)
-    return poscar_to_frame(
-        parse_poscar(source),
+    atoms = tuple(
+        Atom(
+            index=atom_index,
+            element=element,
+            fractional_position=position,
+            attributes={"selective_dynamics": flags} if flags is not None else {},
+        )
+        for atom_index, (element, position, flags) in enumerate(
+            zip(data.elements, data.fractional_positions, data.selective_dynamics, strict=True)
+        )
+    )
+    return Frame(
         index=index,
         label=label or source.parent.name or source.name,
+        cell=data.cell,
+        atoms=atoms,
         energy=energy,
         metadata=frame_metadata,
     )
@@ -319,30 +289,15 @@ def read_vasp_energy(path: str | Path) -> float | None:
     source = Path(path)
     if not source.is_file():
         return None
-    toten: float | None = None
-    e0: float | None = None
-    free: float | None = None
+    patterns = (_OSZICAR_E0, _OSZICAR_F) if source.name.upper() == "OSZICAR" else (_TOTEN,)
+    values: list[float | None] = [None] * len(patterns)
     try:
         with source.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                for pattern, target in (
-                    (_TOTEN, "toten"),
-                    (_OSZICAR_E0, "e0"),
-                    (_OSZICAR_F, "free"),
-                ):
+                for index, pattern in enumerate(patterns):
                     match = pattern.search(line)
-                    if match is None:
-                        continue
-                    value = _float(match.group(1), context="VASP energy")
-                    if target == "toten":
-                        toten = value
-                    elif target == "e0":
-                        e0 = value
-                    else:
-                        free = value
+                    if match is not None:
+                        values[index] = _float(match.group(1), context="VASP energy")
     except OSError:
         return None
-    if source.name.upper() == "OSZICAR":
-        return e0 if e0 is not None else free
-    # Be permissive when a caller passes content with a nonstandard filename.
-    return toten if toten is not None else (e0 if e0 is not None else free)
+    return next((value for value in values if value is not None), None)

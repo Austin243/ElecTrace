@@ -1,119 +1,62 @@
 # Scientific scope and limitations
 
-ElecTrace is designed to organize evidence across a path. It is not a replacement
-for electronic-structure theory, convergence testing, or scientific judgment.
+ElecTrace organizes evidence across an ordered path. It does not replace electronic-
+structure theory, convergence testing, or scientific judgment.
 
-## ElecTrace 0.1 scope
+## Current scope
 
-The first release focuses on:
+ElecTrace supports VASP-style NEB and static-series directories with consistent atom
+content. It records frame provenance, matches atoms and normalized electronic
+features under periodic boundary conditions, proposes birth/death and conservation-
+backed split/merge events, tracks descriptor changes, and produces an auditable
+report. Inputs can include BaderKit, critic2, LOBSTER, Bader, Chargemol/DDEC, and
+canonical ElecTrace feature records.
 
-- VASP-style ordered NEB image directories and static pressure-series directories;
-- fixed or closely related periodic cells with consistent atom content;
-- deterministic frame discovery and structure provenance;
-- periodic atom correspondence and validation;
-- normalized BaderKit and critic2 feature records;
-- optional LOBSTER bonding descriptors;
-- optional Chargemol/DDEC atomic-charge records;
-- experimental deformation-aware feature costs and periodic voxel-overlap evidence;
-- birth/death candidates and conservation-gated split/merge hyperedges;
-- descriptor change points and an automated, auditable report;
-- a non-executing plugin-planning boundary plus a separate, confirmation-gated local
-  and Slurm workflow orchestrator.
+The separate workflow layer can stage and explicitly launch user-configured VASP and
+analysis programs locally or through Slurm. It does not create pseudopotentials,
+choose electronic-structure settings, or establish convergence.
 
-Chargemol planning and conservative DDEC charge parsing are implemented, but external
-DDEC execution is never implicit and cross-method charge fusion remains uncalibrated.
+The current release does not claim:
 
-## Explicitly outside 0.1 claims
-
-- Scientifically validated feature identity across large or reconstructive cell
-  changes.
-- Calibrated basin-lineage classification or known false-event rates.
-- Automated grid-refinement auditing of birth/death/split/merge candidates.
-- AIMD/MLIP-scale sparse-frame selection and temporal statistics.
-- Calibrated probabilistic confidence or universal event thresholds.
-- Automated construction of a reaction mechanism or oxidation-state assignment.
-- ElecTrace-generated electronic-structure physics, pseudopotential management, or
-  convergence automation. The workflow layer can launch a user-reviewed VASP job;
-  it does not make that job scientifically appropriate or converged.
+- validated feature identity through reconstruction or large cell changes;
+- calibrated event probabilities, false-event rates, or universal thresholds;
+- automatic grid-refinement or electronic-convergence audits;
+- a unique oxidation state, bond definition, reaction mechanism, or causal event;
+- AIMD-scale temporal statistics; or
 - Quantum ESPRESSO or CP2K ingestion.
 
-These are research goals in the [roadmap](roadmap.md), not implied features.
+## Interpreting results
 
-## What an event means
+An event means selected, method-dependent descriptors changed between sampled frames
+under recorded thresholds. Agreement among charge, ELF/QTAIM, and ICOHP/ICOBI
+evidence can strengthen an interpretation but does not make it unique.
 
-An ElecTrace event is a structured observation that selected descriptors changed
-between ordered frames under recorded thresholds. For example, a report may combine
-the appearance of a critical point, a change in ELF evidence, stronger ICOHP, and a
-charge shift. Agreement makes the interpretation better supported; it does not make
-any descriptor uniquely correct or establish causality.
+- Bader and DDEC charges depend on the partitioning scheme and are not automatically
+  formal oxidation states.
+- A bond critical point or bond path is a QTAIM feature, not a universal bond test.
+- ELF topology depends on the wavefunction or density, grid, and analysis settings.
+- COHP/COBI depends on basis, projection, and integration choices; ICOHP is not a
+  universal bond energy.
+- Event location is limited by the spacing of the supplied frames.
 
-In particular:
+## Numerical limitations
 
-- A Bader or DDEC charge is partitioning-scheme dependent and is not automatically
-  an oxidation state. ElecTrace preserves BaderKit's explicitly supplied
-  `oxidation_states` values when present but does not derive or validate a unique
-  formal oxidation-state assignment.
-- A bond critical point or bond path is a QTAIM topological feature, not by itself a
-  universal definition of a chemical bond.
-- ELF basin topology depends on the underlying wavefunction/density, numerical grid,
-  and analysis settings.
-- COHP/COBI values depend on basis/projection choices and the energy integration
-  convention.
-- A NEB path is a discretized model path; event location is bounded by image spacing
-  unless additional images or interpolation evidence are supplied.
+Small basins and near-degenerate critical points may appear or disappear with grid
+resolution. Consecutive-frame persistence filters isolated labels but cannot replace
+a convergence study. For property changes, persistence tracks the matched lineage,
+not whether the numerical change remains above its threshold in every later frame.
 
-## Numerical and methodological limitations
+Fractional coordinates handle boundary crossings, and deformation-aware distances
+support related cells. Large reconstruction or atom permutation is not uniquely
+solvable. The matcher reports one deterministic best assignment and does not
+enumerate near-optimal alternatives, so close mappings require manual review.
 
-### Grid sensitivity
+Inconsistent functionals, pseudopotentials, charge states, spin treatments, smearing,
+grids, or projection settings can create artificial changes. Provenance is retained
+when available but cannot make inconsistent calculations comparable. Confidence
+labels are deterministic thresholds, not calibrated probabilities.
 
-Small basins, non-nuclear attractors, and near-degenerate critical points may appear
-or disappear with grid resolution. Important events require grid-refinement checks.
-Persistence across adjacent frames can reduce isolated noise but cannot replace a
-convergence study.
-
-### Periodic geometry
-
-Fractional coordinates remove trivial boundary crossings, and the core includes
-deformation-aware metrics for changing cells. Those metrics do not make large cell
-deformation, reconstruction, or atom permutation uniquely solvable. Near-equal
-complete-assignment costs are an ambiguity, not a license to choose an attractive
-story. ElecTrace records the selected and alternative assignments and suppresses
-affected claims in permissive mode; the configured tolerance remains an experimental,
-uncalibrated cost threshold.
-
-### Path sampling
-
-Change-point timing depends on the sampled images. The absence of a detected event
-between widely spaced images is weak evidence. Conversely, repeated nearly identical
-images can make persistence appear stronger than the underlying path justifies.
-Events too near the final frame to satisfy the configured persistence window are
-reported as right-censored rather than silently classified as confirmed or transient.
-
-### Method heterogeneity
-
-Comparing frames generated with different functionals, pseudopotentials, charge
-states, spin treatments, smearing, grids, or projection settings can create apparent
-events. ElecTrace records provenance where available but cannot make an inconsistent
-series physically comparable.
-
-### Confidence language
-
-Until confidence models are calibrated against labeled benchmarks, terms such as
-“low,” “medium,” and “high” are deterministic rule labels, not statistical
-probabilities. Configured hysteresis and sustained-state persistence can suppress
-transient labels, and `minimum_event_confidence` can suppress low-scoring events, but
-neither operation calibrates confidence. Reports must expose the underlying evidence
-and thresholds.
-
-## Minimum scientific review
-
-Before publishing a conclusion:
-
-1. inspect the source calculations and verify path ordering;
-2. confirm electronic-structure and plugin settings are consistent;
-3. repeat important observations under tighter grid and DFT convergence;
-4. vary event thresholds and matching tolerances;
-5. inspect ambiguous mappings and missing/partial plugin results;
-6. compare at least two independent descriptors when the conclusion permits;
-7. report negative and conflicting evidence, not only supporting features;
-8. archive the configuration, normalized records, hashes, and software versions.
+Before drawing a conclusion, verify path order and calculation settings, repeat
+important observations with tighter convergence and grid settings, vary matching and
+event thresholds, inspect surprising mappings or missing evidence, and archive the
+configuration, normalized records, hashes, and software versions.

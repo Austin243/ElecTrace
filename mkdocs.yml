@@ -16,19 +16,9 @@ theme:
     accent: cyan
 nav:
   - Overview: index.md
-  - Quickstart: quickstart.md
-  - External workflows: workflows.md
+  - Using ElecTrace: workflows.md
   - Coding agents: agents.md
   - Scientific scope: scientific-scope.md
-  - Architecture: architecture.md
-  - Integration:
-      - Plugin protocol v1: spec/plugin-protocol-v1.md
-  - Synthetic benchmark: benchmarking.md
-  - Reproducibility: reproducibility.md
-  - Pre-release migration: migration.md
-  - Roadmap: roadmap.md
-  - Governance: governance.md
-  - Sources: sources.md
 markdown_extensions:
   - admonition
   - attr_list

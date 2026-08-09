@@ -14,7 +14,7 @@ import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from itertools import combinations, islice
+from itertools import islice
 from typing import Any
 
 import numpy as np
@@ -25,7 +25,7 @@ from .geometry import (
     deformation_aware_distance,
     periodic_voxel_overlap,
 )
-from .models import Atom, Feature, Frame, MatchEdge, MatchRelation, MatchResult
+from .models import Atom, Feature, Frame, MatchEdge, MatchResult
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
@@ -42,7 +42,6 @@ class AtomMatchConfig:
     element_mismatch_cost: float = 4.0
     attribute_scales: dict[str, float] = field(default_factory=dict)
     attribute_weight: float = 0.25
-    ambiguity_tolerance: float = 0.05
     pbc: tuple[bool, bool, bool] = (True, True, True)
 
     def __post_init__(self) -> None:
@@ -53,7 +52,6 @@ class AtomMatchConfig:
             self.element_mismatch_cost, "element_mismatch_cost"
         )
         self.attribute_weight = _nonnegative(self.attribute_weight, "attribute_weight")
-        self.ambiguity_tolerance = _nonnegative(self.ambiguity_tolerance, "ambiguity_tolerance")
         self.attribute_scales = {
             str(key): _positive(value, f"attribute scale {key!r}")
             for key, value in self.attribute_scales.items()
@@ -94,7 +92,6 @@ class FeatureMatchConfig:
     conservation_tolerance: float = 0.35
     max_group_size: int = 6
     min_split_merge_confidence: float = 0.15
-    ambiguity_tolerance: float = 0.05
     pbc: tuple[bool, bool, bool] = (True, True, True)
 
     def __post_init__(self) -> None:
@@ -119,7 +116,6 @@ class FeatureMatchConfig:
             "kind_mismatch_cost",
             "conservation_tolerance",
             "min_split_merge_confidence",
-            "ambiguity_tolerance",
         ):
             setattr(self, name, _nonnegative(getattr(self, name), name))
         if self.min_split_merge_confidence > 1.0:
@@ -316,181 +312,6 @@ def _augmented_unmatched_cost(pair_cost: FloatArray, unmatched_cost: float) -> F
     return augmented
 
 
-def _assignment_snapshot(
-    assignment: set[tuple[int, int]],
-    pair_cost: FloatArray,
-    source_ids: Sequence[Any],
-    target_ids: Sequence[Any],
-) -> dict[str, Any]:
-    rows, columns = pair_cost.shape
-    matches = sorted(
-        (
-            {
-                "source_id": source_ids[row],
-                "target_id": target_ids[column],
-            }
-            for row, column in assignment
-            if row < rows and column < columns and math.isfinite(pair_cost[row, column])
-        ),
-        key=lambda item: (str(item["source_id"]), str(item["target_id"])),
-    )
-    matched_sources = {
-        row
-        for row, column in assignment
-        if row < rows and column < columns and math.isfinite(pair_cost[row, column])
-    }
-    matched_targets = {
-        column
-        for row, column in assignment
-        if row < rows and column < columns and math.isfinite(pair_cost[row, column])
-    }
-    return {
-        "matches": matches,
-        "unmatched_previous": [
-            source_ids[row]
-            for row in sorted(
-                set(range(rows)) - matched_sources, key=lambda item: str(source_ids[item])
-            )
-        ],
-        "unmatched_current": [
-            target_ids[column]
-            for column in sorted(
-                set(range(columns)) - matched_targets,
-                key=lambda item: str(target_ids[item]),
-            )
-        ],
-    }
-
-
-def _assignment_ambiguities(
-    pair_cost: FloatArray,
-    unmatched_cost: float,
-    matched: Sequence[tuple[int, int]],
-    unmatched_rows: set[int],
-    unmatched_columns: set[int],
-    optimal_total: float,
-    source_ids: Sequence[Any],
-    target_ids: Sequence[Any],
-    tolerance: float,
-) -> tuple[list[dict[str, Any]], dict[tuple[int, int], dict[str, Any]]]:
-    """Find selected decisions with a complete near-optimal alternative assignment.
-
-    Cheap local gaps screen the common, clearly separated case.  Every reported
-    ambiguity is then verified by resolving the complete assignment with one
-    selected scientific decision forbidden.  This avoids treating a local tie
-    as ambiguous when the rest of the global assignment resolves it.
-    """
-
-    rows, columns = pair_cost.shape
-    if rows == 0 or columns == 0:
-        return [], {}
-    augmented = _augmented_unmatched_cost(pair_cost, unmatched_cost)
-    decisions: dict[tuple[int, int], tuple[str, int | None, int | None]] = {}
-    candidates: set[tuple[int, int]] = set()
-    for row, column in matched:
-        coordinate = (row, column)
-        decisions[coordinate] = ("match", row, column)
-        local_gap = _ambiguity_gap(pair_cost, row, column)
-        unmatched_gap = 2.0 * unmatched_cost - float(pair_cost[row, column])
-        if min(local_gap, unmatched_gap) <= tolerance:
-            candidates.add(coordinate)
-    for row in unmatched_rows:
-        coordinate = (row, columns + row)
-        decisions[coordinate] = ("unmatched_previous", row, None)
-        if np.isfinite(pair_cost[row]).any():
-            candidates.add(coordinate)
-    for column in unmatched_columns:
-        coordinate = (rows + column, column)
-        decisions[coordinate] = ("unmatched_current", None, column)
-        if np.isfinite(pair_cost[:, column]).any():
-            candidates.add(coordinate)
-
-    records: dict[tuple[int, int], dict[str, Any]] = {}
-    unresolved = set(candidates)
-    while unresolved:
-        selected_coordinate = min(unresolved)
-        unresolved.remove(selected_coordinate)
-        alternative_cost = augmented.copy()
-        alternative_cost[selected_coordinate] = math.inf
-        try:
-            alternative_rows, alternative_columns = solve_assignment(alternative_cost)
-        except ValueError:
-            continue
-        alternative_assignment = {
-            (int(row), int(column))
-            for row, column in zip(
-                alternative_rows,
-                alternative_columns,
-                strict=True,
-            )
-        }
-        chosen_costs = [augmented[row, column] for row, column in alternative_assignment]
-        if any(not math.isfinite(float(value)) for value in chosen_costs):
-            continue
-        alternative_total = float(sum(float(value) for value in chosen_costs))
-        gap = max(0.0, alternative_total - optimal_total)
-        if gap > tolerance + 1.0e-12:
-            continue
-        snapshot = _assignment_snapshot(
-            alternative_assignment,
-            pair_cost,
-            source_ids,
-            target_ids,
-        )
-        changed = set(decisions) - alternative_assignment
-        affected_previous_set: set[Any] = set()
-        affected_current_set: set[Any] = set()
-        for changed_coordinate in changed:
-            _, affected_row, affected_column = decisions[changed_coordinate]
-            if affected_row is not None:
-                affected_previous_set.add(source_ids[affected_row])
-            if affected_column is not None:
-                affected_current_set.add(target_ids[affected_column])
-        affected_previous = sorted(affected_previous_set, key=str)
-        affected_current = sorted(affected_current_set, key=str)
-        for coordinate in sorted(changed):
-            decision, decision_row, decision_column = decisions[coordinate]
-            selected: dict[str, Any] = {}
-            if decision_row is not None:
-                selected["source_id"] = source_ids[decision_row]
-            if decision_column is not None:
-                selected["target_id"] = target_ids[decision_column]
-            record = {
-                "decision": decision,
-                "selected": selected,
-                "reason": "alternative_assignment_within_tolerance",
-                "assignment_cost_gap": gap,
-                "selected_assignment_cost": optimal_total,
-                "alternative_assignment_cost": alternative_total,
-                "tolerance": tolerance,
-                "affected_previous": affected_previous,
-                "affected_current": affected_current,
-                "alternative": snapshot,
-            }
-            previous_record = records.get(coordinate)
-            if previous_record is None or gap < float(previous_record["assignment_cost_gap"]):
-                records[coordinate] = record
-            unresolved.discard(coordinate)
-
-    ordered = [
-        records[coordinate]
-        for coordinate in sorted(
-            records,
-            key=lambda coordinate: (
-                decisions[coordinate][0],
-                str(records[coordinate]["selected"].get("source_id", "")),
-                str(records[coordinate]["selected"].get("target_id", "")),
-            ),
-        )
-    ]
-    by_match = {
-        (row, column): records[coordinate]
-        for coordinate, (decision, row, column) in decisions.items()
-        if decision == "match" and row is not None and column is not None and coordinate in records
-    }
-    return ordered, by_match
-
-
 def _weighted_cost(components: Mapping[str, tuple[float, float]]) -> float:
     active = [(value, weight) for value, weight in components.values() if weight > 0]
     if not active:
@@ -499,31 +320,8 @@ def _weighted_cost(components: Mapping[str, tuple[float, float]]) -> float:
     return float(sum(value * weight for value, weight in active) / denominator)
 
 
-def _pair_confidence(cost: float, ambiguity_gap: float = math.inf) -> float:
-    base = math.exp(-max(0.0, cost))
-    if math.isfinite(ambiguity_gap):
-        # A tie retains half the base confidence rather than becoming exactly
-        # zero; a clearly separated optimum approaches full base confidence.
-        base *= 0.5 + 0.5 * (1.0 - math.exp(-max(0.0, ambiguity_gap)))
-    return float(min(1.0, max(0.0, base)))
-
-
-def _ambiguity_gap(cost: FloatArray, row: int, column: int) -> float:
-    alternatives = [
-        *(
-            float(value)
-            for index, value in enumerate(cost[row])
-            if index != column and math.isfinite(float(value))
-        ),
-        *(
-            float(value)
-            for index, value in enumerate(cost[:, column])
-            if index != row and math.isfinite(float(value))
-        ),
-    ]
-    if not alternatives:
-        return math.inf
-    return max(0.0, min(alternatives) - float(cost[row, column]))
+def _pair_confidence(cost: float) -> float:
+    return float(math.exp(-max(0.0, cost)))
 
 
 def _atom_pair(
@@ -602,32 +400,15 @@ def match_atoms(
     matched, unmatched_rows, unmatched_columns, total = _assign_with_unmatched(
         costs, settings.unmatched_cost
     )
-    ambiguities, ambiguous_pairs = _assignment_ambiguities(
-        costs,
-        settings.unmatched_cost,
-        matched,
-        unmatched_rows,
-        unmatched_columns,
-        total,
-        [atom.index for atom in previous.atoms],
-        [atom.index for atom in current.atoms],
-        settings.ambiguity_tolerance,
-    )
     edges: list[MatchEdge] = []
     for row, column in sorted(matched):
-        pair_evidence = dict(evidence[row, column])
-        ambiguity = ambiguous_pairs.get((row, column))
-        if ambiguity is not None:
-            pair_evidence["assignment_ambiguity"] = ambiguity
         edges.append(
             MatchEdge(
                 source_ids=(previous.atoms[row].index,),
                 target_ids=(current.atoms[column].index,),
                 cost=float(costs[row, column]),
-                confidence=_pair_confidence(
-                    float(costs[row, column]), _ambiguity_gap(costs, row, column)
-                ),
-                evidence=pair_evidence,
+                confidence=_pair_confidence(float(costs[row, column])),
+                evidence=evidence[row, column],
             )
         )
     return MatchResult(
@@ -642,9 +423,6 @@ def match_atoms(
         diagnostics={
             "entity": "atom",
             "candidate_pairs": int(np.isfinite(costs).sum()),
-            "ambiguous": bool(ambiguities),
-            "ambiguity_tolerance": settings.ambiguity_tolerance,
-            "ambiguities": ambiguities,
             "cell_volume_ratio": _cell_volume_ratio(previous, current),
         },
     )
@@ -791,39 +569,11 @@ def _declared_descriptor_families(feature: Feature) -> frozenset[str]:
     )
 
 
-def _configured_descriptor_families(feature: Feature, config: FeatureMatchConfig) -> frozenset[str]:
-    """Infer evidence families only from configured, finite numeric values.
-
-    This is a defensive fallback for canonical/plugin features predating the
-    explicit ``descriptor_family`` tag.  A key absent on one side remains
-    optional; only two non-empty, disjoint sets are incompatible.
-    """
-
-    families: set[str] = set()
-    for key in config.descriptor_scales:
-        if _as_finite_float(feature.attributes.get(key)) is None:
-            continue
-        family = _descriptor_family_token(key)
-        if family is not None:
-            families.add(family)
-    return frozenset(families)
-
-
-def _semantic_compatibility(
-    source: Feature, target: Feature, config: FeatureMatchConfig
-) -> tuple[bool, dict[str, Any]]:
-    """Conservatively gate pairs with explicitly contradictory semantics.
-
-    Producer identity is also conservative by default because cross-tool
-    feature identity has not been calibrated.  Conversely, an absent producer,
-    family, or charge-definition declaration is treated as genuinely missing
-    optional evidence and does not reject a candidate.
-    """
+def _semantic_compatibility(source: Feature, target: Feature) -> tuple[bool, dict[str, Any]]:
+    """Reject pairs with explicitly contradictory descriptor semantics."""
 
     source_declared = _declared_descriptor_families(source)
     target_declared = _declared_descriptor_families(target)
-    source_configured = _configured_descriptor_families(source, config)
-    target_configured = _configured_descriptor_families(target, config)
     source_charge = _semantic_token(source.attributes.get("charge_definition"))
     target_charge = _semantic_token(target.attributes.get("charge_definition"))
     source_convention = _semantic_token(source.attributes.get("charge_convention"))
@@ -849,24 +599,7 @@ def _semantic_compatibility(
         and source_producer != target_producer
     ):
         reasons.append("incompatible_descriptor_producers")
-    if source_configured and target_configured and source_configured.isdisjoint(target_configured):
-        reasons.append("disjoint_configured_descriptor_families")
-
-    evidence: dict[str, Any] = {
-        "compatible": not reasons,
-        "rejection_reasons": reasons,
-        "source_descriptor_families": sorted(source_declared),
-        "target_descriptor_families": sorted(target_declared),
-        "source_configured_descriptor_families": sorted(source_configured),
-        "target_configured_descriptor_families": sorted(target_configured),
-        "source_charge_definition": source_charge,
-        "target_charge_definition": target_charge,
-        "source_charge_convention": source_convention,
-        "target_charge_convention": target_convention,
-        "source_descriptor_producer": source_producer,
-        "target_descriptor_producer": target_producer,
-    }
-    return not reasons, evidence
+    return not reasons, {"compatible": not reasons, "rejection_reasons": reasons}
 
 
 def _grid_shape(feature: Feature, frame: Frame) -> tuple[int, int, int] | None:
@@ -918,7 +651,7 @@ def _feature_pair(
     kind_match = source.kind == target.kind
     if not _compatible_kind(source, target, config):
         return math.inf, {"kind_match": False}
-    semantic_match, semantic_evidence = _semantic_compatibility(source, target, config)
+    semantic_match, semantic_evidence = _semantic_compatibility(source, target)
     if not semantic_match:
         return math.inf, {
             "kind_match": kind_match,
@@ -1117,44 +850,33 @@ def _best_group(
     best_evidence: dict[str, Any] = {}
     best_objective = math.inf
     best_rejection: dict[str, Any] | None = None
-    best_rejection_objective = math.inf
-    # Exhaustive subset selection is cheap at max_group_size <= 6 and avoids
-    # greedy failures when two children together conserve volume.
+    # Test only cumulative nearest-neighbor groups. This keeps the common
+    # conserved split/merge case without exponential subset enumeration.
     for size in range(1, len(limited) + 1):
-        for subset in combinations(limited, size):
-            if split:
-                sources = tuple(fixed)
-                targets = (*base, *(item[0] for item in subset))
-            else:
-                sources = (*base, *(item[0] for item in subset))
-                targets = tuple(fixed)
-            error, evidence, rejection_reason = _conservation_assessment(
-                sources,
-                targets,
-                config.conservation_tolerance,
-            )
-            mean_pair_cost = float(np.mean([item[1] for item in subset]))
-            # Conservation dominates when available; a modest complexity term
-            # avoids swallowing unrelated nearby births/deaths.
-            objective = mean_pair_cost + 0.08 * len(subset)
-            if error is not None:
-                objective += 2.0 * error
-            if rejection_reason is not None:
-                if objective < best_rejection_objective:
-                    best_rejection_objective = objective
-                    best_rejection = {
-                        "relation": "split" if split else "merge",
-                        "source_ids": [feature.id for feature in sources],
-                        "target_ids": [feature.id for feature in targets],
-                        "reason": rejection_reason,
-                        "candidate_member_cost": mean_pair_cost,
-                        "conservation": evidence,
-                    }
-                continue
-            if objective < best_objective:
-                best_objective = objective
-                best = list(subset)
-                best_evidence = evidence
+        subset = limited[:size]
+        if split:
+            sources = tuple(fixed)
+            targets = (*base, *(item[0] for item in subset))
+        else:
+            sources = (*base, *(item[0] for item in subset))
+            targets = tuple(fixed)
+        error, evidence, rejection_reason = _conservation_assessment(
+            sources, targets, config.conservation_tolerance
+        )
+        mean_cost = float(np.mean([item[1] for item in subset]))
+        objective = mean_cost + 2.0 * (error or 0.0)
+        if rejection_reason is None and objective < best_objective:
+            best_objective = objective
+            best = list(subset)
+            best_evidence = evidence
+        elif best_rejection is None:
+            best_rejection = {
+                "relation": "split" if split else "merge",
+                "source_ids": [feature.id for feature in sources],
+                "target_ids": [feature.id for feature in targets],
+                "reason": rejection_reason,
+                "conservation": evidence,
+            }
     return best, best_evidence, best_rejection
 
 
@@ -1165,7 +887,6 @@ def _augment_hyperedges(
     costs: FloatArray,
     distances: FloatArray,
     pair_evidence: Mapping[tuple[int, int], dict[str, Any]],
-    ambiguous_pairs: Mapping[tuple[int, int], dict[str, Any]],
     previous: Frame,
     current: Frame,
     atom_mapping: Mapping[int, int],
@@ -1173,15 +894,7 @@ def _augment_hyperedges(
 ) -> tuple[list[MatchEdge], set[int], set[int], list[dict[str, Any]]]:
     if not config.detect_splits_merges or not direct:
         direct_edges = [
-            _direct_feature_edge(
-                row,
-                column,
-                costs,
-                pair_evidence,
-                previous,
-                current,
-                assignment_ambiguity=ambiguous_pairs.get((row, column)),
-            )
+            _direct_feature_edge(row, column, costs, pair_evidence, previous, current)
             for row, column in direct
         ]
         return direct_edges, unmatched_rows, unmatched_columns, []
@@ -1240,7 +953,6 @@ def _augment_hyperedges(
     for row, column in sorted(direct):
         source = previous.features[row]
         target = current.features[column]
-        assignment_ambiguity = ambiguous_pairs.get((row, column))
         split_options = [
             (current.features[index], cost, evidence)
             for index, cost, evidence in split_candidates.get(row, [])
@@ -1357,17 +1069,7 @@ def _augment_hyperedges(
                         }
                     )
                 rejections.append(rejection)
-            edges.append(
-                _direct_feature_edge(
-                    row,
-                    column,
-                    costs,
-                    pair_evidence,
-                    previous,
-                    current,
-                    assignment_ambiguity=assignment_ambiguity,
-                )
-            )
+            edges.append(_direct_feature_edge(row, column, costs, pair_evidence, previous, current))
     rejections.sort(
         key=lambda item: (
             str(item["relation"]),
@@ -1384,42 +1086,6 @@ def _augment_hyperedges(
     )
 
 
-def _resolve_hyperedge_ambiguities(
-    ambiguities: Sequence[dict[str, Any]],
-    edges: Sequence[MatchEdge],
-) -> list[dict[str, Any]]:
-    """Retain only assignment ties that alter final scientific membership.
-
-    A split or merge may have multiple equivalent one-to-one backbones while
-    still producing the same conservation-backed participant set.  Such a tie
-    is evidence about an implementation detail, not about the final hyperedge.
-    """
-
-    unresolved: list[dict[str, Any]] = []
-    for ambiguity in ambiguities:
-        affected_previous = {str(value) for value in ambiguity.get("affected_previous", [])}
-        affected_current = {str(value) for value in ambiguity.get("affected_current", [])}
-        resolving_edge = next(
-            (
-                edge
-                for edge in edges
-                if edge.relation is not MatchRelation.ONE_TO_ONE
-                and affected_previous
-                and affected_current
-                and affected_previous.issubset({str(value) for value in edge.source_ids})
-                and affected_current.issubset({str(value) for value in edge.target_ids})
-            ),
-            None,
-        )
-        if resolving_edge is None:
-            unresolved.append(ambiguity)
-            continue
-        resolved = resolving_edge.evidence.setdefault("resolved_assignment_ambiguities", [])
-        if isinstance(resolved, list):
-            resolved.append(ambiguity)
-    return unresolved
-
-
 def _direct_feature_edge(
     row: int,
     column: int,
@@ -1427,22 +1093,17 @@ def _direct_feature_edge(
     pair_evidence: Mapping[tuple[int, int], dict[str, Any]],
     previous: Frame,
     current: Frame,
-    *,
-    assignment_ambiguity: Mapping[str, Any] | None = None,
 ) -> MatchEdge:
     source = previous.features[row]
     target = current.features[column]
     quality, quality_evidence = _quality_factor((source, target))
     evidence = dict(pair_evidence[row, column])
     evidence.update(quality_evidence)
-    if assignment_ambiguity is not None:
-        evidence["assignment_ambiguity"] = dict(assignment_ambiguity)
     return MatchEdge(
         source_ids=(source.id,),
         target_ids=(target.id,),
         cost=float(costs[row, column]),
-        confidence=_pair_confidence(float(costs[row, column]), _ambiguity_gap(costs, row, column))
-        * quality,
+        confidence=_pair_confidence(float(costs[row, column])) * quality,
         evidence=evidence,
     )
 
@@ -1465,7 +1126,7 @@ def match_features(
             for row, source in enumerate(previous.features)
             for column, target in enumerate(current.features)
             if _compatible_kind(source, target, settings)
-            and _semantic_compatibility(source, target, settings)[0]
+            and _semantic_compatibility(source, target)[0]
         ),
         previous.cell,
         current.cell,
@@ -1490,19 +1151,8 @@ def match_features(
             costs[row, column] = cost
             pair_evidence[row, column] = evidence
 
-    direct, unmatched_rows, unmatched_columns, assignment_total = _assign_with_unmatched(
+    direct, unmatched_rows, unmatched_columns, _ = _assign_with_unmatched(
         costs, settings.unmatched_cost
-    )
-    ambiguities, ambiguous_pairs = _assignment_ambiguities(
-        costs,
-        settings.unmatched_cost,
-        direct,
-        unmatched_rows,
-        unmatched_columns,
-        assignment_total,
-        [feature.id for feature in previous.features],
-        [feature.id for feature in current.features],
-        settings.ambiguity_tolerance,
     )
     edges, unmatched_rows, unmatched_columns, hyperedge_rejections = _augment_hyperedges(
         direct,
@@ -1511,13 +1161,11 @@ def match_features(
         costs,
         distances,
         pair_evidence,
-        ambiguous_pairs,
         previous,
         current,
         mapping,
         settings,
     )
-    ambiguities = _resolve_hyperedge_ambiguities(ambiguities, edges)
     total = sum(edge.cost for edge in edges) + settings.unmatched_cost * (
         len(unmatched_rows) + len(unmatched_columns)
     )
@@ -1538,9 +1186,6 @@ def match_features(
                 for pair in pair_evidence.values()
             ),
             "one_to_one_backbone": len(direct),
-            "ambiguous": bool(ambiguities),
-            "ambiguity_tolerance": settings.ambiguity_tolerance,
-            "ambiguities": ambiguities,
             "hyperedges": sum(
                 len(edge.source_ids) != 1 or len(edge.target_ids) != 1 for edge in edges
             ),

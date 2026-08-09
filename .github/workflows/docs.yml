@@ -53,8 +53,3 @@ jobs:
           electrace demo --output .ci-demo
           python -m json.tool .ci-demo/electrace-results/analysis.json > /dev/null
           python -c 'import json; from jsonschema import Draft202012Validator as V; s=json.load(open("schemas/analysis-v0.1.schema.json")); d=json.load(open(".ci-demo/electrace-results/analysis.json")); V.check_schema(s); V(s).validate(d)'
-      - name: Generate and validate synthetic benchmark
-        run: |
-          electrace benchmark --output .ci-benchmark.json
-          python -m json.tool .ci-benchmark.json > /dev/null
-          python -c 'import json; from jsonschema import Draft202012Validator as V; s=json.load(open("schemas/benchmark-v0.1.schema.json")); d=json.load(open(".ci-benchmark.json")); V.check_schema(s); V(s).validate(d)'

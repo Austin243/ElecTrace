@@ -47,11 +47,6 @@ jobs:
         run: ruff format --check .
       - name: Type check
         run: mypy src
-      - name: Repository hygiene hooks
-        env:
-          SKIP: ruff-check,ruff-format
-        run: pre-commit run --all-files --show-diff-on-failure
-
   test:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -115,6 +110,5 @@ jobs:
           python -m electrace --version
           electrace --version
           electrace --help
-          electrace benchmark --output .ci-benchmark.json
           electrace demo --output .ci-demo
           electrace inspect .ci-demo/electrace-results

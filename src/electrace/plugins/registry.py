@@ -1,4 +1,4 @@
-"""Plugin registration, lookup, capability filtering, and doctor checks."""
+"""Registry and convenience functions for built-in command planners."""
 
 from __future__ import annotations
 
@@ -6,22 +6,13 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
 
-from electrace.io.discovery import SeriesKind, discover_path
+from electrace.io.discovery import discover_path
 
-from .base import (
-    Capability,
-    CommandPlan,
-    DoctorReport,
-    FrameCommandPlan,
-    FrameDoctorReport,
-    Plugin,
-)
+from .base import Capability, CommandPlan, DoctorReport, FrameCommandPlan, FrameDoctorReport, Plugin
 from .builtin import BUILTIN_PLUGINS
 
 
 class PluginRegistry:
-    """A small explicit registry; importing a module never runs a plugin."""
-
     def __init__(self, plugins: Iterable[Plugin] = ()) -> None:
         self._plugins: dict[str, Plugin] = {}
         for plugin in plugins:
@@ -29,27 +20,25 @@ class PluginRegistry:
 
     def register(self, plugin: Plugin, *, replace: bool = False) -> None:
         name = plugin.name.strip().lower()
-        if not name:
-            raise ValueError("plugin name must not be empty")
+        if not name or not plugin.capabilities:
+            raise ValueError("plugin requires a name and capabilities")
         if name in self._plugins and not replace:
             raise ValueError(f"plugin {name!r} is already registered")
-        if not plugin.capabilities:
-            raise ValueError(f"plugin {name!r} declares no capabilities")
         self._plugins[name] = plugin
 
     def get(self, name: str) -> Plugin:
-        normalized = name.strip().lower()
         try:
-            return self._plugins[normalized]
+            return self._plugins[name.strip().lower()]
         except KeyError as exc:
-            choices = ", ".join(self.names()) or "none"
-            raise KeyError(f"unknown plugin {name!r}; registered plugins: {choices}") from exc
+            raise KeyError(
+                f"unknown plugin {name!r}; choose from {', '.join(self.names())}"
+            ) from exc
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._plugins))
 
     def for_capability(self, capability: Capability | str) -> tuple[Plugin, ...]:
-        selected = capability if isinstance(capability, Capability) else Capability(str(capability))
+        selected = Capability(capability)
         return tuple(plugin for plugin in self._plugins.values() if selected in plugin.capabilities)
 
     def doctor(
@@ -58,61 +47,20 @@ class PluginRegistry:
         *,
         configuration: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[DoctorReport, ...]:
-        """Inspect executable and input availability without running commands."""
-
-        configuration = configuration or {}
         reports = []
         for name in self.names():
-            options = dict(configuration.get(name, {}))
-            if options.pop("enabled", True) is False:
+            options = dict((configuration or {}).get(name, {}))
+            if not options.pop("enabled", True):
                 continue
-            executable = options.pop("executable", None)
-            capability = options.pop("capability", None)
             reports.append(
                 self._plugins[name].doctor(
                     frame_directory,
-                    capability=capability,
-                    executable=executable,
+                    executable=options.pop("executable", None),
+                    capability=options.pop("capability", None),
                     **options,
                 )
             )
         return tuple(reports)
-
-    def doctor_path(
-        self,
-        path: str | Path,
-        *,
-        configuration: dict[str, dict[str, Any]] | None = None,
-        mode: str | SeriesKind = "auto",
-        prefer_contcar: bool = True,
-        structure_name: str = "CONTCAR",
-        fallback_structure_name: str = "POSCAR",
-        strict: bool = True,
-    ) -> tuple[FrameDoctorReport, ...]:
-        """Inspect every discovered frame in deterministic path order."""
-
-        discovered = discover_path(
-            path,
-            mode=mode,
-            prefer_contcar=prefer_contcar,
-            structure_name=structure_name,
-            fallback_structure_name=fallback_structure_name,
-            strict=strict,
-        )
-        return tuple(
-            FrameDoctorReport(
-                index=frame.index,
-                label=frame.label,
-                directory=frame.directory,
-                plugins=self.doctor(
-                    frame.directory,
-                    configuration=_configuration_for_frame(
-                        configuration, critic2_structure_name=frame.structure.name
-                    ),
-                ),
-            )
-            for frame in discovered.frames
-        )
 
     def plan(
         self,
@@ -123,19 +71,31 @@ class PluginRegistry:
         configuration: dict[str, Any] | None = None,
         **options: Any,
     ) -> CommandPlan:
-        plugin = self.get(name)
-        configured = dict(configuration or {})
-        if configured.pop("enabled", True) is False:
+        settings = dict(configuration or {})
+        if not settings.pop("enabled", True):
             raise ValueError(f"plugin {name!r} is disabled")
-        executable = configured.pop("executable", None)
-        configured_capability = configured.pop("capability", None)
-        selected_capability = capability if capability is not None else configured_capability
-        configured.update(options)
-        return plugin.plan(
+        settings.update(options)
+        return self.get(name).plan(
             frame_directory,
-            capability=selected_capability,
-            executable=executable,
-            **configured,
+            capability=capability or settings.pop("capability", None),
+            executable=settings.pop("executable", None),
+            **settings,
+        )
+
+    def doctor_path(self, path: str | Path, **options: Any) -> tuple[FrameDoctorReport, ...]:
+        configuration = options.pop("configuration", None)
+        discovered = discover_path(path, **options)
+        return tuple(
+            FrameDoctorReport(
+                frame.index,
+                frame.label,
+                frame.directory,
+                self.doctor(
+                    frame.directory,
+                    configuration=_frame_configuration(configuration, frame.structure.name),
+                ),
+            )
+            for frame in discovered.frames
         )
 
     def plan_path(
@@ -145,41 +105,26 @@ class PluginRegistry:
         *,
         capability: Capability | str | None = None,
         configuration: dict[str, Any] | None = None,
-        mode: str | SeriesKind = "auto",
-        prefer_contcar: bool = True,
-        structure_name: str = "CONTCAR",
-        fallback_structure_name: str = "POSCAR",
-        strict: bool = True,
         **options: Any,
     ) -> tuple[FrameCommandPlan, ...]:
-        """Build one non-executing plan per discovered frame, in path order."""
-
-        discovered = discover_path(
-            path,
-            mode=mode,
-            prefer_contcar=prefer_contcar,
-            structure_name=structure_name,
-            fallback_structure_name=fallback_structure_name,
-            strict=strict,
-        )
+        discovery_keys = {
+            key: options.pop(key)
+            for key in tuple(options)
+            if key
+            in {"mode", "prefer_contcar", "structure_name", "fallback_structure_name", "strict"}
+        }
+        discovered = discover_path(path, **discovery_keys)
         return tuple(
             FrameCommandPlan(
-                index=frame.index,
-                label=frame.label,
-                directory=frame.directory,
-                command=self.plan(
+                frame.index,
+                frame.label,
+                frame.directory,
+                self.plan(
                     name,
                     frame.directory,
                     capability=capability,
-                    configuration=(
-                        {
-                            **dict(configuration or {}),
-                            "structure_file": frame.structure.name,
-                        }
-                        if name.strip().lower() == "critic2"
-                        and "structure_file" not in (configuration or {})
-                        and "structure_file" not in options
-                        else configuration
+                    configuration=_single_frame_configuration(
+                        name, configuration, frame.structure.name, options
                     ),
                     **options,
                 ),
@@ -188,16 +133,21 @@ class PluginRegistry:
         )
 
 
-def _configuration_for_frame(
-    configuration: dict[str, dict[str, Any]] | None,
-    *,
-    critic2_structure_name: str,
+def _frame_configuration(
+    configuration: dict[str, dict[str, Any]] | None, structure: str
 ) -> dict[str, dict[str, Any]]:
-    """Copy plugin configuration and bind critic2 to the discovered structure."""
+    result = {name: dict(values) for name, values in (configuration or {}).items()}
+    result.setdefault("critic2", {}).setdefault("structure_file", structure)
+    return result
 
-    result = {name: dict(options) for name, options in (configuration or {}).items()}
-    critic2 = result.setdefault("critic2", {})
-    critic2.setdefault("structure_file", critic2_structure_name)
+
+def _single_frame_configuration(
+    name: str, configuration: dict[str, Any] | None, structure: str, options: dict[str, Any]
+) -> dict[str, Any] | None:
+    if name.strip().lower() != "critic2" or "structure_file" in options:
+        return configuration
+    result = dict(configuration or {})
+    result.setdefault("structure_file", structure)
     return result
 
 
@@ -205,81 +155,18 @@ DEFAULT_REGISTRY = PluginRegistry(cast(Iterable[Plugin], BUILTIN_PLUGINS))
 
 
 def doctor_plugins(
-    frame_directory: str | Path | None = None,
-    *,
-    configuration: dict[str, dict[str, Any]] | None = None,
+    frame_directory: str | Path | None = None, **options: Any
 ) -> tuple[DoctorReport, ...]:
-    """Run read-only availability checks for enabled built-in plugins."""
-
-    return DEFAULT_REGISTRY.doctor(frame_directory, configuration=configuration)
+    return DEFAULT_REGISTRY.doctor(frame_directory, **options)
 
 
-def doctor_plugins_path(
-    path: str | Path,
-    *,
-    configuration: dict[str, dict[str, Any]] | None = None,
-    mode: str | SeriesKind = "auto",
-    prefer_contcar: bool = True,
-    structure_name: str = "CONTCAR",
-    fallback_structure_name: str = "POSCAR",
-    strict: bool = True,
-) -> tuple[FrameDoctorReport, ...]:
-    """Run read-only built-in plugin checks for every discovered frame."""
-
-    return DEFAULT_REGISTRY.doctor_path(
-        path,
-        configuration=configuration,
-        mode=mode,
-        prefer_contcar=prefer_contcar,
-        structure_name=structure_name,
-        fallback_structure_name=fallback_structure_name,
-        strict=strict,
-    )
+def doctor_plugins_path(path: str | Path, **options: Any) -> tuple[FrameDoctorReport, ...]:
+    return DEFAULT_REGISTRY.doctor_path(path, **options)
 
 
-def plan_plugin(
-    name: str,
-    frame_directory: str | Path,
-    *,
-    capability: Capability | str | None = None,
-    configuration: dict[str, Any] | None = None,
-    **options: Any,
-) -> CommandPlan:
-    """Build, but do not execute, a command plan for a built-in plugin."""
-
-    return DEFAULT_REGISTRY.plan(
-        name,
-        frame_directory,
-        capability=capability,
-        configuration=configuration,
-        **options,
-    )
+def plan_plugin(name: str, frame_directory: str | Path, **options: Any) -> CommandPlan:
+    return DEFAULT_REGISTRY.plan(name, frame_directory, **options)
 
 
-def plan_plugin_path(
-    name: str,
-    path: str | Path,
-    *,
-    capability: Capability | str | None = None,
-    configuration: dict[str, Any] | None = None,
-    mode: str | SeriesKind = "auto",
-    prefer_contcar: bool = True,
-    structure_name: str = "CONTCAR",
-    fallback_structure_name: str = "POSCAR",
-    strict: bool = True,
-    **options: Any,
-) -> tuple[FrameCommandPlan, ...]:
-    """Build deterministic non-executing plans for a complete VASP path."""
-
-    return DEFAULT_REGISTRY.plan_path(
-        name,
-        path,
-        capability=capability,
-        configuration=configuration,
-        mode=mode,
-        prefer_contcar=prefer_contcar,
-        structure_name=structure_name,
-        fallback_structure_name=fallback_structure_name,
-        strict=strict,
-        **options,
-    )
+def plan_plugin_path(name: str, path: str | Path, **options: Any) -> tuple[FrameCommandPlan, ...]:
+    return DEFAULT_REGISTRY.plan_path(name, path, **options)

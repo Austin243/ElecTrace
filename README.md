@@ -16,11 +16,10 @@ workflow.
 - Reads `POSCAR`/`CONTCAR` structures and supported plain `ELFCAR`/`CHGCAR`-like grids.
 - Ingests supported Bader/BaderKit, critic2, LOBSTER, and Chargemol results.
 - Matches atoms and electronic features across periodic and changing cells.
-- Builds candidate feature correspondences and reports births, deaths, split/merge
-  candidates, descriptor changes, and ambiguities.
+- Builds feature correspondences and reports births, deaths, conservation-backed
+  split/merge candidates, and descriptor changes.
 - Stages VASP, Bader/BaderKit, critic2, and LOBSTER steps from a YAML workflow.
-- Writes JSON, CSV, HTML, and optional HDF5 results with available source and tool
-  provenance.
+- Writes JSON, CSV, and HTML results with available source and tool provenance.
 
 ## Install
 
@@ -34,9 +33,8 @@ python -m pip install .
 ```
 
 The base installation includes a deterministic assignment solver. Use
-`python -m pip install ".[accelerate]"` for the SciPy solver,
-`python -m pip install ".[hdf5]"` for HDF5 export, or
-`python -m pip install ".[all]"` for both.
+`python -m pip install ".[accelerate]"` for the SciPy solver, or
+`python -m pip install ".[all]"` for all optional features.
 
 ## Try the demo
 
@@ -83,8 +81,8 @@ electrace workflow stage electrace-workflow.yaml
 ```
 
 Validation resolves the selected frames, commands, inputs, outputs, dependencies, and
-scheduler settings without creating a workspace. Commands also accept `--json` for a
-common `electrace.cli.v1` response envelope suitable for scripts and coding agents.
+scheduler settings without creating a workspace. Use `--json` when a script or coding
+agent needs machine-readable output.
 
 Run locally and analyze the collected outputs:
 
@@ -106,8 +104,7 @@ same path analysis.
 
 ## Learn more
 
-See the [quick start](docs/quickstart.md), [workflow guide](docs/workflows.md),
-[coding-agent guide](docs/agents.md), and [scientific scope](docs/scientific-scope.md)
-for detailed configuration and supported data formats.
+See [Using ElecTrace](docs/workflows.md), the [coding-agent reference](docs/agents.md),
+and [scientific scope](docs/scientific-scope.md).
 
 ElecTrace is available under the [BSD 3-Clause License](LICENSE).

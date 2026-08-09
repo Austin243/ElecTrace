@@ -70,48 +70,6 @@ def cell_volume(cell: ArrayLike) -> float:
     return float(abs(np.linalg.det(as_cell(cell))))
 
 
-def fractional_to_cartesian(fractional: ArrayLike, cell: ArrayLike) -> FloatArray:
-    """Convert one or more fractional row vectors to Cartesian coordinates."""
-
-    points = np.asarray(fractional, dtype=float)
-    if points.shape == () or points.shape[-1] != 3:
-        raise ValueError("fractional coordinates must end in an axis of length 3")
-    if not np.all(np.isfinite(points)):
-        raise ValueError("coordinates must contain only finite values")
-    return points @ as_cell(cell)
-
-
-def cartesian_to_fractional(cartesian: ArrayLike, cell: ArrayLike) -> FloatArray:
-    """Convert one or more Cartesian row vectors to fractional coordinates."""
-
-    points = np.asarray(cartesian, dtype=float)
-    if points.shape == () or points.shape[-1] != 3:
-        raise ValueError("cartesian coordinates must end in an axis of length 3")
-    if not np.all(np.isfinite(points)):
-        raise ValueError("coordinates must contain only finite values")
-    # Solving cell.T @ frac.T = cart.T is more stable than explicit inversion.
-    return np.linalg.solve(as_cell(cell).T, points.reshape(-1, 3).T).T.reshape(points.shape)
-
-
-def wrap_fractional(
-    fractional: ArrayLike, pbc: Sequence[bool] | bool = (True, True, True)
-) -> FloatArray:
-    """Wrap periodic fractional components into the half-open interval [0, 1)."""
-
-    result = np.array(fractional, dtype=float, copy=True)
-    if result.shape == () or result.shape[-1] != 3:
-        raise ValueError("fractional coordinates must end in an axis of length 3")
-    if not np.all(np.isfinite(result)):
-        raise ValueError("coordinates must contain only finite values")
-    periodic = as_pbc(pbc)
-    for axis, enabled in enumerate(periodic):
-        if enabled:
-            result[..., axis] -= np.floor(result[..., axis])
-            # Avoid returning 1.0 due to roundoff near a cell boundary.
-            result[..., axis] %= 1.0
-    return result
-
-
 def metric_average_cell(cell_a: ArrayLike, cell_b: ArrayLike) -> FloatArray:
     """Construct a cell realizing the arithmetic mean lattice metric.
 
@@ -125,44 +83,6 @@ def metric_average_cell(cell_a: ArrayLike, cell_b: ArrayLike) -> FloatArray:
     metric = 0.5 * (first @ first.T + second @ second.T)
     result = np.asarray(np.linalg.cholesky(metric), dtype=np.float64)
     return result
-
-
-def interpolate_cell(cell_a: ArrayLike, cell_b: ArrayLike, fraction: float) -> FloatArray:
-    """Linearly interpolate lattice vectors (appropriate for nearby images)."""
-
-    amount = float(fraction)
-    if not math.isfinite(amount) or not 0.0 <= amount <= 1.0:
-        raise ValueError("fraction must lie in [0, 1]")
-    result = (1.0 - amount) * as_cell(cell_a) + amount * as_cell(cell_b)
-    return as_cell(result)
-
-
-def deformation_gradient(cell_a: ArrayLike, cell_b: ArrayLike) -> FloatArray:
-    """Return the Cartesian deformation gradient mapping cell A onto cell B.
-
-    With column Cartesian vectors, ``x_b = F @ x_a`` for a fixed fractional
-    coordinate and ``F = cell_b.T @ inv(cell_a.T)``.
-    """
-
-    first = as_cell(cell_a)
-    second = as_cell(cell_b)
-    result = np.asarray(np.linalg.solve(first, second).T, dtype=np.float64)
-    return result
-
-
-def green_lagrange_strain(cell_a: ArrayLike, cell_b: ArrayLike) -> FloatArray:
-    """Return the Green--Lagrange strain tensor for A -> B."""
-
-    gradient = deformation_gradient(cell_a, cell_b)
-    return 0.5 * (gradient.T @ gradient - np.eye(3))
-
-
-def map_cartesian_between_cells(
-    cartesian: ArrayLike, source_cell: ArrayLike, target_cell: ArrayLike
-) -> FloatArray:
-    """Map Cartesian points between cells while preserving fractional position."""
-
-    return fractional_to_cartesian(cartesian_to_fractional(cartesian, source_cell), target_cell)
 
 
 def _nearest_image_single(
@@ -263,23 +183,6 @@ def _minimum_image_fractional_displacement(
     return cast(FloatArray, result.reshape(first.shape))
 
 
-def minimum_image_fractional_displacement(
-    fractional_a: ArrayLike,
-    fractional_b: ArrayLike,
-    cell: ArrayLike,
-    pbc: Sequence[bool] | bool = (True, True, True),
-) -> FloatArray:
-    """Return nearest-image fractional displacement ``b - a``.
-
-    Leading dimensions are broadcast following NumPy rules.
-    """
-
-    first, second = _fractional_coordinate_pair(fractional_a, fractional_b)
-    lattice, sigma_min = _validated_cell(cell)
-    periodic = as_pbc(pbc)
-    return _minimum_image_fractional_displacement(first, second, lattice, periodic, sigma_min)
-
-
 def minimum_image_displacement(
     fractional_a: ArrayLike,
     fractional_b: ArrayLike,
@@ -295,20 +198,6 @@ def minimum_image_displacement(
         first, second, lattice, periodic, sigma_min
     )
     return displacement @ lattice
-
-
-def periodic_distance(
-    fractional_a: ArrayLike,
-    fractional_b: ArrayLike,
-    cell: ArrayLike,
-    pbc: Sequence[bool] | bool = (True, True, True),
-) -> float | FloatArray:
-    """Return nearest-image distance(s) between fractional positions."""
-
-    result = np.linalg.norm(
-        minimum_image_displacement(fractional_a, fractional_b, cell, pbc), axis=-1
-    )
-    return float(result) if result.ndim == 0 else result
 
 
 def deformation_aware_displacement(
@@ -353,58 +242,6 @@ def deformation_aware_distance(
         axis=-1,
     )
     return float(result) if result.ndim == 0 else result
-
-
-def pairwise_periodic_distances(
-    fractional_a: ArrayLike,
-    fractional_b: ArrayLike,
-    cell: ArrayLike,
-    pbc: Sequence[bool] | bool = (True, True, True),
-) -> FloatArray:
-    """Return an ``(len(a), len(b))`` nearest-image distance matrix."""
-
-    first = np.asarray(fractional_a, dtype=float)
-    second = np.asarray(fractional_b, dtype=float)
-    if first.ndim != 2 or first.shape[1] != 3:
-        raise ValueError("fractional_a must have shape (n, 3)")
-    if second.ndim != 2 or second.shape[1] != 3:
-        raise ValueError("fractional_b must have shape (m, 3)")
-    if not np.all(np.isfinite(first)) or not np.all(np.isfinite(second)):
-        raise ValueError("coordinates must contain only finite values")
-    lattice, sigma_min = _validated_cell(cell)
-    periodic = as_pbc(pbc)
-    result = np.empty((len(first), len(second)), dtype=float)
-    # Keep peak working memory O(len(second)) instead of materializing a full
-    # (n, m, 3) displacement tensor.  Cell factorization remains outside the
-    # row loop, so this does not restore the former O(n*m) SVD overhead.
-    for row, point in enumerate(first):
-        row_points = np.broadcast_to(point, second.shape)
-        fractional = _minimum_image_fractional_displacement(
-            row_points,
-            second,
-            lattice,
-            periodic,
-            sigma_min,
-        )
-        result[row] = np.linalg.norm(fractional @ lattice, axis=-1)
-    return result
-
-
-def pairwise_deformation_aware_distances(
-    fractional_a: ArrayLike,
-    fractional_b: ArrayLike,
-    cell_a: ArrayLike,
-    cell_b: ArrayLike,
-    pbc: Sequence[bool] | bool = (True, True, True),
-) -> FloatArray:
-    """Pairwise distances in the symmetric mean metric of two cells."""
-
-    return pairwise_periodic_distances(
-        fractional_a,
-        fractional_b,
-        metric_average_cell(cell_a, cell_b),
-        pbc,
-    )
 
 
 def periodic_voxel_overlap(
@@ -458,45 +295,3 @@ def periodic_voxel_overlap(
     if denominator == 0:
         return 1.0 if not first and not second else 0.0
     return float(intersection / denominator)
-
-
-def periodic_fractional_centroid(
-    fractional: ArrayLike,
-    weights: ArrayLike | None = None,
-    pbc: Sequence[bool] | bool = (True, True, True),
-) -> FloatArray:
-    """Return a boundary-safe centroid using circular means on periodic axes."""
-
-    points = np.asarray(fractional, dtype=float)
-    if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0:
-        raise ValueError("fractional coordinates must have nonempty shape (n, 3)")
-    if not np.all(np.isfinite(points)):
-        raise ValueError("coordinates must contain only finite values")
-    if weights is None:
-        weight = np.ones(len(points), dtype=float)
-    else:
-        weight = np.asarray(weights, dtype=float)
-        if weight.shape != (len(points),):
-            raise ValueError("weights must have shape (n,)")
-        if np.any(weight < 0) or not np.all(np.isfinite(weight)):
-            raise ValueError("weights must be finite and non-negative")
-    total = float(weight.sum())
-    if total <= 0:
-        raise ValueError("at least one weight must be positive")
-    periodic = as_pbc(pbc)
-    centroid = np.empty(3, dtype=float)
-    for axis, enabled in enumerate(periodic):
-        if not enabled:
-            centroid[axis] = float(np.average(points[:, axis], weights=weight))
-            continue
-        angles = 2.0 * np.pi * points[:, axis]
-        vector = np.sum(weight * np.exp(1j * angles))
-        if abs(vector) <= 1.0e-12 * total:
-            # The circular mean is undefined for a symmetric distribution.
-            # Use a deterministic unwrapped mean around the first point.
-            delta = points[:, axis] - points[0, axis]
-            delta -= np.rint(delta)
-            centroid[axis] = (points[0, axis] + np.average(delta, weights=weight)) % 1.0
-        else:
-            centroid[axis] = (np.angle(vector) / (2.0 * np.pi)) % 1.0
-    return centroid

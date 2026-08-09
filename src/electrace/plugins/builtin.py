@@ -65,7 +65,6 @@ class _BuiltinPlugin:
     name = ""
     default_executable = ""
     capabilities: tuple[Capability, ...] = ()
-    doctor_inputs: tuple[str, ...] = ()
 
     def plan(
         self,
@@ -124,7 +123,6 @@ class BaderKitPlugin(_BuiltinPlugin):
         Capability.ELF_BASINS,
         Capability.NON_NUCLEAR_ATTRACTORS,
     )
-    doctor_inputs = ("CHGCAR",)
 
     def plan(
         self,
@@ -177,7 +175,6 @@ class BaderPlugin(_BuiltinPlugin):
     name = "bader"
     default_executable = "bader"
     capabilities: tuple[Capability, ...] = (Capability.BADER_CHARGES,)
-    doctor_inputs = ("CHGCAR",)
 
     def plan(
         self,
@@ -222,7 +219,6 @@ class Critic2Plugin(_BuiltinPlugin):
         Capability.QTAIM_CRITICAL_POINTS,
         Capability.NON_NUCLEAR_ATTRACTORS,
     )
-    doctor_inputs = ("CHGCAR",)
 
     def plan(
         self,
@@ -291,7 +287,6 @@ class LobsterPlugin(_BuiltinPlugin):
     name = "lobster"
     default_executable = "lobster"
     capabilities: tuple[Capability, ...] = (Capability.COHP, Capability.COBI)
-    doctor_inputs = ("lobsterin", "WAVECAR", "POSCAR", "POTCAR")
 
     def plan(
         self,
@@ -333,7 +328,6 @@ class ChargemolPlugin(_BuiltinPlugin):
     name = "chargemol"
     default_executable = "chargemol"
     capabilities: tuple[Capability, ...] = (Capability.DDEC_CHARGES,)
-    doctor_inputs = ("job_control.txt",)
 
     def plan(
         self,
