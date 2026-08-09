@@ -44,20 +44,6 @@ from electrace.models import Feature, Frame
 SCHEMA_VERSION = "electrace.features.v1"
 MAX_DESCRIPTOR_BYTES = 64 * 1024 * 1024
 
-_ROOT_FIELDS = {"schema_version", "producer", "frame", "features", "metadata"}
-_PRODUCER_FIELDS = {"name", "version"}
-_FRAME_FIELDS = {"index", "label"}
-_FEATURE_FIELDS = {
-    "id",
-    "kind",
-    "fractional_position",
-    "charge",
-    "volume",
-    "neighbor_atom_indices",
-    "voxel_indices",
-    "attributes",
-}
-
 
 class DescriptorError(ValueError):
     """Raised when a plugin descriptor is malformed or ambiguous."""
@@ -88,15 +74,6 @@ def _read_descriptor_text(path: Path) -> str:
         ) from exc
 
 
-def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise DescriptorError(f"descriptor JSON contains duplicate object key {key!r}")
-        result[key] = value
-    return result
-
-
 @dataclass(frozen=True, slots=True)
 class DescriptorDocument:
     """Validated normalized features from one producer for one optional frame."""
@@ -119,11 +96,8 @@ class DescriptorDocument:
         identifiers = [feature.id for feature in self.features]
         if len(identifiers) != len(set(identifiers)):
             raise DescriptorError("feature ids must be unique within a descriptor document")
-        for feature in self.features:
-            _ensure_json(feature.attributes, f"feature {feature.id!r} attributes")
         if self.frame_index is not None and self.frame_index < 0:
             raise DescriptorError("descriptor frame index must be non-negative")
-        _ensure_json(self.metadata, "descriptor metadata")
         convention = self.metadata.get("charge_convention")
         if convention is not None and (not isinstance(convention, str) or not convention.strip()):
             raise DescriptorError("metadata.charge_convention must be a non-empty string")
@@ -131,12 +105,6 @@ class DescriptorDocument:
             raise DescriptorError(
                 "descriptor documents containing charge must declare metadata.charge_convention"
             )
-        warnings = self.metadata.get("warnings")
-        if warnings is not None and (
-            not isinstance(warnings, list)
-            or any(not isinstance(warning, str) for warning in warnings)
-        ):
-            raise DescriptorError("metadata.warnings must be an array of strings")
 
     def to_dict(self) -> dict[str, Any]:
         producer: dict[str, Any] = {"name": self.producer}
@@ -150,19 +118,12 @@ class DescriptorDocument:
         result: dict[str, Any] = {
             "schema_version": self.schema_version,
             "producer": producer,
-            "features": [_feature_to_dict(feature) for feature in self.features],
+            "features": [feature.to_dict() for feature in self.features],
             "metadata": self.metadata,
         }
         if frame:
             result["frame"] = frame
         return result
-
-
-def _ensure_json(value: Any, context: str) -> None:
-    try:
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise DescriptorError(f"{context} must contain only finite JSON values") from exc
 
 
 def _finite(value: Any, context: str) -> float:
@@ -198,78 +159,17 @@ def _neighbors(value: Any, context: str) -> tuple[int, ...]:
     return tuple(result)
 
 
-def _voxels(value: Any, context: str) -> tuple[tuple[int, int, int], ...] | None:
-    if value is None:
-        return None
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise DescriptorError(f"{context} must be an array of integer triplets")
-    result: list[tuple[int, int, int]] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, Sequence) or isinstance(item, (str, bytes)) or len(item) != 3:
-            raise DescriptorError(f"{context}[{index}] must contain exactly three integers")
-        if any(isinstance(component, bool) or not isinstance(component, int) for component in item):
-            raise DescriptorError(f"{context}[{index}] must contain exactly three integers")
-        result.append(tuple(item))
-    if len(result) != len(set(result)):
-        raise DescriptorError(f"{context} must not contain duplicates")
-    return tuple(result)
-
-
-def _feature_to_dict(feature: Feature) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "id": feature.id,
-        "kind": feature.kind.value if hasattr(feature.kind, "value") else str(feature.kind),
-        "fractional_position": list(feature.fractional_position),
-        "charge": feature.charge,
-        "volume": feature.volume,
-        "neighbor_atom_indices": list(feature.neighbor_atom_indices),
-        "attributes": dict(feature.attributes),
-    }
-    if feature.voxel_indices is not None:
-        result["voxel_indices"] = [list(voxel) for voxel in feature.voxel_indices]
-    return result
-
-
 def _feature_from_mapping(item: Any, index: int) -> Feature:
     if not isinstance(item, Mapping):
         raise DescriptorError(f"features[{index}] must be an object")
-    unknown = set(item) - _FEATURE_FIELDS
-    if unknown:
-        raise DescriptorError(
-            f"features[{index}] contains unknown fields: {', '.join(sorted(unknown))}"
-        )
-    identifier = item.get("id")
-    kind = item.get("kind")
-    if not isinstance(identifier, str) or not identifier.strip():
+    if not isinstance(item.get("id"), str) or not str(item["id"]).strip():
         raise DescriptorError(f"features[{index}].id must be a non-empty string")
-    if not isinstance(kind, str) or not kind.strip():
+    if not isinstance(item.get("kind"), str) or not str(item["kind"]).strip():
         raise DescriptorError(f"features[{index}].kind must be a non-empty string")
-    if "fractional_position" not in item:
-        raise DescriptorError(f"features[{index}].fractional_position is required")
-    charge = item.get("charge")
-    volume = item.get("volume")
-    parsed_charge = None if charge is None else _finite(charge, f"features[{index}].charge")
-    parsed_volume = None if volume is None else _finite(volume, f"features[{index}].volume")
-    if parsed_volume is not None and parsed_volume < 0:
-        raise DescriptorError(f"features[{index}].volume must be non-negative")
-    attributes = item.get("attributes", {})
-    if not isinstance(attributes, Mapping):
-        raise DescriptorError(f"features[{index}].attributes must be an object")
-    _ensure_json(attributes, f"features[{index}].attributes")
-    return Feature(
-        id=identifier,
-        kind=kind,
-        fractional_position=_position(
-            item["fractional_position"], f"features[{index}].fractional_position"
-        ),
-        charge=parsed_charge,
-        volume=parsed_volume,
-        neighbor_atom_indices=_neighbors(
-            item.get("neighbor_atom_indices", ()), f"features[{index}].neighbor_atom_indices"
-        ),
-        attributes=dict(attributes),
-        voxel_indices=_voxels(item.get("voxel_indices"), f"features[{index}].voxel_indices"),
-    )
+    try:
+        return Feature.from_dict(item)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DescriptorError(f"invalid features[{index}]: {exc}") from exc
 
 
 def descriptor_from_dict(payload: Any) -> DescriptorDocument:
@@ -277,39 +177,24 @@ def descriptor_from_dict(payload: Any) -> DescriptorDocument:
 
     if not isinstance(payload, Mapping):
         raise DescriptorError("descriptor root must be a JSON object")
-    unknown = set(payload) - _ROOT_FIELDS
-    if unknown:
-        raise DescriptorError(
-            f"descriptor contains unknown root fields: {', '.join(sorted(unknown))}"
-        )
-    schema = payload.get("schema_version")
-    if schema != SCHEMA_VERSION:
+    if payload.get("schema_version") != SCHEMA_VERSION:
         raise DescriptorError(f"schema_version must be exactly {SCHEMA_VERSION!r}")
     producer = payload.get("producer")
-    if not isinstance(producer, Mapping) or not isinstance(producer.get("name"), str):
+    if (
+        not isinstance(producer, Mapping)
+        or not isinstance(producer.get("name"), str)
+        or not producer["name"].strip()
+    ):
         raise DescriptorError("producer must be an object with a non-empty name")
-    unknown_producer_fields = set(producer) - _PRODUCER_FIELDS
-    if unknown_producer_fields:
-        raise DescriptorError(
-            "producer contains unknown fields: " + ", ".join(sorted(unknown_producer_fields))
-        )
     features_payload = payload.get("features")
     if not isinstance(features_payload, list):
         raise DescriptorError("features must be an array")
     features = tuple(
         _feature_from_mapping(item, index) for index, item in enumerate(features_payload)
     )
-    identifiers = [feature.id for feature in features]
-    if len(identifiers) != len(set(identifiers)):
-        raise DescriptorError("feature ids must be unique")
     frame = payload.get("frame", {})
     if not isinstance(frame, Mapping):
         raise DescriptorError("frame must be an object when present")
-    unknown_frame_fields = set(frame) - _FRAME_FIELDS
-    if unknown_frame_fields:
-        raise DescriptorError(
-            f"frame contains unknown fields: {', '.join(sorted(unknown_frame_fields))}"
-        )
     frame_index = frame.get("index")
     if frame_index is not None and (
         isinstance(frame_index, bool) or not isinstance(frame_index, int)
@@ -332,26 +217,6 @@ def descriptor_from_dict(payload: Any) -> DescriptorDocument:
         features=features,
         metadata=dict(metadata),
     )
-
-
-def _first_mapping_value(payload: Mapping[str, Any], names: Iterable[str]) -> Any:
-    for name in names:
-        if name in payload:
-            return payload[name]
-    for container_name in (
-        "maxima_results",
-        "basin_results",
-        "atom_results",
-        "nna_results",
-        "results",
-        "data",
-    ):
-        nested = payload.get(container_name)
-        if isinstance(nested, Mapping):
-            for name in names:
-                if name in nested:
-                    return nested[name]
-    return None
 
 
 def _frame_position(
@@ -392,7 +257,7 @@ def _baderkit_structure_positions(payload: Mapping[str, Any]) -> Sequence[Any] |
     for site in sites:
         if not isinstance(site, Mapping):
             return None
-        position = site.get("abc", site.get("frac_coords"))
+        position = site.get("abc")
         if position is None:
             return None
         positions.append(position)
@@ -402,17 +267,17 @@ def _baderkit_structure_positions(payload: Mapping[str, Any]) -> Sequence[Any] |
 def _parse_baderkit(
     payload: Mapping[str, Any], frame: Frame | None, *, native_format: str = "bader.json"
 ) -> DescriptorDocument:
-    positions = _first_mapping_value(payload, ("maxima_frac", "basin_frac", "attractor_frac"))
-    charges = _first_mapping_value(payload, ("basin_charges", "maxima_charges"))
-    volumes = _first_mapping_value(payload, ("basin_volumes", "maxima_volumes"))
-    basin_atoms = _first_mapping_value(payload, ("basin_atoms", "atom_indices"))
+    atom_results = payload.get("atom_results", {})
+    maxima_results = payload.get("maxima_results", {})
+    if not isinstance(atom_results, Mapping) or not isinstance(maxima_results, Mapping):
+        raise DescriptorError("BaderKit JSON atom_results and maxima_results must be objects")
+    positions = maxima_results.get("maxima_frac")
+    charges = maxima_results.get("basin_charges")
+    volumes = maxima_results.get("basin_volumes")
+    basin_atoms = atom_results.get("basin_atoms")
     known_atom_indices = {atom.index for atom in frame.atoms} if frame is not None else None
     features: list[Feature] = []
     if isinstance(positions, Sequence) and not isinstance(positions, (str, bytes)):
-        is_elf = (
-            native_format.lower() == "badelf.json"
-            or "elf" in str(payload.get("method", payload.get("analysis_type", ""))).lower()
-        )
         for index, raw_position in enumerate(positions):
             assigned = _series_item(basin_atoms, index)
             atom_index = (
@@ -423,9 +288,7 @@ def _parse_baderkit(
             is_nna = atom_index is None or (
                 known_atom_indices is not None and atom_index not in known_atom_indices
             )
-            kind = (
-                "non_nuclear_attractor" if is_nna else ("elf_basin" if is_elf else "atomic_basin")
-            )
+            kind = "non_nuclear_attractor" if is_nna else "atomic_basin"
             charge = _series_item(charges, index)
             volume = _series_item(volumes, index)
             features.append(
@@ -451,18 +314,16 @@ def _parse_baderkit(
                 )
             )
 
-    oxidation_states = _first_mapping_value(payload, ("oxidation_states",))
-    atom_charges = _first_mapping_value(payload, ("atom_charges",))
+    oxidation_states = atom_results.get("oxidation_states")
+    atom_charges = atom_results.get("atom_charges")
     charge_definition = "bader_electron_population"
     if atom_charges is None:
         atom_charges = oxidation_states
         charge_definition = "bader_oxidation_state"
-    atom_volumes = _first_mapping_value(payload, ("atom_volumes",))
-    species = _first_mapping_value(payload, ("species",))
-    maxima_elf_values = _first_mapping_value(payload, ("maxima_elf_values",))
-    is_badelf = native_format.lower() == "badelf.json" or isinstance(
-        payload.get("nna_results"), Mapping
-    )
+    atom_volumes = atom_results.get("atom_volumes")
+    species = atom_results.get("species")
+    maxima_elf_values = atom_results.get("maxima_elf_values")
+    is_badelf = native_format.lower() == "badelf.json"
     structure_positions = _baderkit_structure_positions(payload) if is_badelf else None
     atom_count = len(frame.atoms) if frame is not None else None
     if isinstance(atom_charges, Sequence) and not isinstance(atom_charges, (str, bytes)):
@@ -542,15 +403,6 @@ def _parse_baderkit(
 
 
 def _critic2_kind(item: Mapping[str, Any]) -> str:
-    name = str(item.get("kind", item.get("type", item.get("name", "")))).lower().replace("-", "_")
-    if "bond" in name or name in {"bcp", "(3,_1)", "3,-1"}:
-        return "bond_critical_point"
-    if "ring" in name or name in {"rcp", "(3,+1)", "3,1"}:
-        return "ring_critical_point"
-    if "cage" in name or name in {"ccp", "(3,+3)", "3,3"}:
-        return "cage_critical_point"
-    if "non_nuclear" in name or name in {"nna", "nnm"}:
-        return "non_nuclear_attractor"
     signature = item.get("signature")
     if signature == -3 and item.get("is_nucleus") is False:
         return "non_nuclear_attractor"
@@ -565,7 +417,7 @@ def _critic2_kind(item: Mapping[str, Any]) -> str:
 
 def _critic2_cpreport_records(
     payload: Mapping[str, Any],
-) -> tuple[Sequence[Any], Mapping[int, Mapping[str, Any]], int | None] | None:
+) -> tuple[Sequence[Any], Mapping[int, Mapping[str, Any]], int | None]:
     """Return records and joins from critic2's native ``CPREPORT *.json``.
 
     The upstream format nests ``cell_cps`` and ``nonequivalent_cps`` below a
@@ -576,16 +428,11 @@ def _critic2_cpreport_records(
 
     critical_points = payload.get("critical_points")
     if not isinstance(critical_points, Mapping):
-        return None
+        raise DescriptorError("critic2 CPREPORT JSON requires a critical_points object")
     cell_records = critical_points.get("cell_cps")
     nonequivalent = critical_points.get("nonequivalent_cps")
     if not isinstance(cell_records, Sequence) or isinstance(cell_records, (str, bytes)):
-        if not isinstance(nonequivalent, Sequence) or isinstance(nonequivalent, (str, bytes)):
-            raise DescriptorError(
-                "critic2 CPREPORT JSON must contain critical_points.cell_cps or "
-                "critical_points.nonequivalent_cps"
-            )
-        cell_records = nonequivalent
+        raise DescriptorError("critic2 CPREPORT JSON requires critical_points.cell_cps")
     joined: dict[int, Mapping[str, Any]] = {}
     if isinstance(nonequivalent, Sequence) and not isinstance(nonequivalent, (str, bytes)):
         for index, record in enumerate(nonequivalent):
@@ -656,19 +503,7 @@ def _critic2_hessian_trace(value: Any) -> float | None:
 
 
 def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
-    cpreport = _critic2_cpreport_records(payload)
-    joined: Mapping[int, Mapping[str, Any]] = {}
-    atom_count: int | None = None
-    if cpreport is None:
-        records = _first_mapping_value(
-            payload, ("critical_points", "criticalpoints", "cps", "attractors")
-        )
-        native_format = "json"
-    else:
-        records, joined, atom_count = cpreport
-        native_format = "cpreport.json"
-    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
-        raise DescriptorError("critic2 JSON must contain a critical_points array")
+    records, joined, atom_count = _critic2_cpreport_records(payload)
     features: list[Feature] = []
     for index, record in enumerate(records):
         if not isinstance(record, Mapping):
@@ -683,55 +518,32 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
         # definition.  Explicit cell-record values are more specific and
         # intentionally override the shared definition when both are present.
         combined = {**detail, **record}
-        raw_position = record.get(
-            "fractional_position",
-            record.get(
-                "fractional",
-                record.get(
-                    "frac",
-                    record.get("fractional_coordinates", detail.get("fractional_coordinates")),
-                ),
-            ),
-        )
+        raw_position = record.get("fractional_coordinates", detail.get("fractional_coordinates"))
         if raw_position is None:
             raise DescriptorError(f"critic2 critical point {index} has no fractional coordinates")
         if combined.get("signature") == -3 and combined.get("is_nucleus") is True:
             continue
-        neighbors = record.get("neighbor_atom_indices", record.get("atoms"))
-        if neighbors is None:
-            neighbors = _critic2_attractor_atoms(record, atom_count)
+        neighbors = _critic2_attractor_atoms(record, atom_count)
         attributes = {
             str(key): value
             for key, value in combined.items()
             if key
             not in {
                 "id",
-                "kind",
-                "type",
                 "name",
-                "fractional_position",
-                "fractional",
-                "frac",
                 "fractional_coordinates",
                 "cartesian_coordinates",
                 "charge",
                 "volume",
-                "neighbor_atom_indices",
-                "atoms",
             }
         }
         if "laplacian" not in attributes:
             laplacian = _critic2_hessian_trace(attributes.get("hessian"))
             if laplacian is not None:
                 attributes["laplacian"] = laplacian
-        _ensure_json(attributes, f"critic2 critical point {index} attributes")
         features.append(
             Feature(
-                id=(
-                    f"critic2:cp:{record['id']}"
-                    if cpreport is not None and "id" in record
-                    else str(record.get("id", f"critic2:cp:{index}"))
-                ),
+                id=f"critic2:cp:{record.get('id', index + 1)}",
                 kind=_critic2_kind(combined),
                 fractional_position=_position(
                     raw_position, f"critic2 critical point {index} position"
@@ -753,7 +565,7 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
             )
         )
     metadata: dict[str, Any] = {
-        "native_format": native_format,
+        "native_format": "cpreport.json",
         **({"units": payload["units"]} if isinstance(payload.get("units"), str) else {}),
     }
     payload_metadata = payload.get("metadata")
@@ -774,7 +586,7 @@ _ATOM_LABEL = re.compile(r"(\d+)$")
 _INTEGER_FIELD = re.compile(r"[+-]?\d+\Z")
 
 
-def _atom_index(value: Any, context: str, *, index_base: int = 1) -> int:
+def _atom_index(value: Any, context: str) -> int:
     if isinstance(value, bool):
         raise DescriptorError(f"{context} is not an atom index")
     if isinstance(value, int):
@@ -786,9 +598,9 @@ def _atom_index(value: Any, context: str, *, index_base: int = 1) -> int:
         raw = int(match.group(1))
     else:
         raise DescriptorError(f"cannot read atom index from {value!r} in {context}")
-    result = raw - index_base
+    result = raw - 1
     if result < 0:
-        raise DescriptorError(f"{context} must use {index_base}-based positive atom labels")
+        raise DescriptorError(f"{context} must use one-based positive atom labels")
     return result
 
 
@@ -815,204 +627,11 @@ def _periodic_midpoint(
     return tuple((left[axis] + 0.5 * displacement[axis]) % 1.0 for axis in range(3))  # type: ignore[return-value]
 
 
-def _lobster_json_translation(
-    record: Mapping[str, Any], context: str
-) -> tuple[int, int, int] | None:
-    translations: list[tuple[int, int, int]] = []
-    for field_name in ("translation", "cell_translation"):
-        if field_name not in record:
-            continue
-        raw = record[field_name]
-        if (
-            not isinstance(raw, Sequence)
-            or isinstance(raw, (str, bytes))
-            or len(raw) != 3
-            or any(type(component) is not int for component in raw)
-        ):
-            raise DescriptorError(f"{context} {field_name} must contain exactly three integers")
-        translations.append((int(raw[0]), int(raw[1]), int(raw[2])))
-    if len(translations) == 2 and translations[0] != translations[1]:
-        raise DescriptorError(f"{context} has conflicting translation and cell_translation")
-    return translations[0] if translations else None
-
-
-def _parse_lobster_json(payload: Mapping[str, Any], frame: Frame | None) -> DescriptorDocument:
-    records = _first_mapping_value(payload, ("bonds", "icohp", "icohps", "icobi", "icobis"))
-    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
-        raise DescriptorError("LOBSTER JSON must contain a bonds/ICOHP/ICOBI array")
-    if frame is None:
-        raise DescriptorError(
-            "LOBSTER bond descriptors require a Frame for periodic bond midpoints"
-        )
-    raw_index_base = payload.get("atom_index_base", 1)
-    if isinstance(raw_index_base, bool) or raw_index_base not in {0, 1}:
-        raise DescriptorError("LOBSTER atom_index_base must be 0 or 1")
-    index_base = int(raw_index_base)
-    features: list[Feature] = []
-    for index, record in enumerate(records):
-        if not isinstance(record, Mapping):
-            raise DescriptorError(f"LOBSTER bond {index} must be an object")
-        first = _atom_index(
-            record.get("atom1", record.get("from")),
-            f"LOBSTER bond {index} atom1",
-            index_base=index_base,
-        )
-        second = _atom_index(
-            record.get("atom2", record.get("to")),
-            f"LOBSTER bond {index} atom2",
-            index_base=index_base,
-        )
-        attribute_aliases = {
-            "icohp": "icohp_ev",
-            "icohp_ev": "icohp_ev",
-            "icobi": "icobi",
-            "icoop": "icoop",
-            "distance": "bond_length_angstrom",
-            "bond_length_angstrom": "bond_length_angstrom",
-        }
-        attributes: dict[str, Any] = {
-            normalized: _finite(record[source], f"LOBSTER bond {index} {source}")
-            for source, normalized in attribute_aliases.items()
-            if source in record
-        }
-        if "icohp" in record:
-            attributes["icohp"] = _finite(record["icohp"], f"LOBSTER bond {index} icohp")
-        if "distance" in record:
-            attributes["distance"] = _finite(record["distance"], f"LOBSTER bond {index} distance")
-        families = tuple(
-            family
-            for family, keys in (
-                ("icohp", ("icohp", "icohp_ev")),
-                ("icobi", ("icobi",)),
-                ("icoop", ("icoop",)),
-            )
-            if any(key in record for key in keys)
-        )
-        if not families:
-            raise DescriptorError(
-                f"LOBSTER bond {index} has no recognized ICOHP, ICOBI, or ICOOP value"
-            )
-        attributes["descriptor_family"] = "+".join(families)
-        lattice_translation = _lobster_json_translation(record, f"LOBSTER bond {index}")
-        if lattice_translation is not None:
-            attributes["lattice_translation"] = list(lattice_translation)
-            attributes["midpoint_convention"] = "explicit_atom2_lattice_translation"
-        features.append(
-            Feature(
-                id=str(record.get("id", f"lobster:bond:{index}")),
-                kind="bond_descriptor",
-                fractional_position=_periodic_midpoint(
-                    frame,
-                    first,
-                    second,
-                    lattice_translation=lattice_translation,
-                ),
-                neighbor_atom_indices=(first, second),
-                attributes=attributes,
-            )
-        )
-    return DescriptorDocument(
-        producer="lobster", features=tuple(features), metadata={"native_format": "json"}
-    )
-
-
-def _parse_charge_json(
-    payload: Mapping[str, Any], frame: Frame | None, producer: str
-) -> DescriptorDocument:
-    records = _first_mapping_value(payload, ("atoms", "charges", "atomic_charges"))
-    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
-        raise DescriptorError(f"{producer} JSON must contain an atoms/charges array")
-    raw_index_base = payload.get("atom_index_base", 0)
-    if isinstance(raw_index_base, bool) or raw_index_base not in {0, 1}:
-        raise DescriptorError(f"{producer} atom_index_base must be 0 or 1")
-    index_base = int(raw_index_base)
-    features: list[Feature] = []
-    for index, record in enumerate(records):
-        if isinstance(record, Mapping):
-            raw_atom_index = record.get("index", index + index_base)
-            if isinstance(raw_atom_index, bool) or not isinstance(raw_atom_index, int):
-                raise DescriptorError(f"{producer} atom {index} index must be an integer")
-            atom_index = raw_atom_index - index_base
-            if atom_index < 0:
-                raise DescriptorError(f"{producer} atom {index} index is below atom_index_base")
-            raw_charge = record.get("charge", record.get("net_charge", record.get("ddec_charge")))
-            raw_position = record.get("fractional_position")
-            attributes = {
-                str(key): value
-                for key, value in record.items()
-                if key
-                not in {"index", "charge", "net_charge", "ddec_charge", "fractional_position"}
-            }
-        else:
-            atom_index = index
-            raw_charge = record
-            raw_position = None
-            attributes = {}
-        if raw_charge is None:
-            raise DescriptorError(f"{producer} atom {index} has no charge")
-        position = (
-            _position(raw_position, f"{producer} atom {index} position")
-            if raw_position is not None
-            else _frame_position(frame, atom_index, f"{producer} atomic charges")
-        )
-        features.append(
-            Feature(
-                id=f"{producer}:atom:{atom_index}",
-                kind="atomic_charge",
-                fractional_position=position,
-                charge=_finite(raw_charge, f"{producer} atom {index} charge"),
-                neighbor_atom_indices=(atom_index,),
-                attributes={**attributes, "charge_definition": "ddec_net_atomic_charge"},
-            )
-        )
-    return DescriptorDocument(
-        producer=producer,
-        features=tuple(features),
-        metadata={
-            "native_format": "json",
-            "charge_convention": (
-                "DDEC net atomic charge in elementary-charge units; positive values indicate electron deficiency."
-                if producer == "chargemol"
-                else f"{producer} atomic charge; see feature attributes for convention."
-            ),
-        },
-    )
-
-
-def _infer_json_producer(payload: Mapping[str, Any], path: Path) -> str | None:
-    producer = payload.get("producer")
-    if isinstance(producer, str):
-        return producer.lower()
-    if isinstance(producer, Mapping):
-        producer_name = producer.get("name")
-        if isinstance(producer_name, str):
-            return producer_name.lower()
-    name = path.name.lower()
-    if (
-        name in {"bader.json", "badelf.json"}
-        or any(key in payload for key in ("maxima_frac", "basin_charges", "atom_volumes"))
-        or (
-            "atom_results" in payload
-            and any(key in payload for key in ("maxima_results", "nna_results"))
-        )
-    ):
-        return "baderkit"
-    if "critic" in name or any(
-        key in payload for key in ("critical_points", "criticalpoints", "cps")
-    ):
-        return "critic2"
-    if "lobster" in name or any(key in payload for key in ("bonds", "icohp", "icobi")):
-        return "lobster"
-    if "ddec" in name or "chargemol" in name:
-        return "chargemol"
-    return None
-
-
 def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     if frame is None:
         raise DescriptorError("LOBSTER list files require a Frame for periodic bond midpoints")
     lower_name = path.name.lower()
-    family = "icobi" if "icobi" in lower_name else "icoop" if "icoop" in lower_name else "icohp"
+    family = "icobi" if "icobi" in lower_name else "icohp"
     descriptor = "icohp_ev" if family == "icohp" else family
     features: list[Feature] = []
     for line_number, line in enumerate(_read_descriptor_text(path).splitlines(), start=1):
@@ -1158,20 +777,17 @@ def load_descriptor(
 ) -> DescriptorDocument:
     """Load a canonical or supported native plugin descriptor.
 
-    JSON carrying ``schema_version=electrace.features.v1`` is validated
-    strictly.  Native JSON dispatch can be made deterministic with ``producer``
-    (``baderkit``, ``critic2``, ``lobster``, or ``chargemol``).  LOBSTER lists,
-    ACF.dat, and Chargemol charge XYZ files are recognized by filename. All
-    supported formats must be UTF-8 and are byte-limited while being read.
+    JSON carrying ``schema_version=electrace.features.v1`` is normalized as the
+    canonical format. Official BaderKit ``bader.json``/``badelf.json`` and
+    critic2 CPREPORT JSON are also accepted. LOBSTER lists, ACF.dat, and
+    Chargemol charge XYZ files are recognized by filename.
     """
 
     source = Path(path).expanduser().resolve()
     if not source.is_file():
         raise DescriptorError(f"descriptor file does not exist: {source}")
-    if source.stat().st_size > MAX_DESCRIPTOR_BYTES:
-        raise _descriptor_size_error(source)
     lower_name = source.name.lower()
-    if any(name in lower_name for name in ("icohplist", "icobilist", "icooplist")):
+    if any(name in lower_name for name in ("icohplist", "icobilist")):
         return _parse_lobster_list(source, frame)
     if source.name.upper() == "ACF.DAT":
         return _parse_atomic_charge_text(source, frame, "bader")
@@ -1180,26 +796,26 @@ def load_descriptor(
     if source.suffix.lower() != ".json":
         raise DescriptorError(f"unsupported descriptor format: {source.name}")
     try:
-        payload = json.loads(
-            _read_descriptor_text(source), object_pairs_hook=_object_without_duplicates
-        )
+        payload = json.loads(_read_descriptor_text(source))
     except (json.JSONDecodeError, RecursionError) as exc:
         raise DescriptorError(f"cannot parse descriptor JSON {source}: {exc}") from exc
     if not isinstance(payload, Mapping):
         raise DescriptorError("descriptor JSON root must be an object")
     if "schema_version" in payload:
         return descriptor_from_dict(payload)
-    selected = (producer or _infer_json_producer(payload, source) or "").lower()
-    if selected in {"baderkit", "bader"}:
+    selected = (producer or "").lower()
+    if not selected:
+        if lower_name in {"bader.json", "badelf.json"}:
+            selected = "baderkit"
+        elif "critic" in lower_name or isinstance(payload.get("critical_points"), Mapping):
+            selected = "critic2"
+    if selected == "baderkit":
         return _parse_baderkit(payload, frame, native_format=source.name)
     if selected == "critic2":
         return _parse_critic2(payload)
-    if selected in {"lobster", "lobsterpy"}:
-        return _parse_lobster_json(payload, frame)
-    if selected in {"chargemol", "ddec", "ddec6"}:
-        return _parse_charge_json(payload, frame, "chargemol")
     raise DescriptorError(
-        f"cannot infer native JSON producer for {source.name}; pass producer='baderkit', 'critic2', 'lobster', or 'chargemol'"
+        f"unsupported native JSON descriptor {source.name}; expected bader.json, "
+        "badelf.json, or critic2 CPREPORT JSON"
     )
 
 
@@ -1210,11 +826,9 @@ def dump_descriptor(
     indent: int = 2,
     overwrite: bool = False,
 ) -> Path:
-    """Atomically write descriptor JSON without following a leaf symlink."""
+    """Write canonical descriptor JSON."""
 
     destination = Path(path)
-    if destination.is_symlink():
-        raise OSError(f"refusing to write descriptor through a symbolic link: {destination}")
     if destination.exists() and not overwrite:
         raise FileExistsError(f"refusing to replace existing descriptor: {destination}")
     payload = json.dumps(document.to_dict(), indent=indent, allow_nan=False) + "\n"
@@ -1295,9 +909,7 @@ def attach_descriptors(frame: Frame, documents: Iterable[DescriptorDocument]) ->
             {
                 "schema_version": document.schema_version,
                 "producer": producer,
-                "metadata": json.loads(
-                    json.dumps(document.metadata, allow_nan=False, sort_keys=True)
-                ),
+                "metadata": dict(document.metadata),
             }
         )
     if sources:

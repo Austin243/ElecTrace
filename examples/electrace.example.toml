@@ -23,7 +23,6 @@ overlap_weight = 1.0
 descriptor_weight = 0.35
 match_threshold = 3.0
 # Maximum total-cost gap for a complete alternative assignment.
-ambiguity_tolerance = 0.05
 conservation_tolerance = 0.35
 split_merge_threshold = 0.55
 
@@ -33,7 +32,6 @@ icobi = 0.1
 
 [events]
 minimum_persistence = 2
-hysteresis_frames = 1
 minimum_event_confidence = 0.10
 charge_change_threshold = 0.10
 volume_change_fraction = 0.20
@@ -51,7 +49,6 @@ directory = "electrace-results"
 html_report = true
 json = true
 csv = true
-hdf5 = false
 
 # Plugins are inspected and planned by ElecTrace, but never executed implicitly.
 [plugins.baderkit]

@@ -18,10 +18,6 @@ from typing import Any
 from electrace._files import atomic_output_path, atomic_write_text
 
 
-class ExportDependencyError(RuntimeError):
-    """Raised when a requested export needs an unavailable optional package."""
-
-
 def _strict_json_dumps(value: Any, *, context: str, **kwargs: Any) -> str:
     """Serialize *value* as standards-compliant JSON with an actionable error."""
 
@@ -127,34 +123,4 @@ def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], path: str | Path) -> P
     extras = sorted({key for row in rows for key in row if key not in preferred})
     fields = preferred + extras
     _write_csv(rows, fields, output)
-    return output
-
-
-def write_hdf5(data: Mapping[str, Any], path: str | Path) -> Path:
-    """Write the canonical JSON into an HDF5 container.
-
-    Keeping the canonical document as a UTF-8 dataset provides a lossless,
-    versionable interchange layer while leaving room for optimized numerical
-    datasets in later schema versions.
-    """
-
-    payload = _strict_json_dumps(
-        data,
-        context="HDF5 analysis JSON",
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    try:
-        import h5py
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        raise ExportDependencyError("HDF5 export requires `pip install electrace[hdf5]`") from exc
-
-    output = Path(path)
-    with (
-        atomic_output_path(output) as temporary,
-        h5py.File(temporary, "w") as handle,
-    ):
-        handle.attrs["schema"] = "electrace.analysis"
-        handle.attrs["schema_version"] = str(data.get("schema_version", "0.1"))
-        handle.create_dataset("analysis_json", data=payload)
     return output

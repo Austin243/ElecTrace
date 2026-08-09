@@ -1,8 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Austin243/ElecTrace/schemas/electrace.cli.v1.schema.json",
-  "title": "ElecTrace CLI response envelope",
-  "description": "The common machine-readable response emitted by ElecTrace commands when --json is requested.",
+  "title": "ElecTrace CLI response",
   "oneOf": [
     {
       "$ref": "#/$defs/success"
@@ -12,39 +11,25 @@
     }
   ],
   "$defs": {
-    "base": {
+    "common": {
       "type": "object",
       "required": [
         "schema_version",
         "ok",
         "command",
-        "warnings",
-        "artifacts"
+        "warnings"
       ],
       "properties": {
         "schema_version": {
           "const": "electrace.cli.v1"
         },
-        "ok": {
-          "type": "boolean"
-        },
         "command": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
+          "type": "string"
         },
         "warnings": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "\\S"
-          }
-        },
-        "artifacts": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/jsonValue"
+            "type": "string"
           }
         }
       }
@@ -52,66 +37,32 @@
     "success": {
       "allOf": [
         {
-          "$ref": "#/$defs/base"
+          "$ref": "#/$defs/common"
         },
         {
-          "type": "object",
           "required": [
-            "schema_version",
-            "ok",
-            "command",
-            "data",
-            "warnings",
-            "artifacts"
+            "data"
           ],
           "properties": {
-            "schema_version": {
-              "const": "electrace.cli.v1"
-            },
             "ok": {
               "const": true
-            },
-            "command": {
-              "type": "string"
-            },
-            "data": {
-              "$ref": "#/$defs/jsonValue"
-            },
-            "warnings": {
-              "type": "array"
-            },
-            "artifacts": {
-              "type": "array"
             }
-          },
-          "additionalProperties": false
+          }
         }
       ]
     },
     "failure": {
       "allOf": [
         {
-          "$ref": "#/$defs/base"
+          "$ref": "#/$defs/common"
         },
         {
-          "type": "object",
           "required": [
-            "schema_version",
-            "ok",
-            "command",
-            "error",
-            "warnings",
-            "artifacts"
+            "error"
           ],
           "properties": {
-            "schema_version": {
-              "const": "electrace.cli.v1"
-            },
             "ok": {
               "const": false
-            },
-            "command": {
-              "type": "string"
             },
             "error": {
               "type": "object",
@@ -122,51 +73,14 @@
               ],
               "properties": {
                 "code": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_]*$"
+                  "type": "string"
                 },
                 "message": {
-                  "type": "string",
-                  "minLength": 1,
-                  "pattern": "\\S"
+                  "type": "string"
                 },
-                "details": {
-                  "$ref": "#/$defs/jsonValue"
-                }
-              },
-              "additionalProperties": false
-            },
-            "warnings": {
-              "type": "array"
-            },
-            "artifacts": {
-              "type": "array"
+                "details": {}
+              }
             }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
-    "jsonValue": {
-      "oneOf": [
-        {
-          "type": [
-            "null",
-            "boolean",
-            "number",
-            "string"
-          ]
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/jsonValue"
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/jsonValue"
           }
         }
       ]

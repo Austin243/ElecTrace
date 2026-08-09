@@ -8,7 +8,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 import numpy as np
@@ -19,13 +18,12 @@ from electrace.config import ElecTraceConfig, load_config
 from electrace.events import EventDetectionConfig, track_sequence
 from electrace.export import (
     write_events_csv,
-    write_hdf5,
     write_json,
     write_tracks_csv,
 )
 from electrace.io import load_sequence
 from electrace.matching import AtomMatchConfig, FeatureMatchConfig
-from electrace.models import Feature, Frame, MatchRelation, Sequence, TrackingResult
+from electrace.models import Feature, Frame, MatchRelation, Sequence
 from electrace.provenance import environment_record, fingerprint_files, sha256_file
 from electrace.report import render_html_report
 
@@ -48,10 +46,7 @@ def _resolve(base: Path, value: str | None) -> Path | None:
 
 def _matching_configs(config: ElecTraceConfig) -> tuple[AtomMatchConfig, FeatureMatchConfig]:
     settings = config.matching
-    atom = AtomMatchConfig(
-        max_distance=settings.max_atom_displacement,
-        ambiguity_tolerance=settings.ambiguity_tolerance,
-    )
+    atom = AtomMatchConfig(max_distance=settings.max_atom_displacement)
     feature = FeatureMatchConfig(
         max_distance=settings.max_feature_displacement,
         max_cost=settings.match_threshold,
@@ -62,7 +57,6 @@ def _matching_configs(config: ElecTraceConfig) -> tuple[AtomMatchConfig, Feature
         voxel_weight=settings.overlap_weight,
         descriptor_weight=settings.descriptor_weight,
         descriptor_scales=settings.descriptor_scales,
-        ambiguity_tolerance=settings.ambiguity_tolerance,
         conservation_tolerance=settings.conservation_tolerance,
         min_split_merge_confidence=settings.split_merge_threshold,
     )
@@ -77,7 +71,6 @@ def _event_config(config: ElecTraceConfig) -> EventDetectionConfig:
         descriptor_thresholds=settings.descriptor_thresholds,
         min_event_confidence=settings.minimum_event_confidence,
         min_persistence=settings.minimum_persistence,
-        hysteresis_frames=settings.hysteresis_frames,
         include_transient=True,
     )
 
@@ -211,8 +204,6 @@ def _build_tracks(
         candidates: dict[str, list[tuple[float, str, tuple[str, ...]]]] = {}
 
         for edge in result.edges:
-            if edge.ambiguous:
-                continue
             parent_tracks = tuple(
                 sorted({active[str(source)] for source in edge.source_ids if str(source) in active})
             )
@@ -303,38 +294,11 @@ def _normalize_events(
     return normalized
 
 
-def _matching_ambiguity_warnings(tracking: TrackingResult) -> list[str]:
-    warnings: list[str] = []
-    for entity, results in (
-        ("atom", tracking.atom_matches),
-        ("feature", tracking.feature_matches),
-    ):
-        for result in results:
-            raw = result.diagnostics.get("ambiguities", [])
-            ambiguities = raw if isinstance(raw, list) else []
-            if not ambiguities:
-                continue
-            tolerance = float(result.diagnostics.get("ambiguity_tolerance", 0.0))
-            consequence = (
-                "ambiguous atom mappings were excluded from feature-neighbor evidence"
-                if entity == "atom"
-                else "affected lineage and event claims were suppressed"
-            )
-            warnings.append(
-                f"Ambiguous {entity} correspondence for transition "
-                f"{result.previous_frame_index}→{result.current_frame_index}: "
-                f"{len(ambiguities)} selected decision(s) have a complete alternative "
-                f"assignment within {tolerance:g} cost units; {consequence}."
-            )
-    return warnings
-
-
 def analyze_sequence(
     sequence: Sequence,
     config: ElecTraceConfig,
     *,
     config_path: str | Path | None = None,
-    strict: bool = True,
 ) -> dict[str, Any]:
     """Run matching, event detection, lineage construction, and provenance."""
 
@@ -343,17 +307,10 @@ def analyze_sequence(
     atom_config, feature_config = _matching_configs(config)
     event_config = _event_config(config)
     tracking = track_sequence(sequence, atom_config, feature_config, event_config)
-    ambiguity_warnings = _matching_ambiguity_warnings(tracking)
-    if strict and ambiguity_warnings:
-        raise ValueError(
-            "Ambiguous correspondence in strict mode. "
-            + " ".join(ambiguity_warnings)
-            + " Re-run with --permissive to retain diagnostics while suppressing affected claims."
-        )
     tracks, track_warnings = _build_tracks(sequence, tracking.feature_matches)
     descriptor_documents, descriptor_warnings = _descriptor_provenance(sequence)
 
-    warnings = [*ambiguity_warnings, *track_warnings, *descriptor_warnings]
+    warnings = [*track_warnings, *descriptor_warnings]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
     if missing_features:
         warnings.append(
@@ -451,7 +408,7 @@ def load_and_analyze(
         descriptor_name=config.inputs.descriptor_name,
         descriptor_source=config.inputs.descriptor_source,
     )
-    return analyze_sequence(sequence, config, config_path=path, strict=strict), config
+    return analyze_sequence(sequence, config, config_path=path), config
 
 
 def _prepare_output(directory: Path, overwrite: bool) -> None:
@@ -467,52 +424,10 @@ _KNOWN_BUNDLE_ARTIFACTS = frozenset(
         "analysis.json",
         "events.csv",
         "feature_tracks.csv",
-        "analysis.h5",
         "report.html",
         "manifest.json",
     }
 )
-
-
-def _selected_bundle_artifacts(config: ElecTraceConfig) -> set[str]:
-    selected = {"manifest.json"}
-    if config.outputs.json:
-        selected.add("analysis.json")
-    if config.outputs.csv:
-        selected.update(("events.csv", "feature_tracks.csv"))
-    if config.outputs.hdf5:
-        selected.add("analysis.h5")
-    if config.outputs.html_report:
-        selected.add("report.html")
-    return selected
-
-
-def _remove_unselected_bundle_artifacts(directory: Path, selected: set[str]) -> None:
-    """Remove only reserved ElecTrace files disabled for this overwrite."""
-
-    for name in sorted(_KNOWN_BUNDLE_ARTIFACTS - selected):
-        artifact = directory / name
-        if artifact.is_file() or artifact.is_symlink():
-            artifact.unlink()
-
-
-def _publish_staged_bundle(staging: Path, directory: Path, selected: set[str]) -> None:
-    """Publish a complete staged bundle without following reserved symlinks."""
-
-    for name in sorted(selected):
-        artifact = directory / name
-        if artifact.is_dir() and not artifact.is_symlink():
-            raise IsADirectoryError(f"Reserved bundle artifact path is a directory: {artifact}")
-    # Writers never create symlinks. A reserved symlink is therefore not a
-    # valid prior artifact; unlink only its directory entry, never its target.
-    for name in sorted(_KNOWN_BUNDLE_ARTIFACTS):
-        artifact = directory / name
-        if artifact.is_symlink():
-            artifact.unlink()
-    _remove_unselected_bundle_artifacts(directory, selected)
-    for name in sorted(selected - {"manifest.json"}):
-        (staging / name).replace(directory / name)
-    (staging / "manifest.json").replace(directory / "manifest.json")
 
 
 def write_analysis_bundle(
@@ -522,49 +437,42 @@ def write_analysis_bundle(
     *,
     overwrite: bool = False,
 ) -> AnalysisArtifacts:
-    """Write selected JSON/CSV/HDF5/HTML products and an integrity manifest."""
+    """Write selected JSON, CSV, and HTML products plus an integrity manifest."""
 
     directory = Path(output_directory).expanduser().resolve()
     _prepare_output(directory, overwrite)
-    selected = _selected_bundle_artifacts(config)
-    written_names: list[str]
-    with TemporaryDirectory(prefix=".electrace-stage-", dir=directory) as temporary:
-        staging = Path(temporary)
-        staged: list[Path] = []
-        if config.outputs.json:
-            staged.append(write_json(analysis, staging / "analysis.json"))
-        if config.outputs.csv:
-            staged.append(write_events_csv(analysis.get("events", []), staging / "events.csv"))
-            staged.append(
-                write_tracks_csv(analysis.get("tracks", []), staging / "feature_tracks.csv")
-            )
-        if config.outputs.hdf5:
-            staged.append(write_hdf5(analysis, staging / "analysis.h5"))
-        if config.outputs.html_report:
-            staged.append(render_html_report(analysis, staging / "report.html"))
-
-        manifest = {
-            "schema_version": "electrace.bundle.v1",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "files": [
-                {
-                    "path": item.name,
-                    "size_bytes": item.stat().st_size,
-                    "sha256": sha256_file(item),
-                }
-                for item in staged
-            ],
-        }
-        manifest_path = staging / "manifest.json"
-        atomic_write_text(
-            manifest_path,
-            json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+    written: list[Path] = []
+    if config.outputs.json:
+        written.append(write_json(analysis, directory / "analysis.json"))
+    if config.outputs.csv:
+        written.append(write_events_csv(analysis.get("events", []), directory / "events.csv"))
+        written.append(
+            write_tracks_csv(analysis.get("tracks", []), directory / "feature_tracks.csv")
         )
-        written_names = [item.name for item in staged]
-        _publish_staged_bundle(staging, directory, selected)
+    if config.outputs.html_report:
+        written.append(render_html_report(analysis, directory / "report.html"))
 
-    written = tuple(directory / name for name in (*written_names, "manifest.json"))
-    return AnalysisArtifacts(dict(analysis), directory, written)
+    selected = {item.name for item in written} | {"manifest.json"}
+    if overwrite:
+        for name in _KNOWN_BUNDLE_ARTIFACTS - selected:
+            artifact = directory / name
+            if artifact.is_file() or artifact.is_symlink():
+                artifact.unlink()
+    manifest = {
+        "schema_version": "electrace.bundle.v1",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "files": [
+            {"path": item.name, "size_bytes": item.stat().st_size, "sha256": sha256_file(item)}
+            for item in written
+        ],
+    }
+    manifest_path = directory / "manifest.json"
+    atomic_write_text(
+        manifest_path, json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
+    written.append(manifest_path)
+    files = tuple(written)
+    return AnalysisArtifacts(dict(analysis), directory, files)
 
 
 def run_project(

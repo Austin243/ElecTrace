@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import replace
-from enum import StrEnum
 from pathlib import Path
 
 from electrace.models import Frame, Sequence
@@ -20,40 +19,19 @@ _NATIVE_DESCRIPTOR_FILENAMES = (
     "critic2.features.json",
     "ICOHPLIST.lobster",
     "ICOBILIST.lobster",
-    "ICOOPLIST.lobster",
     "DDEC6_even_tempered_net_atomic_charges.xyz",
     "ACF.dat",
 )
 
 
-class DescriptorSource(StrEnum):
-    """Where frame descriptors are selected during path loading.
-
-    ``AUTO`` preserves the original API behavior: local frame directories are
-    searched when ``descriptor_dir`` is absent, otherwise only the external
-    descriptor location is searched. ``MERGE`` loads local descriptors first
-    and external descriptors second; duplicate feature IDs remain an error,
-    so this policy never silently overwrites evidence.
-    """
-
-    AUTO = "auto"
-    LOCAL = "local"
-    EXTERNAL = "external"
-    MERGE = "merge"
+_DESCRIPTOR_SOURCES = {"auto", "local", "external", "merge"}
 
 
 def _descriptor_filename(value: str) -> str:
     if not isinstance(value, str):
         raise TypeError("descriptor_name must be a string")
     name = value.strip()
-    if (
-        not name
-        or name in {".", ".."}
-        or any(ord(character) < 32 or ord(character) == 127 for character in name)
-        or "/" in name
-        or "\\" in name
-        or Path(name).is_absolute()
-    ):
+    if not name or Path(name).name != name or name in {".", ".."}:
         raise DescriptorError(f"descriptor_name must be a basename, not a path: {value!r}")
     return name
 
@@ -68,26 +46,17 @@ def _descriptor_filenames(descriptor_name: str) -> tuple[str, ...]:
 
 
 def _descriptor_source(
-    value: str | DescriptorSource,
+    value: str,
     descriptor_root: Path | None,
-) -> DescriptorSource:
-    try:
-        selected = (
-            value
-            if isinstance(value, DescriptorSource)
-            else DescriptorSource(str(value).strip().lower())
-        )
-    except ValueError as exc:
-        choices = ", ".join(item.value for item in DescriptorSource)
-        raise DescriptorError(
-            f"unknown descriptor_source {value!r}; expected one of: {choices}"
-        ) from exc
-    if selected is DescriptorSource.AUTO:
-        return DescriptorSource.LOCAL if descriptor_root is None else DescriptorSource.EXTERNAL
-    if selected in {DescriptorSource.EXTERNAL, DescriptorSource.MERGE} and descriptor_root is None:
-        raise DescriptorError(
-            f"descriptor_dir is required for descriptor_source={selected.value!r}"
-        )
+) -> str:
+    selected = str(value).strip().lower()
+    if selected not in _DESCRIPTOR_SOURCES:
+        choices = ", ".join(sorted(_DESCRIPTOR_SOURCES))
+        raise DescriptorError(f"unknown descriptor_source {value!r}; expected one of: {choices}")
+    if selected == "auto":
+        return "local" if descriptor_root is None else "external"
+    if selected in {"external", "merge"} and descriptor_root is None:
+        raise DescriptorError(f"descriptor_dir is required for descriptor_source={selected!r}")
     return selected
 
 
@@ -110,16 +79,14 @@ def _descriptor_candidates(
     *,
     frame_count: int,
     descriptor_name: str,
-    descriptor_source: str | DescriptorSource,
+    descriptor_source: str,
 ) -> tuple[Path, ...]:
     filenames = _descriptor_filenames(descriptor_name)
     selected = _descriptor_source(descriptor_source, descriptor_root)
     local = (
-        [source.directory / name for name in filenames]
-        if selected in {DescriptorSource.LOCAL, DescriptorSource.MERGE}
-        else []
+        [source.directory / name for name in filenames] if selected in {"local", "merge"} else []
     )
-    if selected is DescriptorSource.LOCAL:
+    if selected == "local":
         return _unique_paths(local)
     assert descriptor_root is not None
     if descriptor_root.is_file():
@@ -133,13 +100,9 @@ def _descriptor_candidates(
         raise DescriptorError(f"descriptor_dir is not a directory: {descriptor_root}")
 
     candidates: list[Path] = []
-    # Flat descriptor stores: descriptors/00.json or descriptors/0.json.
-    for stem in dict.fromkeys((source.label, str(source.index), f"{source.index:02d}")):
-        candidates.append(descriptor_root / f"{stem}.json")
-    # Mirrored frame stores: descriptors/00/features.json (or native output).
-    for frame_name in dict.fromkeys((source.label, str(source.index), f"{source.index:02d}")):
-        directory = descriptor_root / frame_name
-        candidates.extend(directory / name for name in filenames)
+    candidates.append(descriptor_root / f"{source.label}.json")
+    directory = descriptor_root / source.label
+    candidates.extend(directory / name for name in filenames)
     return _unique_paths((*local, *candidates))
 
 
@@ -148,7 +111,7 @@ def _load_discovered(
     *,
     descriptor_dir: str | Path | None,
     descriptor_name: str,
-    descriptor_source: str | DescriptorSource,
+    descriptor_source: str,
 ) -> list[Frame]:
     descriptor_root = (
         Path(descriptor_dir).expanduser().resolve() if descriptor_dir is not None else None
@@ -160,7 +123,7 @@ def _load_discovered(
             "path_root": str(discovered.root),
             "frame_directory": str(source.directory),
             "series_kind": discovered.kind.value,
-            "descriptor_source_policy": selected_source.value,
+            "descriptor_source_policy": selected_source,
             "descriptor_sources": [],
             **source.metadata,
         }
@@ -202,7 +165,7 @@ def load_path(
     structure_name: str = "CONTCAR",
     fallback_structure_name: str = "POSCAR",
     descriptor_name: str = "features.json",
-    descriptor_source: str | DescriptorSource = DescriptorSource.AUTO,
+    descriptor_source: str = "auto",
 ) -> list[Frame]:
     """Discover and load a VASP path into ordered core ``Frame`` objects.
 
@@ -248,7 +211,7 @@ def load_sequence(
     structure_name: str = "CONTCAR",
     fallback_structure_name: str = "POSCAR",
     descriptor_name: str = "features.json",
-    descriptor_source: str | DescriptorSource = DescriptorSource.AUTO,
+    descriptor_source: str = "auto",
 ) -> Sequence:
     """Load a path and wrap it in ElecTrace's core ``Sequence`` model."""
 

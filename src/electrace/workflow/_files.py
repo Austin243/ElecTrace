@@ -21,21 +21,6 @@ def symlink_component(path: Path) -> Path | None:
     return next((component for component in (path, *path.parents) if component.is_symlink()), None)
 
 
-def read_limited_text(path: Path, *, limit: int, context: str) -> str:
-    """Read UTF-8 text while enforcing a byte limit during the read."""
-
-    if limit < 1:
-        raise ValueError("text read limit must be positive")
-    with path.open("rb") as handle:
-        payload = handle.read(limit + 1)
-    if len(payload) > limit:
-        raise ValueError(f"{context} exceeds {limit} bytes: {path}")
-    try:
-        return payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"{context} is not valid UTF-8: {path}") from exc
-
-
 def atomic_write_json(path: Path, payload: object) -> Path:
     """Atomically publish deterministic, standards-compliant JSON."""
 

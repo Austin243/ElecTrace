@@ -72,7 +72,7 @@ def environment_record(*, project_directory: str | Path | None = None) -> dict[s
     root = Path(project_directory or Path.cwd()).resolve()
     packages = {
         name: value
-        for name in ("electrace", "numpy", "scipy", "ase", "h5py", "typer", "rich")
+        for name in ("electrace", "numpy", "scipy", "ase", "typer", "rich")
         if (value := _version(name)) is not None
     }
     return {

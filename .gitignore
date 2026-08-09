@@ -42,9 +42,7 @@ Thumbs.db
 # Local ElecTrace products
 .electrace-demo/
 .electrace-work/
-.ci-benchmark.json
 .ci-demo/
-electrace-benchmark.json
 electrace-results/
 
 # Local logs and scratch

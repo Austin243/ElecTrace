@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -342,24 +341,6 @@ def discover_static_series(
     )
 
 
-def discover_pressure_series(
-    root: str | Path,
-    *,
-    prefer_contcar: bool = True,
-    structure_name: str = "CONTCAR",
-    fallback_structure_name: str = "POSCAR",
-) -> DiscoveredPath:
-    """Discover a static series for which every frame has a unique pressure."""
-
-    return discover_static_series(
-        root,
-        prefer_contcar=prefer_contcar,
-        structure_name=structure_name,
-        fallback_structure_name=fallback_structure_name,
-        require_pressure=True,
-    )
-
-
 def discover_path(
     root: str | Path,
     *,
@@ -418,25 +399,3 @@ def discover_path(
         structure_name=structure_name,
         fallback_structure_name=fallback_structure_name,
     )
-
-
-def iter_structure_directories(
-    root: str | Path,
-    *,
-    prefer_contcar: bool = True,
-    structure_name: str = "CONTCAR",
-    fallback_structure_name: str = "POSCAR",
-) -> Iterable[Path]:
-    """Yield immediate child directories containing a usable VASP structure."""
-
-    base = Path(root).expanduser().resolve()
-    if not base.is_dir():
-        return
-    for child in sorted(
-        (item for item in base.iterdir() if item.is_dir()), key=lambda item: _natural_key(item.name)
-    ):
-        if (
-            _structure_in(child, prefer_contcar, structure_name, fallback_structure_name)
-            is not None
-        ):
-            yield child

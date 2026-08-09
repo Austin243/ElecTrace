@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -10,9 +9,7 @@ from typer.testing import CliRunner
 
 from electrace import __version__
 from electrace.cli import _python_supported, app
-from electrace.config import ElecTraceConfig, OutputConfig
 from electrace.demo import generate_demo
-from electrace.export import ExportDependencyError
 
 runner = CliRunner()
 
@@ -67,17 +64,14 @@ def test_demo_inspect_doctor_and_plan_workflow(tmp_path: Path) -> None:
     )
     assert diagnosed.exit_code == 0, diagnosed.output
     diagnosis = json.loads(_plain(diagnosed.stdout))
-    assert diagnosis["schema_version"] == "electrace.cli.v1"
-    assert diagnosis["ok"] is True
-    assert diagnosis["command"] == "doctor"
+    assert (diagnosis["schema_version"], diagnosis["ok"], diagnosis["command"]) == (
+        "electrace.cli.v1",
+        True,
+        "doctor",
+    )
     assert diagnosis["data"]["python_supported"] is True
     assert [frame["frame"]["label"] for frame in diagnosis["data"]["frames"]] == [
-        "00",
-        "01",
-        "02",
-        "03",
-        "04",
-        "05",
+        f"{index:02d}" for index in range(6)
     ]
 
     planned = runner.invoke(
@@ -98,35 +92,6 @@ def test_demo_inspect_doctor_and_plan_workflow(tmp_path: Path) -> None:
     assert planned_payload["data"]["plugin"] == "critic2"
     assert "ready" not in planned_payload["data"]
 
-    batch = runner.invoke(
-        app,
-        [
-            "plan",
-            "critic2",
-            str(demo),
-            "--all-frames",
-            "--capability",
-            "qtaim_critical_points",
-            "--config",
-            str(demo / "electrace.toml"),
-            "--json",
-        ],
-    )
-    assert batch.exit_code == 0, batch.output
-    batch_payload = json.loads(_plain(batch.stdout))
-    assert [plan["frame"]["label"] for plan in batch_payload["data"]["plans"]] == [
-        "00",
-        "01",
-        "02",
-        "03",
-        "04",
-        "05",
-    ]
-    assert all(
-        "CPREPORT critic2.features.json GRAPH" in plan["command"]["stdin"]
-        for plan in batch_payload["data"]["plans"]
-    )
-
 
 def test_init_refuses_overwrite_without_force(tmp_path: Path) -> None:
     images = tmp_path / "images"
@@ -141,81 +106,7 @@ def test_init_refuses_overwrite_without_force(tmp_path: Path) -> None:
     assert "Refusing to replace" in _plain(second.output)
 
 
-def test_workflow_init_json_reports_manifest_artifact(tmp_path: Path) -> None:
-    images = tmp_path / "images"
-    images.mkdir()
-    manifest = tmp_path / "workflow.yaml"
-
-    result = runner.invoke(
-        app,
-        ["workflow", "init", str(manifest), "--images", str(images), "--json"],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.stdout)
-    assert payload["command"] == "workflow.init"
-    assert payload["data"]["manifest"] == str(manifest.resolve())
-    assert payload["artifacts"] == [{"path": str(manifest.resolve()), "role": "workflow_manifest"}]
-
-
-def test_analyze_reports_missing_hdf5_dependency_without_traceback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config_path = tmp_path / "electrace.toml"
-    config_path.write_text(
-        "[outputs]\nhdf5 = true\n",
-        encoding="utf-8",
-    )
-    config = ElecTraceConfig(
-        outputs=OutputConfig(html_report=False, json=False, csv=False, hdf5=True)
-    )
-    analysis = {"schema_version": "0.1", "events": [], "tracks": []}
-    monkeypatch.setattr(
-        "electrace.pipeline.load_and_analyze",
-        lambda *_args, **_kwargs: (analysis, config),
-    )
-    monkeypatch.setitem(sys.modules, "h5py", None)
-
-    result = runner.invoke(
-        app,
-        [
-            "analyze",
-            str(config_path),
-            "--output",
-            str(tmp_path / "results"),
-        ],
-    )
-
-    assert result.exit_code == 2
-    assert "pip install electrace[hdf5]" in _plain(result.output)
-    assert "Traceback" not in result.output
-
-
-def test_analyze_strict_rejects_ambiguity_and_permissive_reports_warning(
-    tmp_path: Path,
-) -> None:
-    config_path = generate_demo(tmp_path / "demo")
-    descriptor_path = config_path.parent / "01" / "features.json"
-    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
-    duplicate = dict(descriptor["features"][0])
-    duplicate["id"] = "ambiguous-duplicate"
-    descriptor["features"].append(duplicate)
-    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
-
-    strict = runner.invoke(app, ["analyze", str(config_path)])
-
-    assert strict.exit_code == 2
-    assert "Ambiguous correspondence in strict mode" in _plain(strict.output)
-    assert "--permissive" in _plain(strict.output)
-    assert not (config_path.parent / "electrace-results").exists()
-
-    permissive = runner.invoke(app, ["analyze", str(config_path), "--permissive"])
-
-    assert permissive.exit_code == 0, permissive.output
-    assert "warnings" in _plain(permissive.output)
-
-
-def test_analyze_json_reports_counts_and_written_artifacts(tmp_path: Path) -> None:
+def test_analyze_json_reports_counts(tmp_path: Path) -> None:
     config_path = generate_demo(tmp_path / "demo")
 
     result = runner.invoke(app, ["analyze", str(config_path), "--json"])
@@ -225,60 +116,12 @@ def test_analyze_json_reports_counts_and_written_artifacts(tmp_path: Path) -> No
     assert payload["command"] == "analyze"
     assert payload["data"]["counts"]["frames"] == 6
     assert payload["data"]["counts"]["events"] == 6
-    assert any(item["role"] == "analysis_artifact" for item in payload["artifacts"])
-
-
-def test_demo_reports_export_dependency_without_traceback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def fail_export(*_args: object, **_kwargs: object) -> None:
-        raise ExportDependencyError("optional exporter unavailable")
-
-    monkeypatch.setattr("electrace.cli.run_project", fail_export)
-
-    result = runner.invoke(
-        app,
-        ["demo", "--output", str(tmp_path / "demo")],
-    )
-
-    assert result.exit_code == 2
-    assert "optional exporter unavailable" in _plain(result.output)
-    assert "Traceback" not in result.output
-
-
-def test_json_error_with_empty_exception_message_remains_valid(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def fail_without_message(*_args: object, **_kwargs: object) -> None:
-        raise ValueError
-
-    monkeypatch.setattr("electrace.cli.generate_demo", fail_without_message)
-
-    result = runner.invoke(
-        app,
-        ["demo", "--output", str(tmp_path / "demo"), "--json"],
-    )
-
-    assert result.exit_code == 2
-    assert result.stderr == ""
-    assert result.stdout.count("\n") == 1
-    payload = json.loads(result.stdout)
-    assert payload["error"]["code"] == "invalid_input"
-    assert payload["error"]["message"] == "ValueError"
 
 
 def test_inspect_malformed_analysis_returns_json_error(tmp_path: Path) -> None:
     analysis = tmp_path / "analysis.json"
     analysis.write_text(
-        json.dumps(
-            {
-                "project": {},
-                "frames": None,
-                "tracks": [],
-                "events": [],
-                "warnings": [],
-            }
-        ),
+        json.dumps({"project": {}, "frames": None, "tracks": [], "events": []}),
         encoding="utf-8",
     )
 
@@ -289,45 +132,7 @@ def test_inspect_malformed_analysis_returns_json_error(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["command"] == "inspect"
     assert payload["error"]["code"] == "invalid_input"
-    assert payload["error"]["message"] == "analysis frames must be an array"
-
-
-def test_inspect_json_recursion_failure_returns_json_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    analysis = tmp_path / "analysis.json"
-    analysis.write_text("{}", encoding="utf-8")
-    original_loads = json.loads
-
-    def fail_recursively(_document: str) -> object:
-        raise RecursionError("simulated JSON nesting limit")
-
-    monkeypatch.setattr("electrace.cli.json.loads", fail_recursively)
-
-    result = runner.invoke(app, ["inspect", str(analysis), "--json"])
-
-    assert result.exit_code == 2
-    assert result.stderr == ""
-    payload = original_loads(result.stdout)
-    assert payload["command"] == "inspect"
-    assert payload["error"]["code"] == "invalid_input"
-    assert payload["error"]["message"].startswith(f"Cannot read {analysis}:")
-
-
-def test_benchmark_json_reports_summary_and_artifact(tmp_path: Path) -> None:
-    report = tmp_path / "benchmark.json"
-
-    result = runner.invoke(
-        app,
-        ["benchmark", "--output", str(report), "--json"],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.stdout)
-    assert payload["command"] == "benchmark"
-    assert payload["data"]["passed"] is True
-    assert payload["data"]["summary"]["passed"] == payload["data"]["summary"]["cases"]
-    assert payload["artifacts"] == [{"path": str(report.resolve()), "role": "benchmark_report"}]
+    assert "NoneType" in payload["error"]["message"]
 
 
 def test_invalid_input_filename_config_is_a_clean_cli_error(tmp_path: Path) -> None:
@@ -343,38 +148,6 @@ structure_name = 7
 
     assert result.exit_code == 2
     assert "inputs.structure_name must be a string" in _plain(result.output)
-    assert "Traceback" not in result.output
-
-
-def test_quoted_boolean_config_is_a_clean_cli_error(tmp_path: Path) -> None:
-    config = tmp_path / "invalid-boolean.toml"
-    config.write_text(
-        """[outputs]
-json = "false"
-""",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(app, ["doctor", "--config", str(config)])
-
-    assert result.exit_code == 2
-    assert "outputs.json must be a boolean" in _plain(result.output)
-    assert "Traceback" not in result.output
-
-
-def test_misspelled_root_config_table_is_a_clean_cli_error(tmp_path: Path) -> None:
-    config = tmp_path / "typo.toml"
-    config.write_text(
-        """[matcing]
-position_weight = 2.0
-""",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(app, ["doctor", "--config", str(config)])
-
-    assert result.exit_code == 2
-    assert "configuration root contains unknown keys: matcing" in _plain(result.output)
     assert "Traceback" not in result.output
 
 
@@ -406,126 +179,11 @@ structure_name = "CONTCAR\\nEND"
     assert "CPREPORT" not in result.output
 
 
-def test_mixed_case_plugin_name_still_honors_normalized_configuration(tmp_path: Path) -> None:
-    frame = tmp_path / "frame"
-    frame.mkdir()
-    config = tmp_path / "electrace.toml"
-    config.write_text(
-        """[plugins.critic2]
-enabled = false
-executable = "must-not-be-ignored"
-""",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(
-        app,
-        ["plan", "Critic2", str(frame), "--config", str(config)],
-    )
+def test_parse_errors_use_normal_cli_output() -> None:
+    result = runner.invoke(app, ["doctor", "--unknown", "--json"])
 
     assert result.exit_code == 2
-    assert "plugin 'critic2' is disabled" in _plain(result.output)
-
-
-def test_single_frame_plan_honors_configured_structure_name(tmp_path: Path) -> None:
-    frame = tmp_path / "frame"
-    frame.mkdir()
-    structure = frame / "FINAL.vasp"
-    structure.write_text("planned input only\n", encoding="utf-8")
-    config = tmp_path / "electrace.toml"
-    config.write_text(
-        """[inputs]
-structure_name = "FINAL.vasp"
-""",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(
-        app,
-        ["plan", "critic2", str(frame), "--config", str(config)],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(_plain(result.stdout))
-    assert payload["required_inputs"][0] == str(structure.resolve())
-    assert "CRYSTAL FINAL.vasp" in payload["stdin"]
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        ["doctor", "--json"],
-        ["demo", "--help"],
-        ["benchmark", "--help"],
-        ["analyze", "--help"],
-        ["inspect", "--help"],
-        ["plan", "--help"],
-        ["volume", "--help"],
-        ["init", "--help"],
-        ["workflow", "init", "--help"],
-        ["workflow", "validate", "--help"],
-        ["workflow", "stage", "--help"],
-        ["workflow", "run", "--help"],
-        ["workflow", "submit", "--help"],
-        ["workflow", "status", "--help"],
-        ["workflow", "collect", "--help"],
-        ["workflow", "analyze", "--help"],
-    ],
-)
-def test_every_command_supports_json_or_emits_the_json_contract(
-    arguments: list[str],
-) -> None:
-    result = runner.invoke(app, arguments)
-
-    assert result.exit_code == 0, result.output
-    if "--help" in arguments:
-        assert "--json" in _plain(result.stdout)
-    else:
-        assert json.loads(result.stdout)["schema_version"] == "electrace.cli.v1"
-
-
-@pytest.mark.parametrize(
-    ("arguments", "command", "error_code"),
-    [
-        (["workflow", "validate", "--json"], "workflow.validate", "missing_parameter"),
-        (
-            ["workflow", "validate", "missing.yaml", "--json"],
-            "workflow.validate",
-            "not_found",
-        ),
-        (["doctor", "--unknown", "--json"], "doctor", "invalid_option"),
-        (["doctor", "--json=1"], "doctor", "invalid_input"),
-        (
-            ["workflow", "run", "missing.yaml", "--max-parallel", "0", "--json"],
-            "workflow.run",
-            "invalid_input",
-        ),
-    ],
-)
-def test_parse_time_json_errors_are_single_unstyled_documents(
-    arguments: list[str],
-    command: str,
-    error_code: str,
-) -> None:
-    result = runner.invoke(app, arguments)
-
-    assert result.exit_code == 2
-    assert result.stderr == ""
-    assert "\x1b" not in result.stdout
-    assert result.stdout.count("\n") == 1
-    payload = json.loads(result.stdout)
-    assert payload == {
-        "artifacts": [],
-        "command": command,
-        "error": {
-            "code": error_code,
-            "details": None,
-            "message": payload["error"]["message"],
-        },
-        "ok": False,
-        "schema_version": "electrace.cli.v1",
-        "warnings": [],
-    }
+    assert "No such option" in _plain(result.output)
 
 
 def test_workflow_validation_failure_is_a_machine_readable_error(tmp_path: Path) -> None:

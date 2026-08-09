@@ -31,8 +31,7 @@ def test_runtime_extras_match_import_boundaries() -> None:
 
     assert required == {"numpy", "pyyaml", "rich", "typer"}
     assert _names(optional["accelerate"]) == {"scipy"}
-    assert _names(optional["hdf5"]) == {"h5py"}
-    assert _names(optional["all"]) == {"h5py", "scipy"}
+    assert _names(optional["all"]) == {"scipy"}
     optional_names = {name for requirements in optional.values() for name in _names(requirements)}
     assert optional_names.isdisjoint({"ase", "mkdocstrings", "types-setuptools"})
     assert "typer>=0.20" in project["dependencies"]
@@ -50,4 +49,4 @@ def test_sdist_excludes_repository_only_configuration() -> None:
     document: dict[str, Any] = tomllib.loads((ROOT / "pyproject.toml").read_text())
     excluded = set(document["tool"]["hatch"]["build"]["targets"]["sdist"]["exclude"])
 
-    assert {"/.github", "/.pre-commit-config.yaml", "/AGENTS.md"} <= excluded
+    assert {"/.github", "/AGENTS.md"} <= excluded

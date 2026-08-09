@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import math
 import tomllib
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,14 +37,7 @@ def _string(value: Any, name: str, *, normalize: bool = False) -> str:
     stripped = value.strip()
     if not stripped or any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise ValueError(f"{name} must be a non-empty string without control characters")
-    return stripped.casefold() if normalize else value
-
-
-def _table_key(value: Any, name: str) -> str:
-    key = _string(value, name)
-    if key != key.strip():
-        raise ValueError(f"{name} must not contain surrounding whitespace")
-    return key
+    return stripped.casefold() if normalize else stripped
 
 
 def _number(
@@ -78,32 +70,11 @@ def _integer(value: Any, name: str, *, minimum: int) -> int:
     return result
 
 
-def _validate_json_compatible(value: Any, *, path: str) -> None:
-    """Reject values that cannot appear in strict canonical JSON.
-
-    TOML admits dates, times, and non-finite floats that JSON does not.  The
-    configuration is embedded verbatim in every analysis artifact, so reject
-    those values at construction instead of stringifying or emitting the
-    non-standard ``NaN``/``Infinity`` tokens.
-    """
-
-    if value is None or isinstance(value, (str, bool, int)):
-        return
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError(f"{path} must be finite for JSON serialization")
-        return
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ValueError(f"{path} contains non-string key {key!r}")
-            _validate_json_compatible(item, path=f"{path}.{key}")
-        return
-    if isinstance(value, (list, tuple)):
-        for index, item in enumerate(value):
-            _validate_json_compatible(item, path=f"{path}[{index}]")
-        return
-    raise ValueError(f"{path} has non-JSON-compatible value of type {type(value).__name__}")
+def _validate_json(value: Any) -> None:
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("configuration must contain finite JSON-compatible values") from exc
 
 
 def _input_filename(value: str, field_name: str) -> str:
@@ -174,7 +145,6 @@ class MatchingSettings:
     descriptor_weight: float = 0.35
     descriptor_scales: dict[str, float] = field(default_factory=dict)
     match_threshold: float = 3.0
-    ambiguity_tolerance: float = 0.05
     conservation_tolerance: float = 0.35
     split_merge_threshold: float = 0.55
 
@@ -210,7 +180,7 @@ class MatchingSettings:
         if not isinstance(self.descriptor_scales, dict):
             raise TypeError("matching.descriptor_scales must be a table")
         self.descriptor_scales = {
-            _table_key(key, "matching.descriptor_scales key"): _number(
+            _string(key, "matching.descriptor_scales key"): _number(
                 value,
                 f"matching.descriptor_scales.{key}",
                 minimum=0.0,
@@ -230,11 +200,6 @@ class MatchingSettings:
             minimum=0.0,
             maximum=1.0,
         )
-        self.ambiguity_tolerance = _number(
-            self.ambiguity_tolerance,
-            "matching.ambiguity_tolerance",
-            minimum=0.0,
-        )
 
 
 @dataclass(slots=True)
@@ -242,7 +207,6 @@ class EventSettings:
     """Temporal filters used to suppress one-frame numerical noise."""
 
     minimum_persistence: int = 2
-    hysteresis_frames: int = 1
     minimum_event_confidence: float = 0.10
     charge_change_threshold: float = 0.10
     volume_change_fraction: float = 0.20
@@ -261,9 +225,6 @@ class EventSettings:
     def __post_init__(self) -> None:
         self.minimum_persistence = _integer(
             self.minimum_persistence, "events.minimum_persistence", minimum=1
-        )
-        self.hysteresis_frames = _integer(
-            self.hysteresis_frames, "events.hysteresis_frames", minimum=0
         )
         self.minimum_event_confidence = _number(
             self.minimum_event_confidence,
@@ -286,7 +247,7 @@ class EventSettings:
         if not isinstance(self.descriptor_thresholds, dict):
             raise TypeError("events.descriptor_thresholds must be a table")
         self.descriptor_thresholds = {
-            _table_key(key, "events.descriptor_thresholds key"): _number(
+            _string(key, "events.descriptor_thresholds key"): _number(
                 value,
                 f"events.descriptor_thresholds.{key}",
                 minimum=0.0,
@@ -321,11 +282,10 @@ class OutputConfig:
     html_report: bool = True
     json: bool = True
     csv: bool = True
-    hdf5: bool = False
 
     def __post_init__(self) -> None:
         self.directory = _string(self.directory, "outputs.directory")
-        for name in ("html_report", "json", "csv", "hdf5"):
+        for name in ("html_report", "json", "csv"):
             setattr(self, name, _boolean(getattr(self, name), f"outputs.{name}"))
 
 
@@ -356,40 +316,28 @@ class ElecTraceConfig:
         ):
             if not isinstance(value, expected):
                 raise TypeError(f"configuration.{name} must be a {expected.__name__}")
-        if not isinstance(self.plugins, dict):
-            raise TypeError("[plugins] must be a TOML table")
         plugins: dict[str, dict[str, Any]] = {}
         for name, options in self.plugins.items():
-            plugin_name = _string(name, "plugin name")
-            normalized_name = plugin_name.strip().casefold()
-            if normalized_name in plugins:
-                raise ValueError(f"duplicate normalized plugin name {normalized_name!r}")
-            if plugin_name != normalized_name:
-                raise ValueError(
-                    f"plugin table name {plugin_name!r} must be lowercase without surrounding whitespace"
-                )
+            normalized_name = _string(name, "plugin name", normalize=True)
             if not isinstance(options, dict):
                 raise TypeError(f"[plugins.{normalized_name}] must be a TOML table")
-            settings = dict(options)
-            if "enabled" in settings:
-                _boolean(settings["enabled"], f"plugins.{normalized_name}.enabled")
-            for reserved in ("executable", "capability"):
-                if reserved in settings:
-                    _string(settings[reserved], f"plugins.{normalized_name}.{reserved}")
-            plugins[normalized_name] = settings
+            if "enabled" in options:
+                _boolean(options["enabled"], f"plugins.{normalized_name}.enabled")
+            for key in ("executable", "capability"):
+                if key in options:
+                    _string(options[key], f"plugins.{normalized_name}.{key}")
+            plugins[normalized_name] = dict(options)
         self.plugins = plugins
         if not isinstance(self.metadata, dict):
             raise TypeError("[metadata] must be a TOML table")
         self.metadata = dict(self.metadata)
-        _validate_json_compatible(asdict(self), path="configuration")
+        _validate_json(asdict(self))
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable nested mapping."""
 
         result = asdict(self)
-        # Metadata/plugin mappings remain mutable after construction.  Keep
-        # the public contract true even if a caller mutates one in place.
-        _validate_json_compatible(result, path="configuration")
+        _validate_json(result)
         return result
 
 
@@ -400,7 +348,7 @@ def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
     return value
 
 
-def _reject_unknown_keys(data: Mapping[str, Any], allowed: frozenset[str], context: str) -> None:
+def _reject_unknown_keys(data: dict[str, Any], allowed: frozenset[str], context: str) -> None:
     unknown = sorted(set(data) - allowed)
     if unknown:
         raise ValueError(f"{context} contains unknown keys: {', '.join(unknown)}")
@@ -451,8 +399,6 @@ neighbor_weight = 0.75
 overlap_weight = 1.0
 descriptor_weight = 0.35
 match_threshold = 3.0
-# Maximum total-cost gap for a complete alternative assignment.
-ambiguity_tolerance = 0.05
 conservation_tolerance = 0.35
 split_merge_threshold = 0.55
 
@@ -464,7 +410,6 @@ split_merge_threshold = 0.55
 
 [events]
 minimum_persistence = 2
-hysteresis_frames = 1
 minimum_event_confidence = 0.10
 charge_change_threshold = 0.10
 volume_change_fraction = 0.20
@@ -483,8 +428,6 @@ directory = "electrace-results"
 html_report = true
 json = true
 csv = true
-hdf5 = false
-
 [plugins.critic2]
 enabled = true
 executable = "critic2"
