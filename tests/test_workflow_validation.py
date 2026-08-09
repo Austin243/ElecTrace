@@ -101,7 +101,11 @@ def test_validation_payload_matches_public_schema(valid_manifest):
     jsonschema = pytest.importorskip("jsonschema")
     schema_path = Path(__file__).parents[1] / "schemas/electrace.workflow-validation.v1.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    jsonschema.Draft202012Validator(schema).validate(validate_workflow(valid_manifest).to_dict())
+    payload = validate_workflow(valid_manifest).to_dict()
+    jsonschema.Draft202012Validator(schema).validate(payload)
+    del payload["resolved_jobs"][0]["argv"]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.Draft202012Validator(schema).validate(payload)
 
 
 def test_validate_rejects_malformed_manifest_without_writing(tmp_path):

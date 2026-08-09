@@ -3,45 +3,61 @@
   "$id": "https://github.com/Austin243/ElecTrace/schemas/electrace.workflow-validation.v1.schema.json",
   "title": "ElecTrace resolved workflow plan",
   "type": "object",
-  "required": [
-    "schema_version",
-    "manifest",
-    "workspace",
-    "selected_frames",
-    "resolved_jobs",
-    "scheduler",
-    "warnings"
-  ],
+  "required": ["schema_version", "manifest", "workspace", "selected_frames", "resolved_jobs", "scheduler", "warnings"],
   "properties": {
-    "schema_version": {
-      "const": "electrace.workflow-validation.v1"
+    "schema_version": {"const": "electrace.workflow-validation.v1"},
+    "manifest": {"$ref": "#/$defs/path"},
+    "workspace": {"$ref": "#/$defs/path"},
+    "selected_frames": {"type": "array", "items": {"$ref": "#/$defs/frame"}},
+    "resolved_jobs": {"type": "array", "items": {"$ref": "#/$defs/job"}},
+    "scheduler": {"$ref": "#/$defs/scheduler"},
+    "warnings": {"$ref": "#/$defs/strings"}
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "frame": {
+      "type": "object",
+      "required": ["index", "label", "analysis_label", "source_directory", "structure", "workspace_directory", "energy_ev"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "label": {"type": "string"},
+        "analysis_label": {"type": "string"},
+        "source_directory": {"$ref": "#/$defs/path"},
+        "structure": {"$ref": "#/$defs/path"},
+        "workspace_directory": {"$ref": "#/$defs/path"},
+        "energy_ev": {"type": ["number", "null"]}
+      },
+      "additionalProperties": false
     },
-    "manifest": {
-      "type": "string"
-    },
-    "workspace": {
-      "type": "string"
-    },
-    "selected_frames": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "resolved_jobs": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
+    "job": {
+      "type": "object",
+      "required": ["id", "frame_index", "frame_label", "task", "cwd", "argv", "stdin", "stdout_path", "stderr_path", "required_inputs", "expected_outputs", "dependencies", "environment"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "frame_index": {"type": "integer", "minimum": 0},
+        "frame_label": {"type": "string"},
+        "task": {"type": "string", "minLength": 1},
+        "cwd": {"$ref": "#/$defs/path"},
+        "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "stdin": {"type": ["string", "null"]},
+        "stdout_path": {"$ref": "#/$defs/path"},
+        "stderr_path": {"$ref": "#/$defs/path"},
+        "required_inputs": {"$ref": "#/$defs/strings"},
+        "expected_outputs": {"$ref": "#/$defs/strings"},
+        "dependencies": {"$ref": "#/$defs/strings"},
+        "environment": {"type": "object", "additionalProperties": {"type": "string"}}
+      },
+      "additionalProperties": false
     },
     "scheduler": {
-      "type": "object"
-    },
-    "warnings": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "type": "object",
+      "required": ["kind", "directives"],
+      "properties": {
+        "kind": {"enum": ["local", "slurm"]},
+        "directives": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean", "null"]}}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

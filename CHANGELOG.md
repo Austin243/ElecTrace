@@ -27,5 +27,3 @@
   HDF5-wrapped JSON, exhaustive alternative-assignment enumeration, and topology-
   specific hysteresis.
 - Supported and tested Python versions are 3.11–3.13.
-
-[Unreleased]: https://github.com/Austin243/ElecTrace/commits/main
