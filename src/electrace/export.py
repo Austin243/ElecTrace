@@ -103,6 +103,42 @@ def write_events_csv(events: Iterable[Mapping[str, Any]], path: str | Path) -> P
     return output
 
 
+def write_track_summary_csv(summary: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+    """Write one formula-neutralized row per track with a column group per quantity."""
+
+    flattened: list[dict[str, Any]] = []
+    for record in summary:
+        row = {key: value for key, value in record.items() if key != "changes"}
+        for quantity, change in record.get("changes", {}).items():
+            step = change.get("largest_step") or {}
+            row.update(
+                {
+                    f"{quantity}_observed": change.get("observed"),
+                    f"{quantity}_net_change": change.get("net_change"),
+                    f"{quantity}_range": change.get("range"),
+                    f"{quantity}_largest_step_delta": step.get("delta"),
+                    f"{quantity}_largest_step_frame_before": step.get("frame_before"),
+                    f"{quantity}_largest_step_frame_after": step.get("frame_after"),
+                }
+            )
+        flattened.append(row)
+    rows = _flatten_csv_rows(flattened, context="track-summary CSV")
+    output = Path(path)
+    preferred = [
+        "track_id",
+        "kind",
+        "first_frame",
+        "last_frame",
+        "observations",
+        "spans_path",
+        "parent_track_ids",
+    ]
+    # Keep each quantity's columns together, in summary order.
+    fields = list(dict.fromkeys([*preferred, *(key for row in rows for key in row)]))
+    _write_csv(rows, fields, output)
+    return output
+
+
 def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
     """Write formula-neutralized feature-track observations in long form."""
 

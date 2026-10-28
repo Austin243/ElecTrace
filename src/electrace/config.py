@@ -19,6 +19,7 @@ from electrace._files import atomic_write_text
 
 _DESCRIPTOR_SOURCES = frozenset({"auto", "local", "external", "merge"})
 _SERIES_KINDS = frozenset({"auto", "neb", "static", "ordered", "pressure"})
+_ATOM_IDENTITIES = frozenset({"geometric", "index"})
 _ROOT_KEYS = frozenset(
     {"project", "inputs", "matching", "events", "outputs", "plugins", "metadata"}
 )
@@ -135,6 +136,7 @@ class InputConfig:
 class MatchingSettings:
     """User-facing matching weights and acceptance thresholds."""
 
+    atom_identity: str = "geometric"
     max_atom_displacement: float = 1.5
     max_feature_displacement: float = 2.0
     position_weight: float = 1.0
@@ -149,6 +151,12 @@ class MatchingSettings:
     split_merge_threshold: float = 0.55
 
     def __post_init__(self) -> None:
+        self.atom_identity = _string(self.atom_identity, "matching.atom_identity", normalize=True)
+        if self.atom_identity not in _ATOM_IDENTITIES:
+            choices = ", ".join(sorted(_ATOM_IDENTITIES))
+            raise ValueError(
+                f"matching.atom_identity must be one of {choices}; got {self.atom_identity!r}"
+            )
         for name in (
             "max_atom_displacement",
             "max_feature_displacement",
@@ -390,7 +398,8 @@ descriptor_source = "auto" # local without descriptor_dir; external with it
 prefer_contcar = true
 
 [matching]
-max_atom_displacement = 1.5
+atom_identity = "geometric" # or "index" for one fixed atom order, as in NEB images
+max_atom_displacement = 1.5 # geometric identity only
 max_feature_displacement = 2.0
 position_weight = 1.0
 charge_weight = 0.35

@@ -34,7 +34,11 @@ IntArray = npt.NDArray[np.int64]
 
 @dataclass(slots=True)
 class AtomMatchConfig:
-    """Controls atom assignment between two adjacent frames."""
+    """Controls atom assignment between two adjacent frames.
+
+    ``identity="index"`` pairs atoms by their order in each frame, as in NEB
+    images that share one atom order, instead of solving the assignment.
+    """
 
     max_distance: float = 2.0
     distance_scale: float = 0.5
@@ -44,8 +48,11 @@ class AtomMatchConfig:
     attribute_scales: dict[str, float] = field(default_factory=dict)
     attribute_weight: float = 0.25
     pbc: tuple[bool, bool, bool] = (True, True, True)
+    identity: str = "geometric"
 
     def __post_init__(self) -> None:
+        if self.identity not in ("geometric", "index"):
+            raise ValueError("identity must be 'geometric' or 'index'")
         self.max_distance = _positive(self.max_distance, "max_distance")
         self.distance_scale = _positive(self.distance_scale, "distance_scale")
         self.unmatched_cost = _positive(self.unmatched_cost, "unmatched_cost")
@@ -372,6 +379,8 @@ def match_atoms(
     """Globally match atoms using element identity and periodic motion."""
 
     settings = config or AtomMatchConfig()
+    if settings.identity == "index":
+        return _match_atoms_by_index(previous, current, settings)
     distances = _candidate_distances(
         previous.atoms,
         current.atoms,
@@ -424,6 +433,69 @@ def match_atoms(
         diagnostics={
             "entity": "atom",
             "candidate_pairs": int(np.isfinite(costs).sum()),
+            "cell_volume_ratio": _cell_volume_ratio(previous, current),
+        },
+    )
+
+
+def _match_atoms_by_index(
+    previous: Frame,
+    current: Frame,
+    config: AtomMatchConfig,
+) -> MatchResult:
+    """Pair the i-th atoms of both frames; displacement is evidence, not cost.
+
+    The caller asserts a fixed atom order.  Only the element sequence can be
+    checked, so a permutation of same-element atoms is not detected.
+    """
+
+    if len(previous.atoms) != len(current.atoms):
+        raise ValueError(
+            "index atom identity requires identical element sequences, but frames "
+            f"{previous.label!r} and {current.label!r} have {len(previous.atoms)} and "
+            f"{len(current.atoms)} atoms; use geometric atom identity when atom order "
+            "or content changes"
+        )
+    for position, (source, target) in enumerate(zip(previous.atoms, current.atoms, strict=True)):
+        if source.element.casefold() != target.element.casefold():
+            raise ValueError(
+                "index atom identity requires identical element sequences, but atom "
+                f"{position} is {source.element} in frame {previous.label!r} and "
+                f"{target.element} in frame {current.label!r}; use geometric atom "
+                "identity when atom order or content changes"
+            )
+    distances = (
+        np.asarray(
+            deformation_aware_distance(
+                [atom.fractional_position for atom in previous.atoms],
+                [atom.fractional_position for atom in current.atoms],
+                previous.cell,
+                current.cell,
+                config.pbc,
+            ),
+            dtype=float,
+        )
+        if previous.atoms
+        else np.empty(0, dtype=float)
+    )
+    edges = tuple(
+        MatchEdge(
+            source_ids=(source.index,),
+            target_ids=(target.index,),
+            cost=0.0,
+            confidence=1.0,
+            evidence={"identity": "index", "distance": float(distance), "element_match": True},
+        )
+        for source, target, distance in zip(previous.atoms, current.atoms, distances, strict=True)
+    )
+    return MatchResult(
+        previous_frame_index=previous.index,
+        current_frame_index=current.index,
+        edges=edges,
+        total_cost=0.0,
+        diagnostics={
+            "entity": "atom",
+            "identity": "index",
             "cell_volume_ratio": _cell_volume_ratio(previous, current),
         },
     )

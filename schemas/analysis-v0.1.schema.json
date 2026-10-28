@@ -60,7 +60,69 @@
         "additionalProperties": true
       }
     },
-    "tracks": {"type": "array", "items": {"type": "object", "additionalProperties": true}}
+    "tracks": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "track_summary": {
+      "type": "array",
+      "description": "One whole-path record per feature track. Reporting only: no thresholds or events.",
+      "items": {
+        "type": "object",
+        "required": [
+          "track_id",
+          "kind",
+          "first_frame",
+          "last_frame",
+          "observations",
+          "spans_path",
+          "parent_track_ids",
+          "changes"
+        ],
+        "properties": {
+          "track_id": {"type": "string"},
+          "kind": {"type": "string"},
+          "first_frame": {"type": "integer", "minimum": 0},
+          "last_frame": {"type": "integer", "minimum": 0},
+          "observations": {"type": "integer", "minimum": 1},
+          "spans_path": {
+            "type": "boolean",
+            "description": "True when the track is observed in the first and last frames of the path."
+          },
+          "parent_track_ids": {"type": "array", "items": {"type": "string"}},
+          "changes": {
+            "type": "object",
+            "description": "Keyed by charge, volume, and each configured descriptor, in native units.",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["observed", "net_change", "range", "largest_step"],
+              "properties": {
+                "observed": {"type": "integer", "minimum": 0},
+                "net_change": {
+                  "type": ["number", "null"],
+                  "description": "Last-frame minus first-frame value; null unless both exist."
+                },
+                "range": {
+                  "type": ["number", "null"],
+                  "minimum": 0,
+                  "description": "Maximum minus minimum over frames with a value; null for fewer than two."
+                },
+                "largest_step": {
+                  "type": ["object", "null"],
+                  "description": "Adjacent-frame change with the largest magnitude; earliest on ties.",
+                  "required": ["frame_before", "frame_after", "delta"],
+                  "properties": {
+                    "frame_before": {"type": "integer", "minimum": 0},
+                    "frame_after": {"type": "integer", "minimum": 0},
+                    "delta": {"type": "number"}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
   },
   "additionalProperties": true
 }
