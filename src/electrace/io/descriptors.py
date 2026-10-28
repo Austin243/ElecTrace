@@ -583,7 +583,11 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
     )
 
 
-_ATOM_LABEL = re.compile(r"(\d+)$")
+# LOBSTER labels an atom by element and one-based index (Na1). Orbital-resolved rows
+# append the orbital to that label (Na1_3s, Fe1_3d_z^2); LCFO fragment labels such as
+# AlN_1 are neither.
+_ATOM_LABEL = re.compile(r"[A-Za-z]+(\d+)")
+_ORBITAL_LABEL = re.compile(r"([A-Za-z]+\d+)_\S+")
 _INTEGER_FIELD = re.compile(r"[+-]?\d+\Z")
 
 
@@ -593,9 +597,12 @@ def _atom_index(value: Any, context: str) -> int:
     if isinstance(value, int):
         raw = value
     elif isinstance(value, str):
-        match = _ATOM_LABEL.search(value.strip())
+        match = _ATOM_LABEL.fullmatch(value.strip())
         if match is None:
-            raise DescriptorError(f"cannot read atom index from {value!r} in {context}")
+            raise DescriptorError(
+                f"cannot read atom index from {value!r} in {context}; expected an atom "
+                "label such as Na1"
+            )
         raw = int(match.group(1))
     else:
         raise DescriptorError(f"cannot read atom index from {value!r} in {context}")
@@ -631,13 +638,39 @@ def _periodic_midpoint(
 _SPIN_LABEL = re.compile(r"for\s+spin\s+(\d+)", re.IGNORECASE)
 
 
-def _lobster_rows(path: Path) -> list[tuple[int, list[str], list[str]]]:
+def _atom_pair_rows(
+    path: Path, rows: list[tuple[int, list[str]]], values: int
+) -> list[tuple[int, list[str]]]:
+    """Drop orbital-resolved rows after checking each against its atom-pair row.
+
+    LOBSTER writes a bond's orbital rows directly below the atom-pair row that holds
+    the bond total, with the same COHP#, distance, and translation. An orbital row
+    anywhere else would mean a bond total is missing, so it is an error.
+    """
+
+    kept: list[tuple[int, list[str]]] = []
+    for line_number, fields in rows:
+        mu, nu = (_ORBITAL_LABEL.fullmatch(label) for label in fields[1:3])
+        if mu is None or nu is None:
+            kept.append((line_number, fields))
+            continue
+        identity = [fields[0], mu.group(1), nu.group(1), *fields[3:-values]]
+        if not kept or kept[-1][1][:-values] != identity:
+            raise DescriptorError(
+                f"{path.name}:{line_number} is an orbital-resolved row that does not "
+                "follow its atom-pair row"
+            )
+    return kept
+
+
+def _lobster_rows(path: Path) -> tuple[list[tuple[int, list[str], list[str]]], int]:
     """Return LOBSTER bond rows as (line, identity columns, one value per spin).
 
     LOBSTER 3.x-5.0 writes one block per spin channel, each headed "for spin N".
     LOBSTER 5.1 writes both channels on one row below a header ending
     "for spin 1  for spin 2". A repeated, reordered, or unlabeled spin block is
-    rejected rather than read as extra bonds.
+    rejected rather than read as extra bonds. Orbital-resolved rows are dropped
+    before spin blocks are paired; their count is returned with the rows.
     """
 
     blocks: list[list[tuple[int, list[str]]]] = []
@@ -673,10 +706,13 @@ def _lobster_rows(path: Path) -> list[tuple[int, list[str], list[str]]]:
                 "rows have 5 simplified columns, 8 columns including the three atom-2 "
                 "lattice-translation integers, or 9 columns with both spin channels"
             )
+    listed = sum(len(block) for block in blocks)
+    blocks = [_atom_pair_rows(path, block, 2 if two_channels else 1) for block in blocks]
+    orbital_rows = listed - sum(len(block) for block in blocks)
     if two_channels:
-        return [(number, fields[:7], fields[7:]) for number, fields in blocks[0]]
+        return [(number, fields[:7], fields[7:]) for number, fields in blocks[0]], orbital_rows
     if len(blocks) == 1:
-        return [(number, fields[:-1], fields[-1:]) for number, fields in blocks[0]]
+        return [(number, fields[:-1], fields[-1:]) for number, fields in blocks[0]], orbital_rows
     up, down = blocks
     if len(up) != len(down):
         raise DescriptorError(
@@ -688,7 +724,7 @@ def _lobster_rows(path: Path) -> list[tuple[int, list[str], list[str]]]:
     return [
         (number, first[:-1], [first[-1], second[-1]])
         for (number, first), (_, second) in zip(up, down, strict=True)
-    ]
+    ], orbital_rows
 
 
 def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
@@ -699,7 +735,8 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     descriptor = "icohp_ev" if family == "icohp" else family
     features: list[Feature] = []
     spin_resolved = False
-    for line_number, fields, raw_values in _lobster_rows(path):
+    rows, orbital_rows = _lobster_rows(path)
+    for line_number, fields, raw_values in rows:
         context = f"{path.name}:{line_number}"
         first = _atom_index(fields[1], f"{context} atom1")
         second = _atom_index(fields[2], f"{context} atom2")
@@ -715,6 +752,10 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
                 int(raw_translation[0]),
                 int(raw_translation[1]),
                 int(raw_translation[2]),
+            )
+        if first == second and not any(lattice_translation or ()):
+            raise DescriptorError(
+                f"{context} bonds {fields[1]} to itself without a nonzero lattice translation"
             )
         channels = [
             _finite(raw.replace("D", "E"), f"{context} {family.upper()}") for raw in raw_values
@@ -752,11 +793,15 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
                     second,
                     lattice_translation=lattice_translation,
                 ),
-                neighbor_atom_indices=(first, second),
+                # A bond to the atom's own periodic image lists that atom once;
+                # lattice_translation names the image.
+                neighbor_atom_indices=(first,) if first == second else (first, second),
                 attributes=attributes,
             )
         )
     metadata: dict[str, Any] = {"native_format": path.name}
+    if orbital_rows:
+        metadata["skipped_orbital_rows"] = orbital_rows
     if spin_resolved:
         metadata["spin_convention"] = (
             f"{family} is the sum of LOBSTER spin 1 and spin 2; {family}_up and "

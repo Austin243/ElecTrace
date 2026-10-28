@@ -51,6 +51,14 @@
 
 ### Changed
 
+- A LOBSTER bond from an atom to its own periodic image lists the atom once in
+  `neighbor_atom_indices`, with `lattice_translation` naming the image. Such rows,
+  common in real `ICOHPLIST` files, previously made the whole file fail.
+- Orbital-resolved LOBSTER rows (`Na1_3s`, `Fe1_3d_z^2`) are checked against their
+  atom-pair row and skipped, and the count is recorded in the document metadata.
+  They previously failed, or a label ending in a digit was read as an atom
+  (`Fe1_3d_z^2` as atom 2). Atom labels must be an element and an index, such as
+  `Na1`, so LCFO fragment labels such as `AlN_1` are errors rather than atoms.
 - `electrace volume` reads `CHGCAR` files with PAW augmentation occupancies and
   per-atom moment lines, and reports a truncated grid instead of stopping at the
   first augmentation block.

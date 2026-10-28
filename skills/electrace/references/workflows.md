@@ -26,6 +26,9 @@ frame directory, then `bader CHGCAR_mag -ref CHGCAR_tot` inside `spin/`. The spl
 refuses one-grid (`ISPIN = 1`), truncated, and non-collinear files. Analysis attaches
 `spin/ACF.dat` to Bader atom features as `spin`. Spin-resolved LOBSTER lists give
 `icohp` or `icobi` as the sum of both channels plus `_up` and `_down` values.
+LOBSTER bond values come from atom-pair rows; orbital-resolved rows are skipped. A
+bond to an atom's own periodic image lists that atom once, and `lattice_translation`
+names the image.
 
 Current boundaries: external programs and pseudopotentials are user-supplied;
 critic2 integration reports critical-point topology rather than integrated ELF basin
