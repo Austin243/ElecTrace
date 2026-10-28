@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from electrace.io.discovery import FrameSource, discover_path
+from electrace.io.vasp import parse_poscar
 from electrace.plugins import plan_plugin
 from electrace.provenance import sha256_file
 
@@ -27,6 +28,8 @@ _INCAR_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _SAFE_LABEL = re.compile(r"[^A-Za-z0-9_.-]+")
 _LOBSTER_BOND_REQUEST = re.compile(r"(?im)^\s*(?:cohpgenerator|cohpbetween)\b")
 _LOBSTER_SKIP_COBI = re.compile(r"(?im)^\s*skipcobi\b")
+_POTCAR_TITEL = re.compile(r"(?m)^\s*TITEL\s*=\s*\S+\s+(\S+)")
+_ELEMENT_SYMBOL = re.compile(r"[A-Z][a-z]?")
 _DESCRIPTOR_FILENAMES = frozenset(
     """ACF.dat DDEC6_even_tempered_net_atomic_charges.xyz ICOBILIST.lobster
     ICOHPLIST.lobster badelf.json bader.json critic2.features.json
@@ -237,6 +240,61 @@ def _template_files(step: WorkflowStep, manifest_base: Path) -> tuple[Path, ...]
             + ", ".join(sorted(missing))
         )
     return files
+
+
+def _element_symbol(label: str) -> str:
+    match = _ELEMENT_SYMBOL.match(label)
+    return match.group(0) if match else label
+
+
+def _check_vasp_species(
+    step: WorkflowStep,
+    template_files: tuple[Path, ...],
+    sources: tuple[FrameSource, ...],
+) -> tuple[str, ...]:
+    """Reject frames whose POSCAR species order differs from the template POTCAR.
+
+    VASP pairs POSCAR species with POTCAR entries by position, so another order runs
+    with the wrong pseudopotentials.  Labels are compared by element symbol, so
+    ``Fe_pv``, ``H.75``, or a VASP 6 ``/hash`` suffix still matches ``Fe`` or ``H``.
+    Returns warnings for what cannot be checked.
+    """
+
+    potcar = next((item for item in template_files if item.name == "POTCAR"), None)
+    if step.kind != "vasp" or potcar is None:
+        return ()
+    text = potcar.read_text(encoding="utf-8", errors="replace")
+    expected = tuple(_element_symbol(label) for label in _POTCAR_TITEL.findall(text))
+    if not expected:
+        return (
+            f"vasp step {step.id!r}: the template POTCAR has no TITEL lines, so POSCAR "
+            "species order was not checked",
+        )
+    unnamed: list[str] = []
+    for source in sources:
+        data = parse_poscar(source.structure)
+        species = tuple(_element_symbol(label) for label in data.species)
+        if data.symbols_inferred and len(species) == len(expected):
+            # A VASP 4 file lists counts without names; only the count is checkable.
+            unnamed.append(source.label)
+        elif data.symbols_inferred:
+            raise ValueError(
+                f"vasp step {step.id!r}: frame {source.label!r} {source.structure.name} "
+                f"lists {len(species)} species but the template POTCAR has "
+                f"{len(expected)} ({' '.join(expected)})"
+            )
+        elif species != expected:
+            raise ValueError(
+                f"vasp step {step.id!r}: frame {source.label!r} {source.structure.name} "
+                f"species order {' '.join(species)} does not match the template POTCAR "
+                f"order {' '.join(expected)}; VASP pairs them by position"
+            )
+    if not unnamed:
+        return ()
+    return (
+        f"vasp step {step.id!r}: species order was not checked for frame(s) "
+        f"{', '.join(unnamed)} because their structure files have no species names",
+    )
 
 
 def _plugin_required_names(step: WorkflowStep) -> tuple[str, ...]:
@@ -538,6 +596,8 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
     selected = _selected_sources(manifest, source_root)
     frames = _staged_frames(selected, workspace)
     templates = {step.id: _template_files(step, source_manifest.parent) for step in manifest.steps}
+    for step in manifest.steps:
+        _check_vasp_species(step, templates[step.id], selected)
     workspace.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{workspace.name}.stage-", dir=workspace.parent))
     jobs: list[JobSpec] = []

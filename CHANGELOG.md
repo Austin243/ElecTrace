@@ -4,6 +4,9 @@
 
 ### Added
 
+- `workflow validate` and `workflow stage` stop when a frame's POSCAR species order
+  differs from the VASP template `POTCAR`'s `TITEL` order, naming the frame and both
+  orders. Validation warns when the order cannot be checked.
 - Opt-in `[matching] atom_identity = "index"` for paths with one fixed atom order,
   such as NEB images. Atoms are paired by position after an element-sequence check;
   displacement stays in the evidence but no longer lowers atom-match or candidate
