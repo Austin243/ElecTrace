@@ -1,0 +1,35 @@
+SYSTEM = HCN to HNC hand-defined static scan
+
+ENCUT = 520
+PREC = Accurate
+EDIFF = 1E-7
+ALGO = Normal
+NELM = 200
+
+ISMEAR = 0
+SIGMA = 0.05
+ISPIN = 1
+ISYM = 0
+LREAL = Auto
+LASPH = .TRUE.
+
+IBRION = -1
+NSW = 0
+
+LWAVE = .FALSE.
+LCHARG = .TRUE.
+LAECHG = .TRUE.
+LELF = .TRUE.
+ADDGRID = .FALSE.
+
+LDIPOL = .TRUE.
+IDIPOL = 4
+DIPOL = 0.5 0.5 0.5
+
+NGXF = 96
+NGYF = 96
+NGZF = 96
+
+KPAR = 1
+NCORE = 1
+NWRITE = 2

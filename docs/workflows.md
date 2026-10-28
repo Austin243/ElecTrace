@@ -38,6 +38,50 @@ and largest single step for charge, volume, and each configured descriptor. A ch
 spread over many frames appears there even when no single step crosses an event
 threshold.
 
+## Golden path from existing results
+
+The repository includes a small, real native-output example generated from a
+seven-frame HCN-to-HNC static scan:
+
+```text
+examples/hcn-hnc/frames/
+├── 00/
+│   ├── POSCAR
+│   ├── OSZICAR
+│   ├── ACF.dat
+│   └── critic2.features.json
+└── 01/ ... 06/
+```
+
+After installing ElecTrace from the repository root:
+
+```bash
+cd examples/hcn-hnc
+electrace analyze electrace.toml
+electrace inspect electrace-results
+```
+
+With ElecTrace 0.1.0a5, the checked configuration produces 7 frames, 35 feature
+observations, 20 events (19 descriptor changes and one candidate
+bond-critical-point connectivity change), and no warnings. See the
+[example guide](https://github.com/Austin243/ElecTrace/blob/main/examples/hcn-hnc/README.md)
+for what to inspect and the
+[generation record](https://github.com/Austin243/ElecTrace/blob/main/examples/hcn-hnc/generation/PROVENANCE.md)
+for scientific and redistribution provenance.
+
+For local descriptors, place recognized files directly in each frame directory.
+An external descriptor directory may instead be flat (`descriptors/00.json`) or
+mirrored (`descriptors/00/features.json`). `descriptor_source = "auto"` searches
+local files only when `descriptor_dir` is absent and external files only when it
+is set; use `"merge"` to combine both locations. Duplicate feature IDs are an
+error.
+
+Recognized descriptor basenames are `electrace.features.json`, `features.json`,
+`bader.json`, `badelf.json`, `critic2.features.json`, `ICOHPLIST.lobster`,
+`ICOBILIST.lobster`, `DDEC6_even_tempered_net_atomic_charges.xyz`, and `ACF.dat`.
+`CHGCAR` and `ELFCAR` are volumetric inputs, not feature descriptors by
+themselves.
+
 ## Select frames and stage calculations
 
 Create and edit a workflow manifest:

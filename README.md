@@ -45,6 +45,21 @@ electrace demo --output .electrace-demo
 electrace inspect .electrace-demo/electrace-results
 ```
 
+## Try real native outputs
+
+The compact [HCN-to-HNC example](examples/hcn-hnc/README.md) includes seven
+GPU-generated VASP frames plus native Bader and critic2 results:
+
+```bash
+cd examples/hcn-hnc
+electrace analyze electrace.toml
+electrace inspect electrace-results
+```
+
+It is an illustrative hand-defined static scan, not an optimized reaction path
+or benchmark. No licensed pseudopotentials, executables, or large density files
+are included.
+
 ## Analyze existing results
 
 Create a configuration for an ordered VASP path, then point it to supported descriptor

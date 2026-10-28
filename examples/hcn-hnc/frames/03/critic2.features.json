@@ -1,0 +1,664 @@
+{
+  "units": "bohr",
+  "structure": {
+    "cell_lengths": [
+      0.30235618126170291E+2,
+      0.30235618126170291E+2,
+      0.30235618126170291E+2
+    ],
+    "cell_angles": [
+      0.9E+2,
+      0.9E+2,
+      0.9E+2
+    ],
+    "cell_volume": 0.27641178452336637E+5,
+    "crys_to_cart_matrix": [
+      0.30235618126170291E+2,
+      0.0E+0,
+      0.0E+0,
+      0.0E+0,
+      0.30235618126170291E+2,
+      0.0E+0,
+      0.0E+0,
+      0.0E+0,
+      0.30235618126170291E+2
+    ],
+    "cart_to_crys_matrix": [
+      0.33073575536874997E-1,
+      0.0E+0,
+      0.0E+0,
+      0.0E+0,
+      0.33073575536874997E-1,
+      0.0E+0,
+      -0.0E+0,
+      -0.0E+0,
+      0.33073575536874997E-1
+    ],
+    "is_molecule": false,
+    "molecule_centering_vector": [
+      0.0E+0,
+      0.0E+0,
+      0.0E+0
+    ],
+    "molecular_cell_border": [
+      0.0E+0,
+      0.0E+0,
+      0.0E+0
+    ],
+    "periodicity": 3,
+    "number_of_species": 3,
+    "species": [
+      {
+        "id": 1,
+        "name": "C",
+        "atomic_number": 6
+      },
+      {
+        "id": 2,
+        "name": "N",
+        "atomic_number": 7
+      },
+      {
+        "id": 3,
+        "name": "H",
+        "atomic_number": 1
+      }
+    ],
+    "number_of_nonequivalent_atoms": 3,
+    "nonequivalent_atoms": [
+      {
+        "id": 1,
+        "species": 1,
+        "fractional_coordinates": [
+          0.46375E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.14021767906011473E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "multiplicity": 1,
+        "wyckoff_letter": "b",
+        "half_nn_distance": 0.10960411570736728E+1
+      },
+      {
+        "id": 2,
+        "species": 2,
+        "fractional_coordinates": [
+          0.53625E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.16213850220158818E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "multiplicity": 1,
+        "wyckoff_letter": "b",
+        "half_nn_distance": 0.10960411570736728E+1
+      },
+      {
+        "id": 3,
+        "species": 3,
+        "fractional_coordinates": [
+          0.5E+0,
+          0.56874999999999998E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.15117809063085145E+2,
+          0.17196507809259352E+2,
+          0.15117809063085145E+2
+        ],
+        "multiplicity": 1,
+        "wyckoff_letter": "b",
+        "half_nn_distance": 0.11749781588763268E+1
+      }
+    ],
+    "number_of_cell_atoms": 3,
+    "cell_atoms": [
+      {
+        "id": 1,
+        "species": 1,
+        "fractional_coordinates": [
+          0.46375E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.14021767906011473E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "nonequivalent_id": 1,
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": 2,
+        "species": 2,
+        "fractional_coordinates": [
+          0.53625E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.16213850220158818E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "nonequivalent_id": 2,
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": 3,
+        "species": 3,
+        "fractional_coordinates": [
+          0.5E+0,
+          0.56874999999999998E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.15117809063085145E+2,
+          0.17196507809259352E+2,
+          0.15117809063085145E+2
+        ],
+        "nonequivalent_id": 3,
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "have_symmetry": true,
+    "space_group_hm": "Pm",
+    "space_group_ita_number": 6,
+    "number_of_symops": 2,
+    "symops": [
+      {
+        "id": 1,
+        "operation": "x,y,z",
+        "rotation": [
+          0.1E+1,
+          0.0E+0,
+          0.0E+0,
+          0.0E+0,
+          0.1E+1,
+          0.0E+0,
+          0.0E+0,
+          0.0E+0,
+          0.1E+1
+        ],
+        "translation": [
+          0.0E+0,
+          0.0E+0,
+          0.0E+0
+        ]
+      },
+      {
+        "id": 2,
+        "operation": "x,y,-z",
+        "rotation": [
+          0.1E+1,
+          0.0E+0,
+          0.0E+0,
+          0.0E+0,
+          0.1E+1,
+          0.0E+0,
+          0.0E+0,
+          0.0E+0,
+          -0.1E+1
+        ],
+        "translation": [
+          0.0E+0,
+          0.0E+0,
+          0.0E+0
+        ]
+      }
+    ],
+    "number_of_centering_vectors": 1,
+    "centering_vectors": [
+      0.0E+0,
+      0.0E+0,
+      0.0E+0
+    ],
+    "number_of_molecular_fragments": 1
+  },
+  "field": {
+    "id": 3,
+    "name": "<generated>, grid: $1+$2",
+    "source": "generated",
+    "type": "grid"
+  },
+  "critical_points": {
+    "number_of_nonequivalent_cps": 5,
+    "nonequivalent_cps": [
+      {
+        "id": 1,
+        "name": "C",
+        "fractional_coordinates": [
+          0.46375E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.14021767906011473E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "multiplicity": 1,
+        "point_group": "Cs",
+        "rank": 3,
+        "signature": -3,
+        "field": 0.1277118531664629E+3,
+        "field_valence": 0.1277118531664629E+3,
+        "gradient": [
+          0.0E+0,
+          0.0E+0,
+          0.0E+0
+        ],
+        "hessian": [
+          -0.14334545093128157E+7,
+          0.49812420156280997E+1,
+          0.89660319461419568E-3,
+          0.49812420156280997E+1,
+          -0.14334808942818395E+7,
+          -0.93970473126778144E-3,
+          0.89660319461419568E-3,
+          -0.93970473126778144E-3,
+          -0.1433511827542603E+7
+        ],
+        "gradient_norm": 0.0E+0,
+        "gradient_norm_valence": 0.0E+0,
+        "laplacian": -0.4300447231137258E+7,
+        "laplacian_valence": -0.4300447231137258E+7,
+        "hessian_eigenvalues": [
+          -0.1433511827542651E+7,
+          -0.1433481803372364E+7,
+          -0.14334536002222432E+7
+        ],
+        "number_of_pointprops": 0,
+        "is_nucleus": true
+      },
+      {
+        "id": 2,
+        "name": "N",
+        "fractional_coordinates": [
+          0.53625E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.16213850220158818E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "multiplicity": 1,
+        "point_group": "Cs",
+        "rank": 3,
+        "signature": -3,
+        "field": 0.20523638130875682E+3,
+        "field_valence": 0.20523638130875682E+3,
+        "gradient": [
+          0.0E+0,
+          0.0E+0,
+          0.0E+0
+        ],
+        "hessian": [
+          -0.42694539127592966E+7,
+          0.4310508516538639E+1,
+          -0.65031629770428815E-3,
+          0.4310508516538639E+1,
+          -0.42695982551450636E+7,
+          -0.93779740792640184E-3,
+          -0.65031629770428815E-3,
+          -0.93779740792640184E-3,
+          -0.42697313273431445E+7
+        ],
+        "gradient_norm": 0.0E+0,
+        "gradient_norm_valence": 0.0E+0,
+        "laplacian": -0.12808783495247506E+8,
+        "laplacian_valence": -0.12808783495247506E+8,
+        "hessian_eigenvalues": [
+          -0.42697313273431528E+7,
+          -0.42695983837555358E+7,
+          -0.42694537841488179E+7
+        ],
+        "number_of_pointprops": 0,
+        "is_nucleus": true
+      },
+      {
+        "id": 3,
+        "name": "H",
+        "fractional_coordinates": [
+          0.5E+0,
+          0.56874999999999998E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.15117809063085145E+2,
+          0.17196507809259352E+2,
+          0.15117809063085145E+2
+        ],
+        "multiplicity": 1,
+        "point_group": "Cs",
+        "rank": 3,
+        "signature": -3,
+        "field": 0.35879454115107279E+0,
+        "field_valence": 0.35879454115107279E+0,
+        "gradient": [
+          0.0E+0,
+          0.0E+0,
+          0.0E+0
+        ],
+        "hessian": [
+          -0.32818508034198874E+1,
+          -0.11814553182160346E-1,
+          0.7364484227378296E-6,
+          -0.11814553182160346E-1,
+          -0.29670014628571679E+1,
+          -0.15775106295906946E-5,
+          0.7364484227378296E-6,
+          -0.15775106295906946E-5,
+          -0.33768781039412361E+1
+        ],
+        "gradient_norm": 0.0E+0,
+        "gradient_norm_valence": 0.0E+0,
+        "laplacian": -0.96257303702182906E+1,
+        "laplacian_valence": -0.96257303702182906E+1,
+        "hessian_eigenvalues": [
+          -0.33768781039523499E+1,
+          -0.32822935157055411E+1,
+          -0.29665587505603996E+1
+        ],
+        "number_of_pointprops": 0,
+        "is_nucleus": true
+      },
+      {
+        "id": 4,
+        "name": "b1",
+        "fractional_coordinates": [
+          0.48828593303205348E+0,
+          0.49905377901848103E+0,
+          0.49999998421556441E+0
+        ],
+        "cartesian_coordinates": [
+          0.14763627007537929E+2,
+          0.15089199486824967E+2,
+          0.15117808585832979E+2
+        ],
+        "multiplicity": 1,
+        "point_group": "Cs",
+        "rank": 3,
+        "signature": -1,
+        "field": 0.50142764552988184E+0,
+        "field_valence": 0.50142764552988184E+0,
+        "gradient": [
+          -0.39697983862438632E-13,
+          -0.57016219867756574E-14,
+          0.37026810275122911E-14
+        ],
+        "hessian": [
+          0.26138824790657269E+1,
+          -0.95594162714978684E-1,
+          -0.1324598479706279E-4,
+          -0.95594162714978684E-1,
+          -0.15554447713174993E+1,
+          0.19089454767085615E-4,
+          -0.1324598479706279E-4,
+          0.19089454767085615E-4,
+          -0.13892524632888277E+1
+        ],
+        "gradient_norm": 0.40275901762890682E-13,
+        "gradient_norm_valence": 0.0E+0,
+        "laplacian": -0.33081475554060003E+0,
+        "laplacian_valence": -0.33081475554060003E+0,
+        "hessian_eigenvalues": [
+          -0.1557635401431039E+1,
+          -0.13892524612407702E+1,
+          0.2616073107131208E+1
+        ],
+        "number_of_pointprops": 0,
+        "is_nucleus": false
+      },
+      {
+        "id": 5,
+        "name": "b2",
+        "fractional_coordinates": [
+          0.50200433358303587E+0,
+          0.54617076276685472E+0,
+          0.4999999645345049E+0
+        ],
+        "cartesian_coordinates": [
+          0.15178411327899276E+2,
+          0.16513810614697768E+2,
+          0.15117807990763978E+2
+        ],
+        "multiplicity": 1,
+        "point_group": "Cs",
+        "rank": 3,
+        "signature": -1,
+        "field": 0.21082144134501768E+0,
+        "field_valence": 0.21082144134501768E+0,
+        "gradient": [
+          -0.31430812108675639E-14,
+          -0.13625431801083259E-14,
+          0.18268954423071758E-14
+        ],
+        "hessian": [
+          -0.27705498181585714E+0,
+          -0.13386999881553968E+0,
+          0.25781040490935947E-5,
+          -0.13386999881553968E+0,
+          0.51281332192028117E+0,
+          0.24210015049703721E-5,
+          0.25781040490935947E-5,
+          0.24210015049703721E-5,
+          -0.55901307605053108E+0
+        ],
+        "gradient_norm": 0.38824000789319937E-14,
+        "gradient_norm_valence": 0.0E+0,
+        "laplacian": -0.32325473594610704E+0,
+        "laplacian_valence": -0.32325473594610704E+0,
+        "hessian_eigenvalues": [
+          -0.55901307608728157E+0,
+          -0.29912701799171887E+0,
+          0.53488535813289328E+0
+        ],
+        "number_of_pointprops": 0,
+        "is_nucleus": false
+      }
+    ],
+    "number_of_cell_cps": 5,
+    "cell_cps": [
+      {
+        "id": 1,
+        "rank": 3,
+        "signature": -3,
+        "fractional_coordinates": [
+          0.46375E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.14021767906011473E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "nonequivalent_id": 1,
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": 2,
+        "rank": 3,
+        "signature": -3,
+        "fractional_coordinates": [
+          0.53625E+0,
+          0.5E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.16213850220158818E+2,
+          0.15117809063085145E+2,
+          0.15117809063085145E+2
+        ],
+        "nonequivalent_id": 2,
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": 3,
+        "rank": 3,
+        "signature": -3,
+        "fractional_coordinates": [
+          0.5E+0,
+          0.56874999999999998E+0,
+          0.5E+0
+        ],
+        "cartesian_coordinates": [
+          0.15117809063085145E+2,
+          0.17196507809259352E+2,
+          0.15117809063085145E+2
+        ],
+        "nonequivalent_id": 3,
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": 4,
+        "rank": 3,
+        "signature": -1,
+        "fractional_coordinates": [
+          0.48828593303205348E+0,
+          0.49905377901848103E+0,
+          0.49999998421556441E+0
+        ],
+        "cartesian_coordinates": [
+          0.14763627007537929E+2,
+          0.15089199486824967E+2,
+          0.15117808585832979E+2
+        ],
+        "nonequivalent_id": 4,
+        "attractor_angle": 0.1766613320145091E+3,
+        "attractor_eigenvec": [
+          0.99973753370800422E+0,
+          -0.22909903617695657E-1,
+          -0.34154141781645411E-5
+        ],
+        "attractors": [
+          {
+            "cell_id": 2,
+            "lvec": [
+              0,
+              0,
+              0
+            ],
+            "distance": 0.14505053858150503E+1,
+            "path_length": 0.14509535677430661E+1
+          },
+          {
+            "cell_id": 1,
+            "lvec": [
+              0,
+              0,
+              0
+            ],
+            "distance": 0.74241055647913301E+0,
+            "path_length": 0.74241596485226868E+0
+          }
+        ],
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": 5,
+        "rank": 3,
+        "signature": -1,
+        "fractional_coordinates": [
+          0.50200433358303587E+0,
+          0.54617076276685472E+0,
+          0.4999999645345049E+0
+        ],
+        "cartesian_coordinates": [
+          0.15178411327899276E+2,
+          0.16513810614697768E+2,
+          0.15117807990763978E+2
+        ],
+        "nonequivalent_id": 5,
+        "attractor_angle": 0.1485078079005699E+3,
+        "attractor_eigenvec": [
+          0.16268029538284362E+0,
+          -0.98667883401383949E+0,
+          -0.18002989603927429E-5
+        ],
+        "attractors": [
+          {
+            "cell_id": 2,
+            "lvec": [
+              0,
+              0,
+              0
+            ],
+            "distance": 0.17380891898028896E+1,
+            "path_length": 0.19960174206470442E+1
+          },
+          {
+            "cell_id": 3,
+            "lvec": [
+              0,
+              0,
+              0
+            ],
+            "distance": 0.68538171405721715E+0,
+            "path_length": 0.68599805619835008E+0
+          }
+        ],
+        "symop_to_nneq": 1,
+        "centering_vector_to_nneq": 1,
+        "lattice_vector_to_nneq": [
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  }
+}
