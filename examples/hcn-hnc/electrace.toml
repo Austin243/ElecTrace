@@ -1,0 +1,52 @@
+[project]
+name = "HCN to HNC proton-transfer scan"
+series_kind = "static"
+
+[inputs]
+root = "frames"
+structure_name = "POSCAR"
+fallback_structure_name = "CONTCAR"
+descriptor_name = "features.json"
+descriptor_source = "local"
+prefer_contcar = true
+
+[matching]
+max_atom_displacement = 1.5
+max_feature_displacement = 2.0
+position_weight = 1.0
+charge_weight = 0.35
+volume_weight = 0.25
+neighbor_weight = 0.75
+overlap_weight = 1.0
+descriptor_weight = 0.35
+match_threshold = 3.0
+conservation_tolerance = 0.35
+split_merge_threshold = 0.55
+
+[matching.descriptor_scales]
+field = 0.10
+laplacian = 0.50
+
+[events]
+minimum_persistence = 2
+minimum_event_confidence = 0.10
+charge_change_threshold = 0.10
+volume_change_fraction = 0.20
+high_confidence_threshold = 0.80
+medium_confidence_threshold = 0.55
+
+[events.descriptor_thresholds]
+field = 0.05
+laplacian = 0.25
+
+[outputs]
+directory = "electrace-results"
+html_report = true
+json = true
+csv = true
+
+[metadata]
+system = "HCN to HNC hand-defined proton-transfer scan in a 16 angstrom cubic cell"
+method = "VASP 5.4.1 GPU, PBE PAW, 520 eV; Bader 1.04; critic2 1.2.2"
+purpose = "Small redistributable native-output example for ElecTrace"
+scientific_scope = "Illustrative static scan; not an optimized NEB, transition-state calculation, or benchmark"

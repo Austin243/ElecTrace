@@ -1,0 +1,11 @@
+# Reconstruct the all-electron density from VASP PAW grids.
+CRYSTAL AECCAR0 C N H
+LOAD AECCAR0
+LOAD AECCAR2
+LOAD AS "$1+$2" ID rhoae SMOOTHRHO
+REFERENCE rhoae
+
+# Ignore numerical stationary points in the vacuum region.
+AUTO DISCARD "$rhoae < 1e-5" SEED PAIR DIST 6 NPTS 20
+CPREPORT critic2.features.json
+END
