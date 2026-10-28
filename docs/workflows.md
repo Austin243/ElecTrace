@@ -116,6 +116,16 @@ themselves. Per-atom spin populations are read from `spin/ACF.dat` in a frame
 directory, or from `descriptors/<label>/spin/ACF.dat` in a mirrored external
 directory.
 
+A LOBSTER list gives one bond feature per atom-pair row. Orbital-resolved rows,
+whose labels name an orbital (`Na1_3s`, `Fe1_3d_z^2`), split the atom-pair row above
+them by orbital. They are checked against that row, skipped, and counted as
+`skipped_orbital_rows` in the document metadata; an orbital row without its atom-pair
+row is an error. A bond from an atom to its own periodic image, such as `Na1 Na1`
+with translation `0 0 -1`, lists the atom once in `neighbor_atom_indices`, and
+`lattice_translation` names the image. LOBSTER lists such a bond once in each
+direction, and both rows are kept. Atom labels must be an element and an index, such
+as `Na1`. LCFO fragment lists and n-center `NcICOBILIST` files are not supported.
+
 ## Spin-polarized runs
 
 ElecTrace reads only what a run wrote. It never takes `ISPIN` from `INCAR` or assumes
