@@ -158,6 +158,13 @@ templates normally provide `INCAR`, `KPOINTS`, and `POTCAR`; ElecTrace places th
 selected structure at `POSCAR`. Descriptor steps can consume files from dependency
 steps with `options.input_links`.
 
+VASP pairs `POSCAR` species with `POTCAR` entries by position, so validation and
+staging stop when a frame's species order differs from the template `POTCAR`'s
+`TITEL` order. Labels are compared by element symbol, so `Fe_pv` or `H.75` still
+matches `Fe` or `H`. Validation warns when the order cannot be checked: a `POTCAR`
+without `TITEL` lines, or a VASP 4 structure file without species names, for which
+only the species count is compared.
+
 ## Run locally
 
 Set `scheduler.kind: local`, stage the workflow, and authorize the reviewed commands:
