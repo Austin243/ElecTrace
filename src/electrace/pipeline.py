@@ -25,7 +25,7 @@ from electrace.export import (
 )
 from electrace.io import load_sequence
 from electrace.matching import AtomMatchConfig, FeatureMatchConfig
-from electrace.models import Feature, Frame, MatchRelation, Sequence
+from electrace.models import Feature, Frame, MatchRelation, MatchResult, Sequence
 from electrace.provenance import environment_record, fingerprint_files, sha256_file
 from electrace.report import render_html_report
 
@@ -323,6 +323,122 @@ def _summarize_tracks(
     return summary
 
 
+def _locate_barrier(sequence: Sequence, series_kind: str) -> dict[str, Any]:
+    """Find the highest-energy frame(s) for placing events; reporting only.
+
+    Frames that tie exactly at the maximum are all kept; no tolerance is applied.
+    """
+
+    if series_kind == "pressure":
+        return {
+            "frames": [],
+            "reason": "Events are not placed: a pressure series is not a reaction path.",
+        }
+    energies = [frame.energy for frame in sequence.frames if frame.energy is not None]
+    if len(energies) < len(sequence.frames):
+        missing = ", ".join(frame.label for frame in sequence.frames if frame.energy is None)
+        return {"frames": [], "reason": f"Events are not placed: no energy for frame(s) {missing}."}
+    peak = max(energies)
+    return {
+        "frames": [frame.index for frame in sequence.frames if frame.energy == peak],
+        "rise_from_first": peak - energies[0],
+        "rise_from_last": peak - energies[-1],
+    }
+
+
+def _barrier_position(event: Mapping[str, Any], peak_frames: list[int]) -> str | None:
+    if not peak_frames:
+        return None
+    if event["frame_after"] < peak_frames[0]:
+        return "before"
+    if event["frame_before"] > peak_frames[-1]:
+        return "after"
+    # The step starts or ends at a highest-energy frame, so the frame spacing
+    # cannot place the change on either side of the barrier.
+    return "spanning"
+
+
+def _check_focus_atoms(sequence: Sequence, focus_atoms: Iterable[int]) -> None:
+    focus = set(focus_atoms)
+    for frame in sequence.frames:
+        absent = sorted(focus - {atom.index for atom in frame.atoms})
+        if absent:
+            raise ValueError(
+                f"outputs.focus_atoms {absent} are not 0-based atom indices of frame "
+                f"{frame.label}, which has {len(frame.atoms)} atoms"
+            )
+
+
+def _focus_identity_warnings(
+    sequence: Sequence, atom_matches: Iterable[MatchResult], focus_atoms: list[int]
+) -> list[str]:
+    """Flag focus atoms matched to a different index, which geometric identity allows."""
+
+    labels = {frame.index: frame.label for frame in sequence.frames}
+    warnings: list[str] = []
+    for result in atom_matches:
+        mapping = result.mapping
+        moved = [
+            f"{index}→{mapping.get(index, 'unmatched')}"
+            for index in focus_atoms
+            if mapping.get(index) != index
+        ]
+        if moved:
+            warnings.append(
+                f"Frames {labels[result.previous_frame_index]}→{labels[result.current_frame_index]}: "
+                f"focus atom(s) matched to another index ({', '.join(moved)}); the focus "
+                "uses each frame's own atom indices."
+            )
+    return warnings
+
+
+def _focus_view(
+    sequence: Sequence, focus_atoms: Iterable[int], analysis: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Keep only the tracks tied to the focus atoms and the events on those tracks.
+
+    Matching, numbering, and summaries already used every atom and feature, so IDs
+    and confidences are those of the unfocused analysis. A track is kept whole when
+    any observation lists a focus atom in ``neighbor_atom_indices``, which for an
+    atom-centered feature is the atom itself; an event is kept when one of its
+    source or target features belongs to a kept track.
+    """
+
+    focus = set(focus_atoms)
+    tracks = analysis["tracks"]
+    kept = {
+        item["track_id"] for item in tracks if focus.intersection(item["neighbor_atom_indices"])
+    }
+    track_of = {(item["frame"], item["feature_id"]): item["track_id"] for item in tracks}
+    events = [
+        event
+        for event in analysis["events"]
+        if any(
+            track_of.get(key) in kept
+            for key in (
+                *((event["frame_before"], item) for item in event["source_ids"]),
+                *((event["frame_after"], item) for item in event["target_ids"]),
+            )
+        )
+    ]
+    observations = [item for item in tracks if item["track_id"] in kept]
+    first = sequence.frames[0]
+    return {
+        "events": events,
+        "tracks": observations,
+        "track_summary": [item for item in analysis["track_summary"] if item["track_id"] in kept],
+        "focus": {
+            "atoms": [
+                {"index": index, "element": first.atom_by_index(index).element}
+                for index in sorted(focus)
+            ],
+            "tracks": {"reported": len(kept), "total": len(analysis["track_summary"])},
+            "observations": {"reported": len(observations), "total": len(tracks)},
+            "events": {"reported": len(events), "total": len(analysis["events"])},
+        },
+    }
+
+
 def _normalize_events(
     events: Iterable[Any],
     minimum_persistence: int,
@@ -377,6 +493,8 @@ def analyze_sequence(
 
     if len(sequence.frames) < 2:
         raise ValueError("ElecTrace requires at least two ordered frames")
+    focus_atoms = config.outputs.focus_atoms
+    _check_focus_atoms(sequence, focus_atoms)
     atom_config, feature_config = _matching_configs(config)
     event_config = _event_config(config)
     tracking = track_sequence(sequence, atom_config, feature_config, event_config)
@@ -404,6 +522,8 @@ def analyze_sequence(
         warnings.append(
             "VASP 4 element symbols were inferred for frame(s): " + ", ".join(inferred_symbols)
         )
+    if focus_atoms:
+        warnings.extend(_focus_identity_warnings(sequence, tracking.atom_matches, focus_atoms))
 
     path = Path(config_path).resolve() if config_path is not None else None
     sources = fingerprint_files(_source_files(sequence, path))
@@ -426,7 +546,10 @@ def analyze_sequence(
         high_confidence_threshold=config.events.high_confidence_threshold,
     )
     series_kind = str(sequence.metadata.get("series_kind", config.series_kind))
-    return {
+    barrier = _locate_barrier(sequence, series_kind)
+    for event in events:
+        event["barrier_position"] = _barrier_position(event, barrier["frames"])
+    analysis: dict[str, Any] = {
         "schema_version": "0.1",
         "software_version": __version__,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -458,8 +581,12 @@ def analyze_sequence(
         "events": events,
         "tracks": tracks,
         "track_summary": track_summary,
+        "barrier": barrier,
         "diagnostics": tracking.diagnostics,
     }
+    if focus_atoms:
+        analysis.update(_focus_view(sequence, focus_atoms, analysis))
+    return analysis
 
 
 def load_and_analyze(

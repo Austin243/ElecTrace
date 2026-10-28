@@ -60,6 +60,12 @@ _HTML = """<!doctype html>
     .energy-line { fill: none; stroke: var(--cyan); stroke-width: 2.5; }
     .energy-point { fill: var(--panel); stroke: var(--cyan); stroke-width: 2; }
     .chart-label { fill: var(--muted); font: 11px ui-monospace, monospace; }
+    .peak-band { fill: rgba(255,204,102,.08); }
+    .peak-line { stroke: var(--amber); stroke-width: 1; stroke-dasharray: 4 4; }
+    .step rect { fill: var(--panel-2); stroke: var(--cyan); }
+    .step.spanning rect { stroke: var(--amber); }
+    .step text { fill: var(--text); font: 10px ui-monospace, monospace; }
+    .chart-note { font-size: .82rem; margin: .6rem 0 0; }
     .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
     .timeline { display: grid; gap: .45rem; }
     .event { display: grid; grid-template-columns: 6.5rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
@@ -91,6 +97,7 @@ _HTML = """<!doctype html>
   </header>
   <main>
     <div class="cards" id="cards"></div>
+    <div id="focus"></div>
     <div class="grid">
       <section><h2>Energy profile</h2><div id="energy"></div></section>
       <section><h2>Event composition</h2><div id="composition"></div></section>
@@ -123,17 +130,57 @@ _HTML = """<!doctype html>
     const high = events.filter(e => String(e.confidence_label || "").toLowerCase() === "high").length;
     const cards = [[frames.length,"Frames"],[tracks.length,"Feature observations"],[events.length,"Events"],[`${high}/${persistent}`,"High confidence / persistent"]];
     document.getElementById("cards").innerHTML = cards.map(([n,l]) => `<div class="card"><b>${esc(n)}</b><small>${esc(l)}</small></div>`).join("");
+    const focus = data.focus;
+    if (focus) {
+      const atoms = (focus.atoms || []).map(a => `${a.element}[${a.index}]`).join(", ");
+      const part = (c, noun) => `${c?.reported ?? "—"} of ${c?.total ?? "—"} ${noun}`;
+      document.getElementById("focus").innerHTML = `<p class="muted">${esc(`Focus on ${atoms}: reporting ${part(focus.tracks, "tracks")}, ${part(focus.observations, "feature observations")}, and ${part(focus.events, "events")}. Matching and warnings cover every atom and feature.`)}</p>`;
+    }
 
+    const frameName = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
+    const position = index => frames.findIndex(f => f.index === index);
+    const barrier = data.barrier || {};
+    const peaks = Array.isArray(barrier.frames) ? barrier.frames : [];
+    const placeLabels = {before: "before barrier", spanning: "spans barrier", after: "after barrier"};
     function energyChart() {
       const points = frames.map((f,i) => ({x:i, y:f.energy == null ? null : Number(f.energy), label:f.label ?? String(i)})).filter(p => Number.isFinite(p.y));
       if (!points.length) return '<div class="empty">No energies were discovered.</div>';
       const width=720, height=270, left=56, right=18, top=18, bottom=42;
       const minY=Math.min(...points.map(p=>p.y)), maxY=Math.max(...points.map(p=>p.y));
       const spanY=Math.max(maxY-minY, 1e-9), maxX=Math.max(frames.length-1,1);
-      const X=p=>left+(p.x/maxX)*(width-left-right), Y=p=>top+(maxY-p.y)/spanY*(height-top-bottom);
-      const path=points.map((p,i)=>`${i?'L':'M'} ${X(p).toFixed(1)} ${Y(p).toFixed(1)}`).join(' ');
-      const dots=points.map(p=>`<circle class="energy-point" cx="${X(p)}" cy="${Y(p)}" r="4"><title>${esc(p.label)}: ${fmt(p.y,6)}</title></circle>`).join('');
-      return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Energy profile"><line class="axis" x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}"/><line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}"/><text class="chart-label" x="4" y="${top+6}">${fmt(maxY)}</text><text class="chart-label" x="4" y="${height-bottom}">${fmt(minY)}</text><text class="chart-label" x="${left}" y="${height-10}">first frame</text><text class="chart-label" text-anchor="end" x="${width-right}" y="${height-10}">last frame</text><path class="energy-line" d="${path}"/>${dots}</svg>`;
+      const X=x=>left+(x/maxX)*(width-left-right), Y=p=>top+(maxY-p.y)/spanY*(height-top-bottom);
+      const path=points.map((p,i)=>`${i?'L':'M'} ${X(p.x).toFixed(1)} ${Y(p).toFixed(1)}`).join(' ');
+      const dots=points.map(p=>`<circle class="energy-point" cx="${X(p.x)}" cy="${Y(p)}" r="4"><title>${esc(p.label)}: ${fmt(p.y,6)}</title></circle>`).join('');
+      const peakX=peaks.map(position).filter(i => i >= 0).map(X);
+      const low=Math.min(...peakX), high=Math.max(...peakX), middle=(low+high)/2;
+      const anchor=middle < left+50 ? 'start' : middle > width-right-50 ? 'end' : 'middle';
+      const labelX=anchor === 'start' ? low : anchor === 'end' ? high : middle;
+      const peak=peakX.length ? `<rect class="peak-band" x="${low}" y="${top}" width="${high-low}" height="${height-top-bottom}"/>${peakX.map(x=>`<line class="peak-line" x1="${x}" y1="${top}" x2="${x}" y2="${height-bottom}"/>`).join('')}<text class="chart-label" text-anchor="${anchor}" x="${labelX}" y="${top-6}">highest energy</text>` : '';
+      // One marker per step: a large cell can put hundreds of events on one step.
+      const steps=new Map();
+      for (const e of events) {
+        const key=`${e.frame_before}:${e.frame_after}`;
+        if (!steps.has(key)) steps.set(key, {e, n:0, types:{}});
+        const s=steps.get(key), type=String(e.type||"unknown");
+        s.n += 1; s.types[type]=(s.types[type]||0)+1;
+      }
+      const markers=[...steps.values()].map(({e, n, types}) => {
+        const a=position(e.frame_before), b=position(e.frame_after);
+        if (a < 0 || b < 0) return '';
+        const x=(X(a)+X(b))/2, w=12+7*String(n).length, y=height-bottom+5;
+        const place=placeLabels[e.barrier_position] ? `; ${placeLabels[e.barrier_position]}` : '';
+        const tip=`${frameName(e.frame_before)}→${frameName(e.frame_after)}: ${n} event${n===1?'':'s'} (${Object.entries(types).map(([k,c])=>`${c} ${k}`).join(', ')})${place}`;
+        return `<g class="step ${esc(e.barrier_position || '')}"><title>${esc(tip)}</title><rect x="${x-w/2}" y="${y}" width="${w}" height="15" rx="7"/><text x="${x}" y="${y+11}" text-anchor="middle">${n}</text></g>`;
+      }).join('');
+      let note='';
+      if (peaks.length) {
+        const where=peaks.length > 1 ? `shared by frames ${peaks.map(frameName).join(", ")}` : `at frame ${frameName(peaks[0])}`;
+        const endpoint=peaks.includes(frames[0]?.index) || peaks.includes(frames[frames.length-1]?.index) ? " An endpoint has the highest energy, so no interior frame stands above both ends." : "";
+        note=`Highest energy ${where}: ${fmt(barrier.rise_from_first)} eV above the first frame and ${fmt(barrier.rise_from_last)} eV above the last.${endpoint} Each marker counts the events between two frames; amber markers touch a highest-energy frame.`;
+      } else if (barrier.reason) {
+        note=barrier.reason;
+      }
+      return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Energy profile"><line class="axis" x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}"/><line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}"/><text class="chart-label" x="4" y="${top+6}">${fmt(maxY)}</text><text class="chart-label" x="4" y="${height-bottom}">${fmt(minY)}</text><text class="chart-label" x="${left}" y="${height-10}">first frame</text><text class="chart-label" text-anchor="end" x="${width-right}" y="${height-10}">last frame</text>${peak}<path class="energy-line" d="${path}"/>${dots}${markers}</svg>${note ? `<p class="muted chart-note">${esc(note)}</p>` : ''}`;
     }
     document.getElementById("energy").innerHTML = energyChart();
 
@@ -156,26 +203,31 @@ _HTML = """<!doctype html>
       const badge=type === "connectivity_change" ? "connectivity" : type;
       const evidence=type === "connectivity_change" ? connectivityEvidence(e) : `<div class="confidence"><i style="width:${confidence*100}%"></i></div>`;
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
-      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}</div><span>${status}</span></div>`;
+      const place=placeLabels[e.barrier_position] ? `<br><small>${esc(placeLabels[e.barrier_position])}</small>` : "";
+      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>';
 
     const summary = data.track_summary || [];
-    const frameName = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
     const signed = value => value == null || Number.isNaN(Number(value)) ? "—" : `${Number(value) > 0 ? "+" : ""}${fmt(value)}`;
+    const observed = c => c && c.observed > 0;
     function trackSummary() {
       if (!summary.length) return '<div class="empty">No track summary in this analysis.</div>';
-      const rows = summary.map(t => {
-        const changes = Object.entries(t.changes || {}).filter(([, c]) => c && c.observed > 0);
-        const span = Math.max(1, changes.length);
-        const head = `<td rowspan="${span}">${esc(t.track_id)}</td><td rowspan="${span}">${esc(t.kind)}</td><td rowspan="${span}">${esc(frameName(t.first_frame))}→${esc(frameName(t.last_frame))}<br><small class="muted">${t.spans_path ? "whole path" : "partial path"}</small></td>`;
-        if (!changes.length) return `<tr>${head}<td colspan="4" class="muted">No charge, volume, or configured descriptor values.</td></tr>`;
-        return changes.map(([name, c], i) => {
+      const quantities = [...new Set(summary.flatMap(t => Object.keys(t.changes || {})))];
+      const tables = quantities.map(name => {
+        // Units differ between quantities, so tracks are ranked only within one.
+        // The sort is stable: equal ranges keep track order, and null ranges go last.
+        const rows = summary.map(t => [t, (t.changes || {})[name]]).filter(([, c]) => observed(c)).sort((a, b) => (b[1].range ?? -1) - (a[1].range ?? -1));
+        if (!rows.length) return '';
+        const body = rows.map(([t, c]) => {
           const s = c.largest_step;
           const step = s ? `${signed(s.delta)} <small class="muted">${esc(frameName(s.frame_before))}→${esc(frameName(s.frame_after))}</small>` : "—";
-          return `<tr>${i ? "" : head}<td>${esc(name)}</td><td>${signed(c.net_change)}</td><td>${fmt(c.range)}</td><td>${step}</td></tr>`;
+          return `<tr><td>${esc(t.track_id)}</td><td>${esc(t.kind)}</td><td>${esc(frameName(t.first_frame))}→${esc(frameName(t.last_frame))}<br><small class="muted">${t.spans_path ? "whole path" : "partial path"}</small></td><td>${signed(c.net_change)}</td><td>${fmt(c.range)}</td><td>${step}</td></tr>`;
         }).join('');
+        return `<details open><summary>${esc(name)} · ${rows.length} track${rows.length === 1 ? '' : 's'}</summary><div class="scroll"><table><thead><tr><th>Track</th><th>Kind</th><th>Frames</th><th>Net change</th><th>Max &minus; min</th><th>Largest step</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
       }).join('');
-      return `<p class="muted">Reporting only, in each source tool's units; no thresholds apply. Net change compares a track's first and last frames; max &minus; min and the largest single step use the frames where the value exists. A change spread over many frames can appear here without any event.</p><div class="scroll"><table><thead><tr><th>Track</th><th>Kind</th><th>Frames</th><th>Quantity</th><th>Net change</th><th>Max &minus; min</th><th>Largest step</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      const empty = summary.filter(t => !Object.values(t.changes || {}).some(observed)).length;
+      const note = empty ? `<p class="muted">${empty} track${empty === 1 ? ' has' : 's have'} no charge, volume, or configured descriptor values.</p>` : '';
+      return `<p class="muted">Reporting only, in each source tool's units; no thresholds apply. Net change compares a track's first and last frames; max &minus; min and the largest single step use the frames where the value exists. A change spread over many frames can appear here without any event. Each quantity lists its tracks by max &minus; min, largest first; quantities are not ranked against each other because their units differ.</p>${tables}${note}`;
     }
     document.getElementById("summary").innerHTML = trackSummary();
 

@@ -4,6 +4,15 @@
 
 ### Added
 
+- Opt-in `[outputs] focus_atoms`, a list of 0-based POSCAR atom indices for large
+  cells. Matching still uses every atom and feature; events, feature tracks, the
+  whole-path summary, the CSV files, and the report keep only tracks tied to those
+  atoms and the events on them. `analysis.json` records the focus with reported and
+  total counts. Without the list, outputs are unchanged.
+- Events are labelled `before`, `spanning`, or `after` the highest-energy frame when
+  every frame has an energy (`barrier_position`, with the peak frames and their rises
+  in `barrier`), and the report marks the peak and the events on the energy profile.
+  Pressure series are not placed. This is reporting only.
 - `workflow validate` and `workflow stage` stop when a frame's POSCAR species order
   differs from the VASP template `POTCAR`'s `TITEL` order, naming the frame and both
   orders. Validation warns when the order cannot be checked.
@@ -32,6 +41,8 @@
 
 ### Changed
 
+- The report's whole-path table groups rows by quantity and lists the largest
+  max − min first.
 - Machine-readable command results use the versioned `electrace.cli.v1` envelope when
   `--json` is supported and requested.
 - External execution requires explicit `--yes`; plugin planning remains non-executing.

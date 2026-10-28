@@ -31,6 +31,13 @@ element and distance at every step. Events compare adjacent frames only, so also
 `track_summary` in `analysis.json` (or `track_summary.csv`) for each track's net
 change, range, and largest single step over the whole path.
 
+For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
+indices) so the report stays readable. Matching still uses every atom. Quote the
+reported and total counts from `focus` in `analysis.json`, and never present a
+focused run as the whole path. When every frame has an energy, events carry
+`barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
+frame is not a located transition state.
+
 ## Missing calculations
 
 ```bash
