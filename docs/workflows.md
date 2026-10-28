@@ -24,6 +24,20 @@ Supported inputs include normalized ElecTrace feature JSON, Bader/BaderKit outpu
 critic2 `CPREPORT` JSON, LOBSTER integrated bond lists, and Chargemol/DDEC charges.
 `analysis.json` is the canonical result; CSV and HTML files are derived views.
 
+By default, atoms are re-matched at every step by element and minimum-image distance
+(`[matching] atom_identity = "geometric"`), with `max_atom_displacement` as the
+motion cutoff. For NEB images and other paths that keep one atom order, set
+`atom_identity = "index"`. ElecTrace then pairs the i-th atom of each frame, stops
+with an error if the element sequences differ, and records each displacement without
+letting it lower match confidence; `max_atom_displacement` is not used.
+
+Events compare adjacent frames only. `track_summary.csv`, `track_summary` in
+`analysis.json`, and the report's whole-path table give one row per feature track:
+its first and last frames, whether it spans the path, and the net change, max − min,
+and largest single step for charge, volume, and each configured descriptor. A change
+spread over many frames appears there even when no single step crosses an event
+threshold.
+
 ## Golden path from existing results
 
 The repository includes a small, real native-output example generated from a

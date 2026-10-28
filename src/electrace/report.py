@@ -77,6 +77,7 @@ _HTML = """<!doctype html>
     details:first-of-type { border-top: 0; }
     summary { cursor: pointer; color: var(--cyan); }
     pre { overflow: auto; background: #07131d; border: 1px solid var(--line); padding: .8rem; border-radius: 8px; font-size: .74rem; }
+    .scroll { overflow-x: auto; }
     footer { color: var(--muted); text-align: center; font-size: .78rem; padding: 1.5rem; }
     @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .grid { grid-template-columns: 1fr; } .event { grid-template-columns: 5.5rem 5rem 1fr; } .event > :last-child { display:none; } }
   </style>
@@ -95,6 +96,7 @@ _HTML = """<!doctype html>
       <section><h2>Event composition</h2><div id="composition"></div></section>
     </div>
     <section><h2>Electronic event timeline</h2><div class="timeline" id="timeline"></div></section>
+    <section><h2>Whole-path track changes</h2><div id="summary"></div></section>
     <section><h2>Frame inventory</h2><div id="frames"></div></section>
     <section><h2>Provenance and audit trail</h2><div id="audit"></div></section>
   </main>
@@ -142,7 +144,7 @@ _HTML = """<!doctype html>
     function connectivityEvidence(e) {
       const evidence=e.evidence||{}, feature=evidence.feature_match||{}, details=feature.evidence||{};
       const atoms=evidence.atom_identity||[], anchors=details.shared_neighbor_motion||[];
-      const atomRows=atoms.map(a=>`<li>${esc(a.element)}[${esc(a.source_atom_index)}] → ${esc(a.target_element)}[${esc(a.target_atom_index)}]: ${esc(a.same_element_count_before)} / ${esc(a.same_element_count_after)} same-element atoms in the two frames; displacement ${fmt(a.displacement_angstrom)} Å; motion similarity ${fmt(a.motion_similarity)}</li>`).join('');
+      const atomRows=atoms.map(a=>`<li>${esc(a.element)}[${esc(a.source_atom_index)}] → ${esc(a.target_element)}[${esc(a.target_atom_index)}]: ${esc(a.same_element_count_before)} / ${esc(a.same_element_count_after)} same-element atoms in the two frames; displacement ${fmt(a.displacement_angstrom)} Å; ${a.motion_similarity == null ? "identity fixed by atom order" : `motion similarity ${fmt(a.motion_similarity)}`}</li>`).join('');
       const anchorRows=anchors.map(a=>`<li>Relative to ${esc(a.element)}[${esc(a.source_atom_index)}] → [${esc(a.target_atom_index)}]: displacement ${fmt(a.relative_displacement_angstrom)} Å; separations ${fmt(a.distance_before_angstrom)} → ${fmt(a.distance_after_angstrom)} Å</li>`).join('');
       return `<details open><summary>Match evidence</summary><p>Critical-point displacement ${fmt(details.distance)} Å; match similarity ${fmt(feature.confidence)}.</p><ul>${atomRows}</ul><p>Critical-point motion relative to shared matched neighbors:</p>${anchorRows?`<ul>${anchorRows}</ul>`:'<p class="muted">No shared matched neighbor available.</p>'}<p class="muted">Similarities are heuristic, not probabilities. Relative motion uses a strain-factored, minimum-image metric and is correlated with the selected atom match; it does not establish continuity between frames.</p></details>`;
     }
@@ -156,6 +158,26 @@ _HTML = """<!doctype html>
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
       return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>';
+
+    const summary = data.track_summary || [];
+    const frameName = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
+    const signed = value => value == null || Number.isNaN(Number(value)) ? "—" : `${Number(value) > 0 ? "+" : ""}${fmt(value)}`;
+    function trackSummary() {
+      if (!summary.length) return '<div class="empty">No track summary in this analysis.</div>';
+      const rows = summary.map(t => {
+        const changes = Object.entries(t.changes || {}).filter(([, c]) => c && c.observed > 0);
+        const span = Math.max(1, changes.length);
+        const head = `<td rowspan="${span}">${esc(t.track_id)}</td><td rowspan="${span}">${esc(t.kind)}</td><td rowspan="${span}">${esc(frameName(t.first_frame))}→${esc(frameName(t.last_frame))}<br><small class="muted">${t.spans_path ? "whole path" : "partial path"}</small></td>`;
+        if (!changes.length) return `<tr>${head}<td colspan="4" class="muted">No charge, volume, or configured descriptor values.</td></tr>`;
+        return changes.map(([name, c], i) => {
+          const s = c.largest_step;
+          const step = s ? `${signed(s.delta)} <small class="muted">${esc(frameName(s.frame_before))}→${esc(frameName(s.frame_after))}</small>` : "—";
+          return `<tr>${i ? "" : head}<td>${esc(name)}</td><td>${signed(c.net_change)}</td><td>${fmt(c.range)}</td><td>${step}</td></tr>`;
+        }).join('');
+      }).join('');
+      return `<p class="muted">Reporting only, in each source tool's units; no thresholds apply. Net change compares a track's first and last frames; max &minus; min and the largest single step use the frames where the value exists. A change spread over many frames can appear here without any event.</p><div class="scroll"><table><thead><tr><th>Track</th><th>Kind</th><th>Frames</th><th>Quantity</th><th>Net change</th><th>Max &minus; min</th><th>Largest step</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    document.getElementById("summary").innerHTML = trackSummary();
 
     document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th></tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
 

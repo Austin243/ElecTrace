@@ -272,7 +272,10 @@ def _connectivity_change_event(
                     atom.element.casefold() == new_atom.element.casefold() for atom in current.atoms
                 ),
                 "displacement_angstrom": atom_edge.evidence.get("distance"),
-                "motion_similarity": atom_edge.confidence,
+                # Index identity does not score motion, so no similarity exists.
+                "motion_similarity": (
+                    None if atom_edge.evidence.get("identity") == "index" else atom_edge.confidence
+                ),
             }
         )
     neighbors_before = [

@@ -13,7 +13,8 @@ descriptor_source = "auto" # auto, local, external, or merge
 prefer_contcar = true
 
 [matching]
-max_atom_displacement = 1.5
+atom_identity = "geometric" # or "index" for one fixed atom order, as in NEB images
+max_atom_displacement = 1.5 # geometric identity only
 max_feature_displacement = 2.0
 position_weight = 1.0
 charge_weight = 0.35
