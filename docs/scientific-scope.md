@@ -31,6 +31,18 @@ An event means selected, method-dependent descriptors changed between sampled fr
 under recorded thresholds. Agreement among charge, ELF/QTAIM, and ICOHP/ICOBI
 evidence can strengthen an interpretation but does not make it unique.
 
+For a matched bond critical point with two known atom neighbors in each frame,
+ElecTrace also flags a change in those neighbors after matching atom identities.
+This is a candidate reassignment between the sampled frames, not proof of a bond
+forming or breaking. Missing or unmatched neighbors do not establish a change.
+Neighbor indices alone do not distinguish periodic images.
+The event's persistence status follows the matched feature lineage; it does not
+establish that the new neighbor assignment persists in subsequent frames.
+For matched bond critical points, shared-neighbor-relative motion is reported
+separately as a strain-factored minimum-image displacement. It is correlated with
+the chosen atom match and does not alter the assignment or establish continuity;
+large motion between sparse frames may alias across a periodic cell.
+
 - Bader and DDEC charges depend on the partitioning scheme and are not automatically
   formal oxidation states.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.

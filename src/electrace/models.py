@@ -42,6 +42,7 @@ class EventType(StrEnum):
     MERGE = "merge"
     REARRANGEMENT = "rearrangement"
     PROPERTY_CHANGE = "property_change"
+    CONNECTIVITY_CHANGE = "connectivity_change"
 
 
 def _vec3(value: Iterable[float], name: str = "coordinate") -> Vec3:

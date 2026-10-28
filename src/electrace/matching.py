@@ -23,9 +23,10 @@ import numpy.typing as npt
 from .geometry import (
     as_pbc,
     deformation_aware_distance,
+    minimum_image_displacement,
     periodic_voxel_overlap,
 )
-from .models import Atom, Feature, Frame, MatchEdge, MatchResult
+from .models import Atom, Feature, FeatureKind, Frame, MatchEdge, MatchResult
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
@@ -687,6 +688,55 @@ def _feature_pair(
     if neighbor_similarity is not None:
         components["neighbors"] = (1.0 - neighbor_similarity, config.neighbor_weight)
         evidence["neighbor_similarity"] = neighbor_similarity
+
+    if source.kind == target.kind == FeatureKind.BOND_CRITICAL_POINT:
+        # Supplemental geometry only: it does not modify cost or confidence.
+        # Each anchor is a shared, already-matched neighbor; report all of them.
+        old_atoms = {atom.index: atom for atom in previous.atoms}
+        new_atoms = {atom.index: atom for atom in current.atoms}
+        motion = []
+        for old_id in source.neighbor_atom_indices:
+            new_id = atom_mapping.get(old_id)
+            if (
+                new_id not in target.neighbor_atom_indices
+                or old_id not in old_atoms
+                or new_id not in new_atoms
+            ):
+                continue
+            old_atom, new_atom = old_atoms[old_id], new_atoms[new_id]
+            old_offset = np.asarray(source.fractional_position) - old_atom.fractional_position
+            new_offset = np.asarray(target.fractional_position) - new_atom.fractional_position
+            motion.append(
+                {
+                    "source_atom_index": old_id,
+                    "target_atom_index": new_id,
+                    "element": old_atom.element,
+                    "relative_displacement_angstrom": deformation_aware_distance(
+                        old_offset, new_offset, previous.cell, current.cell, config.pbc
+                    ),
+                    "distance_before_angstrom": float(
+                        np.linalg.norm(
+                            minimum_image_displacement(
+                                old_atom.fractional_position,
+                                source.fractional_position,
+                                previous.cell,
+                                config.pbc,
+                            )
+                        )
+                    ),
+                    "distance_after_angstrom": float(
+                        np.linalg.norm(
+                            minimum_image_displacement(
+                                new_atom.fractional_position,
+                                target.fractional_position,
+                                current.cell,
+                                config.pbc,
+                            )
+                        )
+                    ),
+                }
+            )
+        evidence["shared_neighbor_motion"] = motion
 
     voxel_similarity = _voxel_similarity(source, target, previous, current)
     if voxel_similarity is not None:
