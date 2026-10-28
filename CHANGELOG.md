@@ -53,7 +53,9 @@
 
 - A LOBSTER bond from an atom to its own periodic image lists the atom once in
   `neighbor_atom_indices`, with `lattice_translation` naming the image. Such rows,
-  common in real `ICOHPLIST` files, previously made the whole file fail.
+  common in real `ICOHPLIST` files, previously made the whole file fail. LOBSTER
+  lists each such bond from both ends (translations T and −T); the two rows give one
+  feature, and mirrored rows that disagree are an error.
 - Orbital-resolved LOBSTER rows (`Na1_3s`, `Fe1_3d_z^2`) are checked against their
   atom-pair row and skipped, and the count is recorded in the document metadata.
   They previously failed, or a label ending in a digit was read as an atom

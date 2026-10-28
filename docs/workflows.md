@@ -122,9 +122,11 @@ them by orbital. They are checked against that row, skipped, and counted as
 `skipped_orbital_rows` in the document metadata; an orbital row without its atom-pair
 row is an error. A bond from an atom to its own periodic image, such as `Na1 Na1`
 with translation `0 0 -1`, lists the atom once in `neighbor_atom_indices`, and
-`lattice_translation` names the image. LOBSTER lists such a bond once in each
-direction, and both rows are kept. Atom labels must be an element and an index, such
-as `Na1`. LCFO fragment lists and n-center `NcICOBILIST` files are not supported.
+`lattice_translation` names the image. LOBSTER lists such a bond from both ends, as
+translations T and −T with the same distance and values, so the first row becomes
+the feature and the mirrored row is counted as `collapsed_self_image_rows` in the
+document metadata; mirrored rows that disagree are an error. Atom labels must be an
+element and an index, such as `Na1`. LCFO fragment lists and n-center `NcICOBILIST` files are not supported.
 
 ## Spin-polarized runs
 
