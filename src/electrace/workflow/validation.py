@@ -79,10 +79,16 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
     source_root, workspace = _staging._workspace_paths(source_manifest, manifest)
     if not source_root.is_dir():
         raise FileNotFoundError(f"workflow project root is not a directory: {source_root}")
-    for step in manifest.steps:
-        _staging._template_files(step, source_manifest.parent)
+    templates = {
+        step.id: _staging._template_files(step, source_manifest.parent) for step in manifest.steps
+    }
 
     selected = _staging._selected_sources(manifest, source_root)
+    species_warnings = tuple(
+        warning
+        for step in manifest.steps
+        for warning in _staging._check_vasp_species(step, templates[step.id], selected)
+    )
     frames = _staging._staged_frames(selected, workspace)
     jobs: list[JobSpec] = []
     for source, frame in zip(selected, frames, strict=True):
@@ -97,6 +103,7 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
     warnings = (
         *_workspace_warnings(workspace),
         *_executable_warnings(manifest, source_manifest.parent),
+        *species_warnings,
     )
     return WorkflowValidation(
         manifest=source_manifest,

@@ -30,6 +30,7 @@ class PoscarData:
     selective_dynamics: tuple[tuple[bool, bool, bool] | None, ...]
     coordinate_mode: str
     symbols_inferred: bool = False
+    species: tuple[str, ...] = ()  # species-line labels, in file order
 
     def __post_init__(self) -> None:
         if not self.elements:
@@ -233,6 +234,7 @@ def parse_poscar(path: str | Path) -> PoscarData:
         selective_dynamics=tuple(selective),
         coordinate_mode=coordinate_mode,
         symbols_inferred=symbols_inferred,
+        species=tuple(symbols),
     )
 
 

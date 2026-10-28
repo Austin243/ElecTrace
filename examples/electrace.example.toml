@@ -23,7 +23,7 @@ neighbor_weight = 0.75
 overlap_weight = 1.0
 descriptor_weight = 0.35
 match_threshold = 3.0
-# Maximum total-cost gap for a complete alternative assignment.
+# Largest relative charge or volume mismatch allowed for a split or merge group.
 conservation_tolerance = 0.35
 split_merge_threshold = 0.55
 
