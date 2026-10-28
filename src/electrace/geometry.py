@@ -133,7 +133,7 @@ def _nearest_image_single(
             "skewed or ill-conditioned"
         )
 
-    best = initial
+    best: FloatArray = initial
     best_norm_sq = float(np.dot(initial @ cell, initial @ cell))
     best_shift = tuple(int(value) for value in rounded)
     for shift_tuple in product(*ranges):

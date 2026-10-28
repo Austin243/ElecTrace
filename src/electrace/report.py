@@ -65,7 +65,7 @@ _HTML = """<!doctype html>
     .event { display: grid; grid-template-columns: 6.5rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
     .event:first-child { border-top: 0; }
     .badge { border: 1px solid currentColor; border-radius: 999px; padding: .2rem .55rem; width: fit-content; font: 700 .7rem ui-monospace, monospace; text-transform: uppercase; }
-    .birth { color: var(--green); } .death { color: var(--red); } .split, .merge { color: var(--violet); } .change, .descriptor_change { color: var(--amber); }
+    .birth { color: var(--green); } .death { color: var(--red); } .split, .merge { color: var(--violet); } .change, .descriptor_change, .connectivity_change { color: var(--amber); }
     .confidence { height: 5px; background: #1b3040; border-radius: 10px; overflow: hidden; margin-top: .25rem; }
     .confidence i { display:block; height:100%; background: var(--cyan); }
     .muted { color: var(--muted); }
@@ -139,11 +139,22 @@ _HTML = """<!doctype html>
     const maxCount = Math.max(1,...Object.values(counts));
     document.getElementById("composition").innerHTML = Object.keys(counts).length ? Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<div style="margin:.6rem 0"><span class="badge ${esc(k)}">${esc(k)}</span><div class="confidence"><i style="width:${100*n/maxCount}%"></i></div><small class="muted">${n} event${n===1?'':'s'}</small></div>`).join('') : '<div class="empty">No events met the configured thresholds.</div>';
 
+    function connectivityEvidence(e) {
+      const evidence=e.evidence||{}, feature=evidence.feature_match||{}, details=feature.evidence||{};
+      const atoms=evidence.atom_identity||[], anchors=details.shared_neighbor_motion||[];
+      const atomRows=atoms.map(a=>`<li>${esc(a.element)}[${esc(a.source_atom_index)}] → ${esc(a.target_element)}[${esc(a.target_atom_index)}]: ${esc(a.same_element_count_before)} / ${esc(a.same_element_count_after)} same-element atoms in the two frames; displacement ${fmt(a.displacement_angstrom)} Å; motion similarity ${fmt(a.motion_similarity)}</li>`).join('');
+      const anchorRows=anchors.map(a=>`<li>Relative to ${esc(a.element)}[${esc(a.source_atom_index)}] → [${esc(a.target_atom_index)}]: displacement ${fmt(a.relative_displacement_angstrom)} Å; separations ${fmt(a.distance_before_angstrom)} → ${fmt(a.distance_after_angstrom)} Å</li>`).join('');
+      return `<details open><summary>Match evidence</summary><p>Critical-point displacement ${fmt(details.distance)} Å; match similarity ${fmt(feature.confidence)}.</p><ul>${atomRows}</ul><p>Critical-point motion relative to shared matched neighbors:</p>${anchorRows?`<ul>${anchorRows}</ul>`:'<p class="muted">No shared matched neighbor available.</p>'}<p class="muted">Similarities are heuristic, not probabilities. Relative motion uses a strain-factored, minimum-image metric and is correlated with the selected atom match; it does not establish continuity between frames.</p></details>`;
+    }
     document.getElementById("timeline").innerHTML = events.length ? events.map(e=>{
       const type=String(e.type||"change").toLowerCase(), confidence=Math.max(0,Math.min(1,Number(e.confidence||0)));
       const confidenceLabel=String(e.confidence_label||"unclassified").toLowerCase();
-      const span=e.end_frame!=null && e.end_frame!==e.start_frame ? `${e.start_frame}→${e.end_frame}` : String(e.start_frame ?? "—");
-      return `<div class="event"><span class="badge ${esc(type)}">${esc(type)}</span><span class="muted">frame ${esc(span)}</span><div><div>${esc(e.description || `${type} event`)}</div><div class="confidence"><i style="width:${confidence*100}%"></i></div></div><span>${esc(confidenceLabel)} ${fmt(confidence,2)}</span></div>`;
+      const frameLabel = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
+      const span=type === "connectivity_change" ? `${frameLabel(e.frame_before)}→${frameLabel(e.frame_after)}` : (e.end_frame!=null && e.end_frame!==e.start_frame ? `${e.start_frame}→${e.end_frame}` : String(e.start_frame ?? "—"));
+      const badge=type === "connectivity_change" ? "connectivity" : type;
+      const evidence=type === "connectivity_change" ? connectivityEvidence(e) : `<div class="confidence"><i style="width:${confidence*100}%"></i></div>`;
+      const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
+      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>';
 
     document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th></tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';

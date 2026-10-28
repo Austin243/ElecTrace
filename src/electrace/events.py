@@ -26,6 +26,7 @@ from .models import (
     Event,
     EventType,
     Feature,
+    FeatureKind,
     Frame,
     MatchEdge,
     MatchRelation,
@@ -204,11 +205,114 @@ def _as_finite_float(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _connectivity_change_event(
+    source: Feature,
+    target: Feature,
+    edge: MatchEdge,
+    previous: Frame,
+    current: Frame,
+    atom_matches: MatchResult | None,
+    config: EventDetectionConfig,
+) -> Event | None:
+    """Compare known BCP neighbors using matched atoms, not frame-local indices.
+
+    A matching BCP with different neighbors is a candidate reassignment, not
+    proof of a bond or mechanism. Missing or unmapped neighbors are not changes.
+    """
+    if (
+        atom_matches is None
+        or source.kind != FeatureKind.BOND_CRITICAL_POINT
+        or target.kind != FeatureKind.BOND_CRITICAL_POINT
+        or len(source.neighbor_atom_indices) != 2
+        or len(target.neighbor_atom_indices) != 2
+    ):
+        return None
+    if (atom_matches.previous_frame_index, atom_matches.current_frame_index) != (
+        previous.index,
+        current.index,
+    ):
+        raise ValueError("atom match result does not correspond to the supplied frames")
+    mapping = atom_matches.mapping
+    reverse = {target_id: source_id for source_id, target_id in mapping.items()}
+    before = set(source.neighbor_atom_indices)
+    after = set(target.neighbor_atom_indices)
+    if not before.issubset(mapping) or not after.issubset(reverse):
+        return None
+    if {mapping[index] for index in before} == after:
+        return None
+
+    relevant = before | {reverse[index] for index in after}
+    atom_edges = [
+        item
+        for item in atom_matches.edges
+        if item.relation is MatchRelation.ONE_TO_ONE and item.source_id in relevant
+    ]
+    if len(atom_edges) != len(relevant):
+        return None
+    confidence = min(edge.confidence, *(item.confidence for item in atom_edges))
+    if confidence < config.min_event_confidence:
+        return None
+    previous_atoms = {atom.index: atom for atom in previous.atoms}
+    current_atoms = {atom.index: atom for atom in current.atoms}
+    atom_identity = []
+    for atom_edge in atom_edges:
+        old_atom = previous_atoms[int(atom_edge.source_id)]
+        new_atom = current_atoms[int(atom_edge.target_id)]
+        atom_identity.append(
+            {
+                "source_atom_index": old_atom.index,
+                "target_atom_index": new_atom.index,
+                "element": old_atom.element,
+                "target_element": new_atom.element,
+                "same_element_count_before": sum(
+                    atom.element.casefold() == old_atom.element.casefold()
+                    for atom in previous.atoms
+                ),
+                "same_element_count_after": sum(
+                    atom.element.casefold() == new_atom.element.casefold() for atom in current.atoms
+                ),
+                "displacement_angstrom": atom_edge.evidence.get("distance"),
+                "motion_similarity": atom_edge.confidence,
+            }
+        )
+    neighbors_before = [
+        {"index": index, "element": previous_atoms[index].element} for index in sorted(before)
+    ]
+    neighbors_after = [
+        {"index": index, "element": current_atoms[index].element} for index in sorted(after)
+    ]
+
+    def label(neighbors: list[dict[str, Any]]) -> str:
+        return "–".join(f"{atom['element']}[{atom['index']}]" for atom in neighbors)
+
+    return Event(
+        type=EventType.CONNECTIVITY_CHANGE,
+        frame_before=previous.index,
+        frame_after=current.index,
+        source_ids=edge.source_ids,
+        target_ids=edge.target_ids,
+        confidence=confidence,
+        description=(
+            "Candidate matched bond critical-point neighbor change: "
+            f"{label(neighbors_before)} → {label(neighbors_after)}. Review the match."
+        ),
+        evidence={
+            "neighbors_before": neighbors_before,
+            "neighbors_after": neighbors_after,
+            "atom_matches": [item.to_dict() for item in atom_edges],
+            "atom_identity": atom_identity,
+            "feature_match": edge.to_dict(),
+        },
+    )
+
+
 def detect_transition_events(
     previous: Frame,
     current: Frame,
     feature_matches: MatchResult,
     config: EventDetectionConfig | None = None,
+    *,
+    atom_matches: MatchResult | None = None,
 ) -> list[Event]:
     """Detect births, deaths, split/merge, and descriptor changes for one step."""
 
@@ -265,6 +369,11 @@ def detect_transition_events(
             changed = _property_change_event(source, target, edge, previous, current, settings)
             if changed is not None:
                 events.append(changed)
+            connectivity = _connectivity_change_event(
+                source, target, edge, previous, current, atom_matches, settings
+            )
+            if connectivity is not None:
+                events.append(connectivity)
 
     for source_id in feature_matches.unmatched_previous:
         source = previous_features[str(source_id)]
@@ -420,7 +529,9 @@ def track_sequence(
         features = match_features(previous, current, atoms, feature_settings)
         atom_results.append(atoms)
         feature_results.append(features)
-        raw_events.extend(detect_transition_events(previous, current, features, settings))
+        raw_events.extend(
+            detect_transition_events(previous, current, features, settings, atom_matches=atoms)
+        )
     events = (
         _annotate_persistence(raw_events, ordered.frames, feature_results, settings)
         if raw_events

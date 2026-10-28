@@ -4,6 +4,8 @@
 
 ### Added
 
+- Candidate bond-critical-point neighbor changes, with separate atom identity,
+  motion and shared-neighbor-relative evidence in the HTML report.
 - Public BSD-3-Clause packaging under the ElecTrace/`electrace` name.
 - Ordered VASP path discovery, periodic atom and feature matching, event evidence,
   provenance, and JSON/CSV/HTML reports.
