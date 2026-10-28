@@ -13,8 +13,10 @@ workflow.
 ## What it does
 
 - Discovers ordered VASP frame directories and selects individual frames or slices.
-- Reads `POSCAR`/`CONTCAR` structures and supported plain `ELFCAR`/`CHGCAR`-like grids.
-- Ingests supported Bader/BaderKit, critic2, LOBSTER, and Chargemol results.
+- Reads `POSCAR`/`CONTCAR` structures and VASP `ELFCAR`/`CHGCAR` grids, and splits a
+  spin-polarized `CHGCAR` into total and magnetization grids for Bader.
+- Ingests supported Bader/BaderKit, critic2, LOBSTER, and Chargemol results, including
+  per-atom spin populations and spin-resolved LOBSTER lists.
 - Matches atoms and electronic features across periodic and changing cells.
 - Builds feature correspondences and reports births, deaths, conservation-backed
   split/merge candidates, and descriptor changes.
@@ -72,12 +74,17 @@ electrace analyze electrace.toml
 electrace inspect electrace-results
 ```
 
-Plain VASP scalar grids can also be summarized or sampled directly:
+VASP scalar grids can also be summarized or sampled directly:
 
 ```bash
 electrace volume /path/to/ELFCAR
 electrace volume /path/to/ELFCAR --sample 0.5,0.5,0.5
+electrace volume /path/to/CHGCAR --split-spin
 ```
+
+For a spin-polarized (`ISPIN = 2`) run, `--split-spin` writes `spin/CHGCAR_tot` and
+`spin/CHGCAR_mag` for a Bader spin-population run; see
+[spin-polarized runs](docs/workflows.md#spin-polarized-runs).
 
 ## Run calculations across frames
 

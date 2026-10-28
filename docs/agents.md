@@ -25,6 +25,10 @@ Staging and validation do not execute scientific programs. Add `--yes` to
 commands. Prepare Slurm scripts without `--yes`, review them, then submit with
 `--yes --force` so the reviewed generated scripts may be replaced.
 
+For spin-polarized runs, `electrace volume CHGCAR --split-spin` prepares the Bader
+spin-population run described in [Using ElecTrace](workflows.md#spin-polarized-runs).
+Never assume an `ISPIN` value; missing spin populations stay missing.
+
 After outputs exist, run `electrace workflow analyze MANIFEST --json`. Surface
 warnings and missing evidence. Never treat Bader/DDEC values as definitive oxidation
 states, ICOHP as a transferable bond energy, or a filesystem-complete job as proof of

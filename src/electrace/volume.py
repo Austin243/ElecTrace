@@ -1,15 +1,18 @@
-"""Streaming reader for plain VASP ELFCAR/CHGCAR-style scalar grids."""
+"""Streaming reader for VASP ELFCAR/CHGCAR-style scalar grids."""
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+import re
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
+
+from electrace._files import atomic_output_path
 
 Vector3: TypeAlias = tuple[float, float, float]
 Matrix3: TypeAlias = tuple[Vector3, Vector3, Vector3]
@@ -18,6 +21,8 @@ SelectiveFlags: TypeAlias = tuple[bool, bool, bool]
 FloatGrid: TypeAlias = npt.NDArray[np.float64]
 
 DEFAULT_MAX_POINTS = 100_000_000
+SPIN_SPLIT_NAMES = ("CHGCAR_tot", "CHGCAR_mag")
+_INTEGER = re.compile(r"[+-]?\d+\Z")
 
 
 class VaspGridError(ValueError):
@@ -156,26 +161,66 @@ def _shape(line: str) -> GridShape:
     return values
 
 
-def _values(cursor: _Cursor, count: int, index: int, keep: bool) -> FloatGrid | None:
+def _values(cursor: _Cursor, count: int, context: str, keep: bool) -> FloatGrid | None:
     result = np.empty(count) if keep else None
     consumed = 0
     while consumed < count:
-        line = cursor.next(f"values for dataset {index}")
+        line = cursor.next(f"values for {context}")
         assert line is not None
         if line.casefold().startswith("augmentation"):
-            raise VaspGridError("VASP augmentation blocks are not supported")
+            raise VaspGridError(f"{context} is truncated: it has {consumed} of {count} values")
         tokens = line.split()
         if consumed + len(tokens) > count:
-            raise VaspGridError(f"dataset {index} has extra values")
+            raise VaspGridError(f"{context} has extra values")
         for offset, token in enumerate(tokens):
-            value = _float(token, f"dataset {index}")
+            value = _float(token, context)
             if result is not None:
                 result[consumed + offset] = value
         consumed += len(tokens)
     return result
 
 
-def _parse(source: Path, comment: str, cursor: _Cursor, dataset: int, max_points: int) -> VaspGrid:
+def _next_dataset(cursor: _Cursor, shape: GridShape, dataset: int) -> bool:
+    """Skip CHGCAR extras after a grid; return whether another grid follows.
+
+    VASP follows each CHGCAR grid with PAW augmentation occupancies and, for
+    ISPIN = 2 or non-collinear runs, writes a line of per-atom moments before the
+    next grid. As in pymatgen and BaderKit, a grid starts only at an exact repeat
+    of the grid dimensions. Moments that are not followed by a grid mean the file
+    was truncated, so they are an error rather than a one-dataset file.
+    """
+
+    moments = 0
+    while (line := cursor.next("another dataset", required=False)) is not None:
+        fields = line.split()
+        if line.casefold().startswith("augmentation"):
+            if len(fields) < 3 or not all(_INTEGER.fullmatch(item) for item in fields[-2:]):
+                raise VaspGridError(f"invalid augmentation header after dataset {dataset}")
+            context = f"augmentation block {fields[-2]} after dataset {dataset}"
+            _values(cursor, int(fields[-1]), context, False)
+        elif len(fields) == 3 and all(_INTEGER.fullmatch(item) for item in fields):
+            if _shape(line) != shape:
+                raise VaspGridError("all datasets must use the same shape")
+            return True
+        else:
+            for token in fields:
+                _float(token, f"per-atom values after dataset {dataset}")
+            moments += len(fields)
+    if moments:
+        raise VaspGridError(
+            f"{moments} per-atom values after dataset {dataset} are not followed by "
+            "another grid; the file may be truncated"
+        )
+    return False
+
+
+def _parse(
+    source: Path,
+    comment: str,
+    cursor: _Cursor,
+    keep: Callable[[int], bool],
+    max_points: int,
+) -> dict[int, VaspGrid]:
     scale_line = cursor.next("scale factor")
     assert scale_line is not None
     scales = tuple(_float(token, "scale") for token in scale_line.split())
@@ -247,18 +292,15 @@ def _parse(source: Path, comment: str, cursor: _Cursor, dataset: int, max_points
     point_count = math.prod(shape)
     if point_count > max_points:
         raise VaspGridError(f"grid exceeds max_points={max_points}")
-    selected = _values(cursor, point_count, 0, dataset == 0)
-    dataset_count = 1
-    while (next_dataset := cursor.next("another dataset", required=False)) is not None:
-        if next_dataset.casefold().startswith("augmentation"):
-            raise VaspGridError("VASP augmentation blocks are not supported")
-        if _shape(next_dataset) != shape:
-            raise VaspGridError("all datasets must use the same shape")
-        values = _values(cursor, point_count, dataset_count, dataset == dataset_count)
-        selected = values if values is not None else selected
+    kept: dict[int, FloatGrid] = {}
+    dataset_count = 0
+    while True:
+        values = _values(cursor, point_count, f"dataset {dataset_count}", keep(dataset_count))
+        if values is not None:
+            kept[dataset_count] = np.reshape(values, shape, order="F")
         dataset_count += 1
-    if selected is None:
-        raise VaspGridError(f"dataset {dataset} is unavailable")
+        if not _next_dataset(cursor, shape, dataset_count - 1):
+            break
     metadata = VaspGridMetadata(
         source,
         comment,
@@ -270,17 +312,16 @@ def _parse(source: Path, comment: str, cursor: _Cursor, dataset: int, max_points
         mode,
         inferred,
         shape,
-        dataset,
+        0,
         dataset_count,
     )
-    return VaspGrid(metadata, np.reshape(selected, shape, order="F"))
+    return {
+        index: VaspGrid(replace(metadata, dataset_index=index), data)
+        for index, data in kept.items()
+    }
 
 
-def read_vasp_grid(
-    path: str | Path, dataset: int = 0, max_points: int = DEFAULT_MAX_POINTS
-) -> VaspGrid:
-    if isinstance(dataset, bool) or not isinstance(dataset, int) or dataset < 0:
-        raise ValueError("dataset must be a non-negative integer")
+def _read(path: str | Path, keep: Callable[[int], bool], max_points: int) -> dict[int, VaspGrid]:
     if isinstance(max_points, bool) or not isinstance(max_points, int) or max_points < 1:
         raise ValueError("max_points must be positive")
     source = Path(path).expanduser().resolve()
@@ -289,11 +330,110 @@ def read_vasp_grid(
             comment = stream.readline()
             if not comment:
                 raise VaspGridError(f"VASP volumetric file is empty: {source}")
-            return _parse(source, comment.strip(), _Cursor(iter(stream), 1), dataset, max_points)
+            return _parse(source, comment.strip(), _Cursor(iter(stream), 1), keep, max_points)
     except VaspGridError:
         raise
     except (OSError, UnicodeError) as exc:
         raise VaspGridError(f"cannot read VASP volumetric file {source}: {exc}") from exc
 
 
-__all__ = ["DEFAULT_MAX_POINTS", "VaspGrid", "VaspGridError", "VaspGridMetadata", "read_vasp_grid"]
+def read_vasp_grid(
+    path: str | Path, dataset: int = 0, max_points: int = DEFAULT_MAX_POINTS
+) -> VaspGrid:
+    if isinstance(dataset, bool) or not isinstance(dataset, int) or dataset < 0:
+        raise ValueError("dataset must be a non-negative integer")
+    grids = _read(path, lambda index: index == dataset, max_points)
+    if dataset not in grids:
+        raise VaspGridError(f"dataset {dataset} is unavailable")
+    return grids[dataset]
+
+
+def _write_grid(grid: VaspGrid, path: Path) -> None:
+    # Bader reads the header with fixed-width Fortran formats, so this follows
+    # the column layout VASP itself writes for CHGCAR.
+    metadata = grid.metadata
+    lines = [metadata.comment or "ElecTrace grid", f"{1.0:19.14f}"]
+    lines.extend(" " + "".join(f"{value:12.6f}" for value in row) for row in metadata.cell)
+    if not metadata.symbols_inferred:
+        lines.append("".join(f"{symbol:>5}" for symbol in metadata.species))
+    lines.append("".join(f"{count:6d}" for count in metadata.atom_counts))
+    lines.append("Direct")
+    lines.extend(
+        " " + "".join(f"{value:10.6f}" for value in position)
+        for position in metadata.fractional_positions
+    )
+    lines.extend((" ", "".join(f"{size:5d}" for size in metadata.shape)))
+    values = grid.data.reshape(-1, order="F")
+    full = values.size - values.size % 5
+    with atomic_output_path(path) as temporary, temporary.open("w", encoding="utf-8") as stream:
+        stream.write("\n".join(lines) + "\n")
+        np.savetxt(stream, values[:full].reshape(-1, 5), fmt="%.11E")
+        if full < values.size:
+            stream.write(" ".join(f"{value:.11E}" for value in values[full:]) + "\n")
+
+
+def split_spin_density(
+    path: str | Path,
+    output_directory: str | Path | None = None,
+    *,
+    overwrite: bool = False,
+    max_points: int = DEFAULT_MAX_POINTS,
+) -> dict[str, object]:
+    """Write the total and magnetization grids of a collinear ISPIN = 2 CHGCAR.
+
+    The two files keep VASP's rho*V scaling and the magnetization sign (spin up
+    minus spin down) unchanged, so ``bader CHGCAR_mag -ref CHGCAR_tot`` integrates
+    the magnetization within the total-density Bader basins. ElecTrace reads only
+    the file; it never infers ISPIN from INCAR.
+    """
+
+    source = Path(path).expanduser().resolve()
+    if "CHG" not in source.name.upper():
+        raise VaspGridError(
+            f"spin splitting reads a CHGCAR or CHG density, not {source.name}; an ISPIN = 2 "
+            "ELFCAR holds spin-up and spin-down ELF rather than total and magnetization"
+        )
+    grids = _read(source, lambda index: index < 2, max_points)
+    count = grids[0].metadata.dataset_count
+    if count == 1:
+        raise VaspGridError(
+            f"{source} has one dataset and no magnetization grid (ISPIN = 1, or the run did "
+            "not write it); no spin files were written"
+        )
+    if count == 4:
+        raise VaspGridError(
+            f"{source} is non-collinear (total, mx, my, mz); per-atom spin populations "
+            "need a collinear ISPIN = 2 run"
+        )
+    if count != 2:
+        raise VaspGridError(f"{source} has {count} datasets; a collinear ISPIN = 2 CHGCAR has 2")
+    directory = (
+        Path(output_directory).expanduser().resolve()
+        if output_directory is not None
+        else source.parent / "spin"
+    )
+    targets = tuple(directory / name for name in SPIN_SPLIT_NAMES)
+    existing = [str(target) for target in targets if target.exists() or target.is_symlink()]
+    if existing and not overwrite:
+        raise FileExistsError(f"refusing to replace existing spin files: {', '.join(existing)}")
+    for index, target in enumerate(targets):
+        _write_grid(grids[index], target)
+    return {
+        "source": str(source),
+        "dataset_count": count,
+        "shape": list(grids[0].shape),
+        "integrated_total": float(grids[0].data.mean()),
+        "integrated_magnetization": float(grids[1].data.mean()),
+        "written": [str(target) for target in targets],
+    }
+
+
+__all__ = [
+    "DEFAULT_MAX_POINTS",
+    "SPIN_SPLIT_NAMES",
+    "VaspGrid",
+    "VaspGridError",
+    "VaspGridMetadata",
+    "read_vasp_grid",
+    "split_spin_density",
+]

@@ -8,7 +8,14 @@ from pathlib import Path
 
 from electrace.models import Frame, Sequence
 
-from .descriptors import DescriptorDocument, DescriptorError, attach_descriptors, load_descriptor
+from .descriptors import (
+    SPIN_DESCRIPTOR,
+    DescriptorDocument,
+    DescriptorError,
+    attach_descriptors,
+    attach_spin_populations,
+    load_descriptor,
+)
 from .discovery import DiscoveredPath, FrameSource, SeriesKind, discover_path
 from .vasp import read_poscar
 
@@ -106,6 +113,19 @@ def _descriptor_candidates(
     return _unique_paths((*local, *candidates))
 
 
+def _spin_candidates(
+    source: FrameSource, descriptor_root: Path | None, descriptor_source: str
+) -> tuple[Path, ...]:
+    """Return spin populations beside a frame or in its mirrored descriptor directory."""
+
+    candidates: list[Path] = []
+    if descriptor_source in {"local", "merge"}:
+        candidates.append(source.directory / SPIN_DESCRIPTOR)
+    if descriptor_source in {"external", "merge"} and descriptor_root is not None:
+        candidates.append(descriptor_root / source.label / SPIN_DESCRIPTOR)
+    return _unique_paths(candidates)
+
+
 def _load_discovered(
     discovered: DiscoveredPath,
     *,
@@ -151,6 +171,14 @@ def _load_discovered(
             updated_metadata = dict(frame.metadata)
             updated_metadata["descriptor_sources"] = [str(path) for path in descriptor_paths]
             frame = replace(frame, metadata=updated_metadata)
+        spin_paths = _spin_candidates(source, descriptor_root, selected_source)
+        if len(spin_paths) > 1:
+            raise DescriptorError(
+                f"frame {source.label} has more than one spin population file: "
+                + ", ".join(map(str, spin_paths))
+            )
+        if spin_paths:
+            frame = attach_spin_populations(frame, spin_paths[0])
         frames.append(frame)
     return frames
 

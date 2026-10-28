@@ -29,7 +29,7 @@ from electrace.plugins import (
     plan_plugin,
     plan_plugin_path,
 )
-from electrace.volume import read_vasp_grid
+from electrace.volume import read_vasp_grid, split_spin_density
 from electrace.workflow import dump_starter_manifest, validate_workflow
 from electrace.workflow.collection import (
     analyze_collected_workflow,
@@ -526,10 +526,46 @@ def volume(
     path: Path = typer.Argument(...),
     dataset: int = typer.Option(0, "--dataset", min=0),
     sample: str | None = typer.Option(None, "--sample"),
+    split_spin: bool = typer.Option(
+        False,
+        "--split-spin",
+        help="Write CHGCAR_tot and CHGCAR_mag from a collinear ISPIN = 2 CHGCAR.",
+    ),
+    output_dir: Path | None = typer.Option(
+        None, "--output-dir", help="Directory for --split-spin files; default spin/ beside PATH."
+    ),
+    force: bool = typer.Option(False, "--force", help="Replace existing --split-spin files."),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Read a VASP volumetric grid directly, summarize it, and optionally sample it."""
+    """Read a VASP volumetric grid directly; summarize, sample, or split its spin grids."""
 
+    if split_spin:
+        if sample is not None or dataset:
+            _fail(
+                "--split-spin cannot be combined with --dataset or --sample",
+                as_json=as_json,
+                command="volume",
+            )
+        try:
+            payload = split_spin_density(path, output_dir, overwrite=force)
+        except (OSError, TypeError, ValueError) as exc:
+            _fail_exception(exc, command="volume", as_json=as_json)
+        written = cast(list[str], payload["written"])
+        _finish(
+            "volume",
+            payload,
+            as_json,
+            f"[green]Wrote[/green] {written[0]}",
+            f"[green]Wrote[/green] {written[1]}",
+            f"Integrated magnetization: {payload['integrated_magnetization']:.4f}",
+        )
+        return
+    if output_dir is not None or force:
+        _fail(
+            "--output-dir and --force apply only to --split-spin",
+            as_json=as_json,
+            command="volume",
+        )
     try:
         grid = read_vasp_grid(path, dataset=dataset)
         payload = grid.summary()

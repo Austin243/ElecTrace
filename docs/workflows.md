@@ -21,7 +21,8 @@ electrace inspect electrace-results
 ```
 
 Supported inputs include normalized ElecTrace feature JSON, Bader/BaderKit output,
-critic2 `CPREPORT` JSON, LOBSTER integrated bond lists, and Chargemol/DDEC charges.
+critic2 `CPREPORT` JSON, LOBSTER integrated bond lists, Chargemol/DDEC charges, and
+per-atom spin populations from spin-polarized runs.
 `analysis.json` is the canonical result; CSV and HTML files are derived views.
 
 By default, atoms are re-matched at every step by element and minimum-image distance
@@ -111,7 +112,51 @@ Recognized descriptor basenames are `electrace.features.json`, `features.json`,
 `bader.json`, `badelf.json`, `critic2.features.json`, `ICOHPLIST.lobster`,
 `ICOBILIST.lobster`, `DDEC6_even_tempered_net_atomic_charges.xyz`, and `ACF.dat`.
 `CHGCAR` and `ELFCAR` are volumetric inputs, not feature descriptors by
-themselves.
+themselves. Per-atom spin populations are read from `spin/ACF.dat` in a frame
+directory, or from `descriptors/<label>/spin/ACF.dat` in a mirrored external
+directory.
+
+## Spin-polarized runs
+
+ElecTrace reads only what a run wrote. It never takes `ISPIN` from `INCAR` or assumes
+a value. A collinear `ISPIN = 2` `CHGCAR` holds the total density followed by the
+magnetization density (spin up minus spin down). In each frame directory:
+
+```bash
+electrace volume CHGCAR --split-spin
+bader CHGCAR
+cd spin && bader CHGCAR_mag -ref CHGCAR_tot
+```
+
+The first command writes `spin/CHGCAR_tot` and `spin/CHGCAR_mag` with the values and
+sign unchanged, and reports the integrated magnetization, which matches the `mag=`
+value in `OSZICAR`. It stops with an error, and writes nothing, for a `CHGCAR` with
+one grid (`ISPIN = 1`, or the magnetization was not written), a truncated or missing
+second grid, mismatched grids, or non-collinear output. `bader CHGCAR` reads only the
+total-density grid and writes the charges to `ACF.dat`. The last command integrates
+the magnetization within the same total-density basins and writes `spin/ACF.dat`.
+
+During analysis, each atom's value in `spin/ACF.dat` becomes the `spin` descriptor
+on that frame's Bader atom-charge features and is tracked with them. Like other
+descriptors, it is thresholded and summarized once listed under
+`[events.descriptor_thresholds]`, and it enters matching costs only when given a
+scale under `[matching.descriptor_scales]`:
+
+```toml
+[events.descriptor_thresholds]
+spin = 0.1
+```
+
+A frame without `spin/ACF.dat` has no spin value, never zero. When spin is
+configured or present in other frames, `analysis.json` names the frames that lack
+it. Each frame's `atomic_spin_sum` is recorded with its spin document under
+`provenance.descriptor_documents`.
+
+Spin-resolved LOBSTER lists give one feature per bond, from either the two spin
+blocks of LOBSTER 3.x–5.0 or the two-column rows of LOBSTER 5.1. `icohp` (or
+`icobi`) is the sum of both channels, which is what a non-spin-polarized run reports,
+and `icohp_up` and `icohp_down` (or `icobi_up` and `icobi_down`) hold LOBSTER's
+spin 1 and spin 2.
 
 ## Select frames and stage calculations
 
@@ -150,7 +195,9 @@ generated commands and inputs before authorizing work.
 | Integrated COHP/COBI | `lobster` | `cohp` or `cobi` | `ICOHPLIST.lobster` or `ICOBILIST.lobster` |
 
 Chargemol can be planned and its existing results can be parsed, but workflow v1 does
-not stage a Chargemol step.
+not stage a Chargemol step. Workflow v1 also does not stage the spin split, which
+must run between the VASP and Bader jobs; use the commands in
+[Spin-polarized runs](#spin-polarized-runs).
 
 Each step points to an executable entry and may declare a template directory,
 dependencies, expected outputs, environment variables, and plugin options. VASP
@@ -213,7 +260,8 @@ features across frames, and writes the same result bundle used for existing evid
 - Bader and DDEC populations are not unique formal oxidation states.
 - ICOHP/ICOBI values depend on the projection basis and integration convention.
 - critic2 support normalizes critical-point topology; it does not integrate ELF basins.
-- Native spin-resolved LOBSTER list ingestion is unsupported.
+- Spin populations depend on the Bader partition and keep VASP's sign; non-collinear
+  spin is unsupported.
 - Filesystem completion is not proof of electronic, grid, or projection convergence.
 - ElecTrace never supplies licensed pseudopotentials or chooses universal VASP settings.
 

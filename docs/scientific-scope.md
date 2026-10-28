@@ -10,7 +10,8 @@ content. It records frame provenance, matches atoms and normalized electronic
 features under periodic boundary conditions, proposes birth/death and conservation-
 backed split/merge events, tracks descriptor changes, and produces an auditable
 report. Inputs can include BaderKit, critic2, LOBSTER, Bader, Chargemol/DDEC, and
-canonical ElecTrace feature records.
+canonical ElecTrace feature records, as well as per-atom spin populations from
+collinear spin-polarized VASP runs and spin-resolved LOBSTER lists.
 
 The separate workflow layer can stage and explicitly launch user-configured VASP and
 analysis programs locally or through Slurm. It does not create pseudopotentials,
@@ -22,7 +23,8 @@ The current release does not claim:
 - calibrated event probabilities, false-event rates, or universal thresholds;
 - automatic grid-refinement or electronic-convergence audits;
 - a unique oxidation state, bond definition, reaction mechanism, or causal event;
-- AIMD-scale temporal statistics; or
+- AIMD-scale temporal statistics;
+- non-collinear magnetization analysis; or
 - Quantum ESPRESSO or CP2K ingestion.
 
 ## Interpreting results
@@ -74,7 +76,12 @@ no interior maximum.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.
 - ELF topology depends on the wavefunction or density, grid, and analysis settings.
 - COHP/COBI depends on basis, projection, and integration choices; ICOHP is not a
-  universal bond energy.
+  universal bond energy. A spin-resolved total is the sum of LOBSTER's two channels.
+- Spin populations integrate the magnetization (spin up minus spin down) within
+  total-density Bader basins, so they depend on the partition like Bader charges.
+  They keep the sign VASP wrote. A frame can converge to the opposite global sign or
+  another spin state; ElecTrace neither flips signs nor chooses states, so compare
+  each frame's `atomic_spin_sum` before reading a sign change as chemistry.
 - Event location is limited by the spacing of the supplied frames.
 
 ## Numerical limitations

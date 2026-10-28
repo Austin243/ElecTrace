@@ -512,6 +512,19 @@ def analyze_sequence(
         warnings.append(
             "No electronic features were loaded for frame(s): " + ", ".join(missing_features)
         )
+    spin_frames = {
+        frame.label
+        for frame in sequence.frames
+        if any(_as_finite_float(item.attributes.get("spin")) is not None for item in frame.features)
+    }
+    missing_spin = [frame.label for frame in sequence.frames if frame.label not in spin_frames]
+    spin_configured = "spin" in descriptors
+    if missing_spin and (spin_frames or spin_configured):
+        warnings.append(
+            "No spin populations (spin/ACF.dat) were loaded for frame(s): "
+            + ", ".join(missing_spin)
+            + "; spin is missing there, not zero."
+        )
     missing_energies = [frame.label for frame in sequence.frames if frame.energy is None]
     if missing_energies:
         warnings.append("No VASP energy was found for frame(s): " + ", ".join(missing_energies))

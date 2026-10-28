@@ -443,6 +443,7 @@ icobi = 0.1
 bond_order = 0.1
 elf = 0.1
 oxidation_state = 0.5
+# spin = 0.1 # per-atom spin population from spin/ACF.dat (ISPIN = 2 runs)
 
 [outputs]
 directory = "electrace-results"
