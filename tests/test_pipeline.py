@@ -25,6 +25,7 @@ def test_demo_pipeline_analyzes_and_writes_report_bundle(tmp_path: Path) -> None
         "feature_tracks.csv",
         "manifest.json",
         "report.html",
+        "track_summary.csv",
     }
 
     manifest = json.loads((artifacts.output_directory / "manifest.json").read_text())

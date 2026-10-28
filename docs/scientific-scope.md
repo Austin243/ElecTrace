@@ -43,6 +43,17 @@ separately as a strain-factored minimum-image displacement. It is correlated wit
 the chosen atom match and does not alter the assignment or establish continuity;
 large motion between sparse frames may alias across a periodic cell.
 
+With `atom_identity = "index"`, atom identity comes from the shared atom order of
+the input files, as in NEB images, rather than from motion. ElecTrace checks only
+that the element sequences agree, so it cannot detect a permutation of same-element
+atoms. Displacements remain in the evidence but do not lower atom-match or
+candidate-connectivity confidence.
+
+The per-track summary compares each track's first and last frames and reports the
+spread and largest step of each quantity. It applies no threshold, creates no
+events, and inherits the frame sampling and feature matching; a track that starts or
+ends mid-path covers only that segment.
+
 - Bader and DDEC charges depend on the partitioning scheme and are not automatically
   formal oxidation states.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.

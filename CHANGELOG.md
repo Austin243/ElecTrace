@@ -4,6 +4,14 @@
 
 ### Added
 
+- Opt-in `[matching] atom_identity = "index"` for paths with one fixed atom order,
+  such as NEB images. Atoms are paired by position after an element-sequence check;
+  displacement stays in the evidence but no longer lowers atom-match or candidate
+  connectivity confidence. The `"geometric"` default is unchanged.
+- A whole-path summary for each feature track in `analysis.json` (`track_summary`),
+  `track_summary.csv`, and the HTML report: first and last frames, path coverage,
+  net change, max − min, and the largest single step for charge, volume, and each
+  configured descriptor. It is reporting only and adds no events or thresholds.
 - Candidate bond-critical-point neighbor changes, with separate atom identity,
   motion and shared-neighbor-relative evidence in the HTML report.
 - Public BSD-3-Clause packaging under the ElecTrace/`electrace` name.

@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -15,10 +16,11 @@ import numpy as np
 from electrace import __version__
 from electrace._files import atomic_write_text
 from electrace.config import ElecTraceConfig, load_config
-from electrace.events import EventDetectionConfig, track_sequence
+from electrace.events import EventDetectionConfig, _as_finite_float, track_sequence
 from electrace.export import (
     write_events_csv,
     write_json,
+    write_track_summary_csv,
     write_tracks_csv,
 )
 from electrace.io import load_sequence
@@ -46,7 +48,9 @@ def _resolve(base: Path, value: str | None) -> Path | None:
 
 def _matching_configs(config: ElecTraceConfig) -> tuple[AtomMatchConfig, FeatureMatchConfig]:
     settings = config.matching
-    atom = AtomMatchConfig(max_distance=settings.max_atom_displacement)
+    atom = AtomMatchConfig(
+        max_distance=settings.max_atom_displacement, identity=settings.atom_identity
+    )
     feature = FeatureMatchConfig(
         max_distance=settings.max_feature_displacement,
         max_cost=settings.match_threshold,
@@ -250,6 +254,75 @@ def _build_tracks(
     return observations, warnings
 
 
+def _track_value(observation: Mapping[str, Any], quantity: str) -> float | None:
+    if quantity in ("charge", "volume"):
+        return _as_finite_float(observation[quantity])
+    return _as_finite_float(observation["attributes"].get(quantity))
+
+
+def _change_summary(values: list[tuple[int, float | None]]) -> dict[str, Any]:
+    """Summarize one quantity along a lineage without thresholds or imputation."""
+
+    observed = [value for _, value in values if value is not None]
+    first, last = values[0][1], values[-1][1]
+    steps = [
+        (frame_before, frame_after, after - before)
+        for (frame_before, before), (frame_after, after) in pairwise(values)
+        if before is not None and after is not None
+    ]
+    largest = max(steps, key=lambda step: abs(step[2]), default=None)
+    return {
+        "observed": len(observed),
+        "net_change": (
+            last - first if len(values) > 1 and first is not None and last is not None else None
+        ),
+        "range": max(observed) - min(observed) if len(observed) > 1 else None,
+        "largest_step": (
+            None
+            if largest is None
+            else {"frame_before": largest[0], "frame_after": largest[1], "delta": largest[2]}
+        ),
+    }
+
+
+def _summarize_tracks(
+    sequence: Sequence,
+    tracks: Iterable[Mapping[str, Any]],
+    quantities: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Compare each lineage's first and last frames, which adjacent-frame events cannot.
+
+    This is reporting only: it applies no thresholds and creates no events.
+    """
+
+    lineages: dict[str, list[Mapping[str, Any]]] = {}
+    # _build_tracks emits observations frame by frame, so each lineage is ordered.
+    for observation in tracks:
+        lineages.setdefault(str(observation["track_id"]), []).append(observation)
+    path = (sequence.frames[0].index, sequence.frames[-1].index)
+    summary: list[dict[str, Any]] = []
+    for track_id, observations in lineages.items():
+        first, last = observations[0], observations[-1]
+        summary.append(
+            {
+                "track_id": track_id,
+                "kind": first["kind"],
+                "first_frame": first["frame"],
+                "last_frame": last["frame"],
+                "observations": len(observations),
+                "spans_path": (first["frame"], last["frame"]) == path,
+                "parent_track_ids": list(first["parent_track_ids"]),
+                "changes": {
+                    name: _change_summary(
+                        [(int(item["frame"]), _track_value(item, name)) for item in observations]
+                    )
+                    for name in quantities
+                },
+            }
+        )
+    return summary
+
+
 def _normalize_events(
     events: Iterable[Any],
     minimum_persistence: int,
@@ -308,6 +381,11 @@ def analyze_sequence(
     event_config = _event_config(config)
     tracking = track_sequence(sequence, atom_config, feature_config, event_config)
     tracks, track_warnings = _build_tracks(sequence, tracking.feature_matches)
+    descriptors = sorted(
+        {*config.events.descriptor_thresholds, *config.matching.descriptor_scales}
+        - {"charge", "volume"}
+    )
+    track_summary = _summarize_tracks(sequence, tracks, ("charge", "volume", *descriptors))
     descriptor_documents, descriptor_warnings = _descriptor_provenance(sequence)
 
     warnings = [*track_warnings, *descriptor_warnings]
@@ -379,6 +457,7 @@ def analyze_sequence(
         "transitions": transitions,
         "events": events,
         "tracks": tracks,
+        "track_summary": track_summary,
         "diagnostics": tracking.diagnostics,
     }
 
@@ -426,6 +505,7 @@ _KNOWN_BUNDLE_ARTIFACTS = frozenset(
         "feature_tracks.csv",
         "report.html",
         "manifest.json",
+        "track_summary.csv",
     }
 )
 
@@ -448,6 +528,11 @@ def write_analysis_bundle(
         written.append(write_events_csv(analysis.get("events", []), directory / "events.csv"))
         written.append(
             write_tracks_csv(analysis.get("tracks", []), directory / "feature_tracks.csv")
+        )
+        written.append(
+            write_track_summary_csv(
+                analysis.get("track_summary", []), directory / "track_summary.csv"
+            )
         )
     if config.outputs.html_report:
         written.append(render_html_report(analysis, directory / "report.html"))
