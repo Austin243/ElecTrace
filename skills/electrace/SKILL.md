@@ -25,6 +25,19 @@ electrace analyze electrace.toml --json
 Use `analysis.json` as the canonical result. Report warnings, missing frames, and
 provenance. Do not silently add `--permissive` to relax frame discovery.
 
+For NEB images and other paths that keep one atom order, set
+`[matching] atom_identity = "index"`; the default `"geometric"` re-matches atoms by
+element and distance at every step. Events compare adjacent frames only, so also read
+`track_summary` in `analysis.json` (or `track_summary.csv`) for each track's net
+change, range, and largest single step over the whole path.
+
+For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
+indices) so the report stays readable. Matching still uses every atom. Quote the
+reported and total counts from `focus` in `analysis.json`, and never present a
+focused run as the whole path. When every frame has an energy, events carry
+`barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
+frame is not a located transition state.
+
 ## Missing calculations
 
 ```bash
@@ -49,6 +62,8 @@ electrace workflow analyze electrace-workflow.yaml --json
 ## Boundaries
 
 - Never invent a `POTCAR`, executable, credential, or private input.
+- If validation reports a POSCAR/POTCAR species-order mismatch, ask the user for a
+  `POTCAR` in the structure's species order; do not reorder structure files.
 - Never add `--yes`, `--force`, or `--permissive` merely to make a command succeed.
 - Treat Bader/DDEC values, ELF/QTAIM topology, and ICOHP/ICOBI as method-dependent
   evidence, not unique oxidation states, bonds, mechanisms, or energies.

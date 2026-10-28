@@ -23,7 +23,7 @@ neighbor_weight = 0.75
 overlap_weight = 1.0
 descriptor_weight = 0.35
 match_threshold = 3.0
-# Maximum total-cost gap for a complete alternative assignment.
+# Largest relative charge or volume mismatch allowed for a split or merge group.
 conservation_tolerance = 0.35
 split_merge_threshold = 0.55
 
@@ -51,6 +51,9 @@ directory = "electrace-results"
 html_report = true
 json = true
 csv = true
+# Report only features tied to these 0-based POSCAR atom indices, such as the
+# reacting atoms of a large cell; matching still uses every atom and feature.
+# focus_atoms = [12, 13, 40]
 
 # Plugins are inspected and planned by ElecTrace, but never executed implicitly.
 [plugins.baderkit]

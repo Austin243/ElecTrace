@@ -290,11 +290,20 @@ class OutputConfig:
     html_report: bool = True
     json: bool = True
     csv: bool = True
+    # Zero-based POSCAR indices; an empty list reports every feature.
+    focus_atoms: list[int] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.directory = _string(self.directory, "outputs.directory")
         for name in ("html_report", "json", "csv"):
             setattr(self, name, _boolean(getattr(self, name), f"outputs.{name}"))
+        if not isinstance(self.focus_atoms, (list, tuple)):
+            raise TypeError("outputs.focus_atoms must be an array of atom indices")
+        for index in self.focus_atoms:
+            _integer(index, "each outputs.focus_atoms entry", minimum=0)
+        if len(set(self.focus_atoms)) != len(self.focus_atoms):
+            raise ValueError("outputs.focus_atoms must not repeat an atom index")
+        self.focus_atoms = sorted(self.focus_atoms)
 
 
 @dataclass(slots=True)
@@ -345,6 +354,9 @@ class ElecTraceConfig:
         """Return a JSON-serializable nested mapping."""
 
         result = asdict(self)
+        if not self.outputs.focus_atoms:
+            # Without a focus, record the configuration exactly as before the option existed.
+            del result["outputs"]["focus_atoms"]
         _validate_json(result)
         return result
 
@@ -438,6 +450,10 @@ directory = "electrace-results"
 html_report = true
 json = true
 csv = true
+# Report only features tied to these 0-based POSCAR atom indices; matching
+# still uses every atom and feature.
+# focus_atoms = [0, 2]
+
 [plugins.critic2]
 enabled = true
 executable = "critic2"
