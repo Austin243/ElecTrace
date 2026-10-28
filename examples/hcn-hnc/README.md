@@ -27,8 +27,8 @@ For an agent or script, append `--json` to either command. With ElecTrace
 - 35 feature observations belonging to 5 tracks;
 - 20 events: 19 descriptor changes (17 confirmed, 2 right-censored) and one
   confirmed candidate connectivity change;
-- `analysis.json`, `events.csv`, `feature_tracks.csv`, `report.html`, and
-  `manifest.json` in `electrace-results/`.
+- `analysis.json`, `events.csv`, `feature_tracks.csv`, `track_summary.csv`,
+  `report.html`, and `manifest.json` in `electrace-results/`.
 
 The generated result bundle is intentionally ignored by Git because it records
 run-local paths, timestamps, hashes, and platform provenance.
