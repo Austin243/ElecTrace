@@ -28,7 +28,8 @@ refuses one-grid (`ISPIN = 1`), truncated, and non-collinear files. Analysis att
 `icohp` or `icobi` as the sum of both channels plus `_up` and `_down` values.
 LOBSTER bond values come from atom-pair rows; orbital-resolved rows are skipped. A
 bond to an atom's own periodic image lists that atom once, and `lattice_translation`
-names the image.
+names the image; LOBSTER's mirrored row for the same bond (translation −T) is merged
+into that feature.
 
 Current boundaries: external programs and pseudopotentials are user-supplied;
 critic2 integration reports critical-point topology rather than integrated ELF basin

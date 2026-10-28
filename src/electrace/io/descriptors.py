@@ -736,6 +736,10 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     features: list[Feature] = []
     spin_resolved = False
     rows, orbital_rows = _lobster_rows(path)
+    # LOBSTER lists a bond from an atom to its own periodic image from both ends, as
+    # translations T and -T with the same distance and values. The first row is kept.
+    self_image: dict[tuple[int, tuple[int, int, int]], tuple[str, list[float]]] = {}
+    collapsed_rows = 0
     for line_number, fields, raw_values in rows:
         context = f"{path.name}:{line_number}"
         first = _atom_index(fields[1], f"{context} atom1")
@@ -760,6 +764,22 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
         channels = [
             _finite(raw.replace("D", "E"), f"{context} {family.upper()}") for raw in raw_values
         ]
+        if first == second and lattice_translation is not None:
+            negated = (-lattice_translation[0], -lattice_translation[1], -lattice_translation[2])
+            key = (first, max(lattice_translation, negated))
+            if key in self_image:
+                earlier, values = self_image[key]
+                if not all(
+                    math.isclose(left, right, rel_tol=1e-6, abs_tol=1e-5)
+                    for left, right in zip(values, (distance, *channels), strict=True)
+                ):
+                    raise DescriptorError(
+                        f"{context} repeats the self-image bond of {earlier} with a "
+                        "different distance or value"
+                    )
+                collapsed_rows += 1
+                continue
+            self_image[key] = (context, [distance, *channels])
         # The total of a spin-polarized list is the sum of both channels, which is
         # what a non-spin-polarized LOBSTER run reports for the same bond.
         value = channels[0] if len(channels) == 1 else channels[0] + channels[1]
@@ -802,6 +822,8 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     metadata: dict[str, Any] = {"native_format": path.name}
     if orbital_rows:
         metadata["skipped_orbital_rows"] = orbital_rows
+    if collapsed_rows:
+        metadata["collapsed_self_image_rows"] = collapsed_rows
     if spin_resolved:
         metadata["spin_convention"] = (
             f"{family} is the sum of LOBSTER spin 1 and spin 2; {family}_up and "
