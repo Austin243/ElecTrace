@@ -23,9 +23,10 @@ The canonical descriptor document is::
 feature requires a unique non-empty ``id``, a non-empty ``kind``, and three
 finite fractional coordinates.  Neighbor atom indices are zero-based.  This
 module also contains intentionally conservative adapters for BaderKit JSON,
-critic2-derived JSON, LOBSTER ICOH(P|B)LIST files, Bader ``ACF.dat``, and
-Chargemol DDEC charge XYZ files.  Native formats that do not contain periodic
-coordinates require the associated :class:`~electrace.models.Frame`.
+critic2-derived JSON, LOBSTER ICOH(P|B)LIST files, Bader ``ACF.dat``, Chargemol
+DDEC charge XYZ files, and Bader spin populations in ``spin/ACF.dat``.  Native
+formats that do not contain periodic coordinates require the associated
+:class:`~electrace.models.Frame`.
 """
 
 from __future__ import annotations
@@ -627,6 +628,69 @@ def _periodic_midpoint(
     return tuple((left[axis] + 0.5 * displacement[axis]) % 1.0 for axis in range(3))  # type: ignore[return-value]
 
 
+_SPIN_LABEL = re.compile(r"for\s+spin\s+(\d+)", re.IGNORECASE)
+
+
+def _lobster_rows(path: Path) -> list[tuple[int, list[str], list[str]]]:
+    """Return LOBSTER bond rows as (line, identity columns, one value per spin).
+
+    LOBSTER 3.x-5.0 writes one block per spin channel, each headed "for spin N".
+    LOBSTER 5.1 writes both channels on one row below a header ending
+    "for spin 1  for spin 2". A repeated, reordered, or unlabeled spin block is
+    rejected rather than read as extra bonds.
+    """
+
+    blocks: list[list[tuple[int, list[str]]]] = []
+    two_channels = False
+    for line_number, line in enumerate(_read_descriptor_text(path).splitlines(), start=1):
+        fields = line.split()
+        if not fields:
+            continue
+        if fields[0].lstrip("+-").isdigit():
+            if not blocks:
+                blocks.append([])
+            blocks[-1].append((line_number, fields))
+            continue
+        labels = [int(label) for label in _SPIN_LABEL.findall(line)]
+        if labels == [1, 2] and not blocks:
+            two_channels = True
+        elif (
+            len(labels) == 1
+            and not two_channels
+            and labels[0] == len(blocks) + 1 <= 2
+            and (not blocks or blocks[-1])
+        ):
+            blocks.append([])
+        elif labels or any(blocks):
+            raise DescriptorError(f"{path.name}:{line_number} has an unsupported spin header")
+    if not any(blocks):
+        raise DescriptorError(f"no LOBSTER bond records found in {path}")
+    widths = {9} if two_channels else {5, 8}
+    for line_number, fields in (row for block in blocks for row in block):
+        if len(fields) not in widths:
+            raise DescriptorError(
+                f"{path.name}:{line_number} has {len(fields)} columns; supported LOBSTER bond "
+                "rows have 5 simplified columns, 8 columns including the three atom-2 "
+                "lattice-translation integers, or 9 columns with both spin channels"
+            )
+    if two_channels:
+        return [(number, fields[:7], fields[7:]) for number, fields in blocks[0]]
+    if len(blocks) == 1:
+        return [(number, fields[:-1], fields[-1:]) for number, fields in blocks[0]]
+    up, down = blocks
+    if len(up) != len(down):
+        raise DescriptorError(
+            f"{path.name} lists {len(up)} spin-1 bonds but {len(down)} spin-2 bonds"
+        )
+    for (number, first), (other, second) in zip(up, down, strict=True):
+        if first[:-1] != second[:-1]:
+            raise DescriptorError(f"{path.name}:{other} does not match spin-1 line {number}")
+    return [
+        (number, first[:-1], [first[-1], second[-1]])
+        for (number, first), (_, second) in zip(up, down, strict=True)
+    ]
+
+
 def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     if frame is None:
         raise DescriptorError("LOBSTER list files require a Frame for periodic bond midpoints")
@@ -634,23 +698,14 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     family = "icobi" if "icobi" in lower_name else "icohp"
     descriptor = "icohp_ev" if family == "icohp" else family
     features: list[Feature] = []
-    for line_number, line in enumerate(_read_descriptor_text(path).splitlines(), start=1):
-        fields = line.split()
-        if not fields or not fields[0].lstrip("+-").isdigit():
-            continue
+    spin_resolved = False
+    for line_number, fields, raw_values in _lobster_rows(path):
         context = f"{path.name}:{line_number}"
-        if len(fields) not in {5, 8}:
-            raise DescriptorError(
-                f"{context} has {len(fields)} columns; supported LOBSTER bond rows "
-                "have either 5 simplified columns or 8 columns including the "
-                "three atom-2 lattice-translation integers"
-            )
         first = _atom_index(fields[1], f"{context} atom1")
         second = _atom_index(fields[2], f"{context} atom2")
         distance = _finite(fields[3].replace("D", "E"), f"{context} distance")
         lattice_translation: tuple[int, int, int] | None = None
-        value_field = fields[4]
-        if len(fields) == 8:
+        if len(fields) == 7:
             raw_translation = fields[4:7]
             if any(_INTEGER_FIELD.fullmatch(component) is None for component in raw_translation):
                 raise DescriptorError(
@@ -661,8 +716,12 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
                 int(raw_translation[1]),
                 int(raw_translation[2]),
             )
-            value_field = fields[7]
-        value = _finite(value_field.replace("D", "E"), f"{context} {family.upper()}")
+        channels = [
+            _finite(raw.replace("D", "E"), f"{context} {family.upper()}") for raw in raw_values
+        ]
+        # The total of a spin-polarized list is the sum of both channels, which is
+        # what a non-spin-polarized LOBSTER run reports for the same bond.
+        value = channels[0] if len(channels) == 1 else channels[0] + channels[1]
         attributes: dict[str, Any] = {
             descriptor: value,
             "bond_length_angstrom": distance,
@@ -679,6 +738,10 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
         if descriptor == "icohp_ev":
             attributes["icohp"] = value
         attributes["descriptor_family"] = family
+        if len(channels) == 2:
+            spin_resolved = True
+            attributes[f"{family}_up"] = channels[0]
+            attributes[f"{family}_down"] = channels[1]
         features.append(
             Feature(
                 id=f"lobster:{descriptor}:{len(features)}",
@@ -693,11 +756,27 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
                 attributes=attributes,
             )
         )
-    if not features:
-        raise DescriptorError(f"no LOBSTER bond records found in {path}")
-    return DescriptorDocument(
-        producer="lobster", features=tuple(features), metadata={"native_format": path.name}
-    )
+    metadata: dict[str, Any] = {"native_format": path.name}
+    if spin_resolved:
+        metadata["spin_convention"] = (
+            f"{family} is the sum of LOBSTER spin 1 and spin 2; {family}_up and "
+            f"{family}_down are spin 1 and spin 2."
+        )
+    return DescriptorDocument(producer="lobster", features=tuple(features), metadata=metadata)
+
+
+def _acf_records(lines: Sequence[str]) -> list[tuple[float, float]]:
+    """Return (CHARGE, ATOMIC VOL) for each atom row of a Bader ``ACF.dat``."""
+
+    records: list[tuple[float, float]] = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) >= 7 and fields[0].isdigit():
+            try:
+                records.append((float(fields[4]), float(fields[6])))
+            except ValueError:
+                continue
+    return records
 
 
 def _parse_atomic_charge_text(path: Path, frame: Frame | None, producer: str) -> DescriptorDocument:
@@ -706,13 +785,7 @@ def _parse_atomic_charge_text(path: Path, frame: Frame | None, producer: str) ->
     lines = _read_descriptor_text(path).splitlines()
     records: list[tuple[float, float | None]] = []
     if path.name.upper() == "ACF.DAT":
-        for line in lines:
-            fields = line.split()
-            if len(fields) >= 7 and fields[0].isdigit():
-                try:
-                    records.append((float(fields[4]), float(fields[6])))
-                except ValueError:
-                    continue
+        records.extend(_acf_records(lines))
     else:
         start = 2 if lines and lines[0].strip().isdigit() else 0
         declared = int(lines[0]) if start else None
@@ -916,4 +989,64 @@ def attach_descriptors(frame: Frame, documents: Iterable[DescriptorDocument]) ->
         metadata["descriptor_producers"] = sources
     if document_records:
         metadata["descriptor_documents"] = document_records
+    return replace(frame, features=tuple(features), metadata=metadata)
+
+
+SPIN_DESCRIPTOR = Path("spin", "ACF.dat")
+
+
+def attach_spin_populations(frame: Frame, path: str | Path) -> Frame:
+    """Attach each atom's Bader-basin magnetization from ``spin/ACF.dat`` as ``spin``.
+
+    ``spin/ACF.dat`` is Bader's output for ``bader CHGCAR_mag -ref CHGCAR_tot``: its
+    CHARGE column integrates the magnetization (spin up minus spin down) within the
+    total-density basins. Values keep VASP's sign and attach only to Bader
+    atom-charge features, so no other partition receives them.
+    """
+
+    source = Path(path).expanduser().resolve()
+    spins = [spin for spin, _ in _acf_records(_read_descriptor_text(source).splitlines())]
+    if len(spins) != len(frame.atoms):
+        raise DescriptorError(
+            f"{source} has {len(spins)} spin populations but frame {frame.label} has "
+            f"{len(frame.atoms)} atoms"
+        )
+    by_atom = {atom.index: spin for atom, spin in zip(frame.atoms, spins, strict=True)}
+    features = list(frame.features)
+    attached = 0
+    for position, feature in enumerate(features):
+        definition = feature.attributes.get("charge_definition")
+        if (
+            feature.kind == "atomic_charge"
+            and len(feature.neighbor_atom_indices) == 1
+            and isinstance(definition, str)
+            and definition.startswith("bader_")
+        ):
+            spin = by_atom[feature.neighbor_atom_indices[0]]
+            features[position] = replace(feature, attributes={**feature.attributes, "spin": spin})
+            attached += 1
+    if not attached:
+        raise DescriptorError(
+            f"{source} needs Bader atom charges (ACF.dat or bader.json) in frame "
+            f"{frame.label} to attach spin populations to"
+        )
+    metadata = dict(frame.metadata)
+    metadata["descriptor_producers"] = [*metadata.get("descriptor_producers", []), "bader"]
+    metadata["descriptor_sources"] = [*metadata.get("descriptor_sources", []), str(source)]
+    metadata["descriptor_documents"] = [
+        *metadata.get("descriptor_documents", []),
+        {
+            "schema_version": SCHEMA_VERSION,
+            "producer": {"name": "bader"},
+            "metadata": {
+                "native_format": SPIN_DESCRIPTOR.as_posix(),
+                "spin_convention": (
+                    "spin is the Bader CHARGE of CHGCAR_mag partitioned by CHGCAR_tot: spin-up "
+                    "minus spin-down electrons in each total-density basin (e, numerically "
+                    "mu_B), with the sign VASP wrote."
+                ),
+                "atomic_spin_sum": math.fsum(spins),
+            },
+        },
+    ]
     return replace(frame, features=tuple(features), metadata=metadata)

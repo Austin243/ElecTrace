@@ -1,6 +1,6 @@
 ---
 name: electrace
-description: Analyze Bader, BadELF, QTAIM/critic2, LOBSTER, DDEC, and VASP grid evidence across ordered periodic frames, including VASP NEB paths. Use ElecTrace to select frames, stage local or Slurm calculations, parse outputs, track changes, and generate reports. Do not use it as a convergence or formal-oxidation-state oracle.
+description: Analyze Bader, BadELF, QTAIM/critic2, LOBSTER, DDEC, spin-population, and VASP grid evidence across ordered periodic frames, including VASP NEB paths. Use ElecTrace to select frames, stage local or Slurm calculations, parse outputs, track changes, and generate reports. Do not use it as a convergence or formal-oxidation-state oracle.
 ---
 
 # Use ElecTrace
@@ -53,5 +53,7 @@ electrace workflow analyze electrace-workflow.yaml --json
 - Treat Bader/DDEC values, ELF/QTAIM topology, and ICOHP/ICOBI as method-dependent
   evidence, not unique oxidation states, bonds, mechanisms, or energies.
 - Treat missing evidence as missing and surface external-tool failures.
+- Never assume an `ISPIN` value. Spin populations follow the Bader partition and
+  VASP's sign; a frame without them has no spin value, not zero.
 - Filesystem completion does not establish electronic, grid, projection, or
   scientific convergence.

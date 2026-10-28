@@ -4,6 +4,16 @@
 
 ### Added
 
+- Per-atom spin populations for collinear `ISPIN = 2` VASP runs.
+  `electrace volume CHGCAR --split-spin` writes `spin/CHGCAR_tot` and
+  `spin/CHGCAR_mag` unchanged in value and sign; it refuses one-grid, truncated,
+  mismatched, and non-collinear files. Bader's `spin/ACF.dat` from
+  `bader CHGCAR_mag -ref CHGCAR_tot` becomes the `spin` descriptor on each frame's
+  Bader atom features. A frame without spin data has no spin value, and the analysis
+  names such frames when spin is configured or present elsewhere.
+- Spin-resolved LOBSTER `ICOHPLIST`/`ICOBILIST` files, both the two spin blocks of
+  LOBSTER 3.x–5.0 and the two-column rows of LOBSTER 5.1: `icohp`/`icobi` is the sum
+  of both channels, with `_up` and `_down` channel values.
 - Opt-in `[matching] atom_identity = "index"` for paths with one fixed atom order,
   such as NEB images. Atoms are paired by position after an element-sequence check;
   displacement stays in the evidence but no longer lowers atom-match or candidate
@@ -29,6 +39,12 @@
 
 ### Changed
 
+- `electrace volume` reads `CHGCAR` files with PAW augmentation occupancies and
+  per-atom moment lines, and reports a truncated grid instead of stopping at the
+  first augmentation block.
+- A spin-polarized LOBSTER list yields one feature per bond; its second spin block
+  was previously read as duplicate bonds. Malformed or reordered spin blocks are
+  errors.
 - Machine-readable command results use the versioned `electrace.cli.v1` envelope when
   `--json` is supported and requested.
 - External execution requires explicit `--yes`; plugin planning remains non-executing.

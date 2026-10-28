@@ -89,7 +89,7 @@
           "parent_track_ids": {"type": "array", "items": {"type": "string"}},
           "changes": {
             "type": "object",
-            "description": "Keyed by charge, volume, and each configured descriptor, in native units.",
+            "description": "Keyed by charge, volume, and each configured descriptor (such as icohp or spin), in native units.",
             "additionalProperties": {
               "type": "object",
               "required": ["observed", "net_change", "range", "largest_step"],
