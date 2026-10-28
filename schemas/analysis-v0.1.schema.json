@@ -55,7 +55,11 @@
             "type": "boolean",
             "description": "True only when persistence_status is confirmed."
           },
-          "description": {"type": "string"}
+          "description": {"type": "string"},
+          "barrier_position": {
+            "enum": ["before", "spanning", "after", null],
+            "description": "Event step relative to the highest-energy frame(s): spanning when the step starts or ends at one; null when events are not placed."
+          }
         },
         "additionalProperties": true
       }
@@ -122,6 +126,56 @@
         },
         "additionalProperties": true
       }
+    },
+    "barrier": {
+      "type": "object",
+      "description": "Highest-energy frame(s) used to place events. Reporting only: no tolerance or thresholds.",
+      "required": ["frames"],
+      "properties": {
+        "frames": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0},
+          "description": "Frame indices at the maximum energy; several only on exact ties; empty when events are not placed."
+        },
+        "rise_from_first": {"type": "number", "minimum": 0},
+        "rise_from_last": {"type": "number", "minimum": 0},
+        "reason": {"type": "string", "description": "Why events are not placed."}
+      },
+      "additionalProperties": false
+    },
+    "focus": {
+      "type": "object",
+      "description": "Present only with outputs.focus_atoms. Events, tracks, and track_summary then cover the tracks tied to these atoms.",
+      "required": ["atoms", "tracks", "observations", "events"],
+      "properties": {
+        "atoms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "element"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "element": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "tracks": {"$ref": "#/$defs/focus_count"},
+        "observations": {"$ref": "#/$defs/focus_count"},
+        "events": {"$ref": "#/$defs/focus_count"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "focus_count": {
+      "type": "object",
+      "required": ["reported", "total"],
+      "properties": {
+        "reported": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": true

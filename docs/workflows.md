@@ -36,7 +36,38 @@ Events compare adjacent frames only. `track_summary.csv`, `track_summary` in
 its first and last frames, whether it spans the path, and the net change, max − min,
 and largest single step for charge, volume, and each configured descriptor. A change
 spread over many frames appears there even when no single step crosses an event
-threshold.
+threshold. The report's table has one group per quantity, listing tracks by max − min,
+largest first; quantities are not ranked against each other because their units
+differ. The CSV and JSON keep track order.
+
+When every frame has an energy, each event is labelled `before`, `spanning`, or
+`after` the highest-energy frame (`barrier_position` in `analysis.json` and
+`events.csv`). An event spans the barrier when its step starts or ends at that frame,
+so the frame spacing cannot place it on either side. Frames that tie exactly at the
+maximum all count as the peak. `barrier` in `analysis.json` records the peak frames
+and their rise above the first and last frames, and the report's energy profile marks
+the peak and counts the events on each step. Events are not placed when a frame lacks
+an energy, as NEB endpoint directories without `OUTCAR` or `OSZICAR` do, or for a
+pressure series.
+
+## Focus on the reacting atoms
+
+In a large cell, most features belong to spectator molecules. List the atoms of
+interest by 0-based POSCAR index:
+
+```toml
+[outputs]
+focus_atoms = [12, 13, 40, 41, 97]
+```
+
+Matching still uses every atom and feature, so assignments, IDs, and confidences do
+not change. Events, `feature_tracks.csv`, `track_summary`, the other CSV files, and
+the report keep only the tracks tied to those atoms, through `neighbor_atom_indices`
+or, for an atom-centered feature, the atom itself, plus the events on those tracks. A
+track is kept whole when any of its observations touches a focus atom. `focus` in
+`analysis.json` lists the atoms with their elements and the reported and total
+numbers of tracks, observations, and events. Warnings are not filtered. An index that
+is not an atom of every frame stops the analysis before any output is written.
 
 ## Golden path from existing results
 

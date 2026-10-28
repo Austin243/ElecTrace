@@ -54,6 +54,21 @@ spread and largest step of each quantity. It applies no threshold, creates no
 events, and inherits the frame sampling and feature matching; a track that starts or
 ends mid-path covers only that segment.
 
+`focus_atoms` changes what is reported, not what is matched. Features without
+recorded atoms, such as non-nuclear attractors or ring and cage critical points
+without attractor atoms, belong to no focus and are left out, so check an unfocused
+run before concluding that nothing changed elsewhere. The focus uses each frame's own
+atom indices; with geometric identity, ElecTrace warns when a focus atom is matched to
+a different index.
+
+Barrier labels compare each event's step with the highest-energy sampled frame. For an
+NEB this is the highest image, not the saddle point; for a static scan it is the scan
+maximum. A spanning event changes on a step that touches that frame, which the frame
+spacing cannot resolve further. No energy tolerance is applied, so a peak that differs
+from its neighbors only by numerical noise still counts; read the rises recorded in
+`barrier`. A rise of zero means an endpoint is the highest frame and the profile has
+no interior maximum.
+
 - Bader and DDEC charges depend on the partitioning scheme and are not automatically
   formal oxidation states.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.
