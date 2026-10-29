@@ -6,6 +6,7 @@ from .descriptors import (
     DescriptorDocument,
     DescriptorError,
     attach_descriptors,
+    attach_net_charges,
     attach_spin_populations,
     descriptor_from_dict,
     dump_descriptor,
@@ -29,6 +30,7 @@ from .vasp import (
     parse_poscar,
     read_poscar,
     read_vasp_energy,
+    read_vasp_zval,
 )
 
 __all__ = [
@@ -43,6 +45,7 @@ __all__ = [
     "SeriesKind",
     "VaspParseError",
     "attach_descriptors",
+    "attach_net_charges",
     "attach_spin_populations",
     "descriptor_from_dict",
     "discover_neb",
@@ -57,4 +60,5 @@ __all__ = [
     "pressure_from_outcar",
     "read_poscar",
     "read_vasp_energy",
+    "read_vasp_zval",
 ]

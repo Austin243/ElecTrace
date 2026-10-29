@@ -24,7 +24,8 @@ feature requires a unique non-empty ``id``, a non-empty ``kind``, and three
 finite fractional coordinates.  Neighbor atom indices are zero-based.  This
 module also contains intentionally conservative adapters for BaderKit JSON,
 critic2-derived JSON, LOBSTER ICOH(P|B)LIST files, Bader ``ACF.dat``, Chargemol
-DDEC charge XYZ files, and Bader spin populations in ``spin/ACF.dat``.  Native
+DDEC charge XYZ files, and Bader spin populations in ``spin/ACF.dat``, plus Bader net
+charges from the ZVAL in a frame's ``POTCAR`` or ``OUTCAR``.  Native
 formats that do not contain periodic coordinates require the associated
 :class:`~electrace.models.Frame`.
 """
@@ -41,6 +42,8 @@ from typing import Any
 
 from electrace._files import atomic_write_text
 from electrace.models import Feature, Frame
+
+from .vasp import VaspParseError, element_symbol, read_vasp_zval
 
 SCHEMA_VERSION = "electrace.features.v1"
 MAX_DESCRIPTOR_BYTES = 64 * 1024 * 1024
@@ -796,6 +799,9 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
         }
         if lattice_translation is not None:
             attributes["lattice_translation"] = list(lattice_translation)
+            # neighbor_atom_indices is sorted, so record which atom the translation
+            # moves: LOBSTER's second label, which may be the lower index (Cl5 Na1).
+            attributes["lattice_translation_atom"] = second
         if descriptor == "icohp_ev":
             attributes["icohp"] = value
         attributes["descriptor_family"] = family
@@ -1113,6 +1119,103 @@ def attach_spin_populations(frame: Frame, path: str | Path) -> Frame:
                     "mu_B), with the sign VASP wrote."
                 ),
                 "atomic_spin_sum": math.fsum(spins),
+            },
+        },
+    ]
+    return replace(frame, features=tuple(features), metadata=metadata)
+
+
+NET_CHARGE_SOURCES = ("POTCAR", "OUTCAR")
+
+
+def _is_population(feature: Feature) -> bool:
+    """Return whether *feature* is one atom's Bader or BaderKit electron population."""
+
+    return (
+        feature.kind == "atomic_charge"
+        and len(feature.neighbor_atom_indices) == 1
+        and feature.attributes.get("charge_definition") == "bader_electron_population"
+    )
+
+
+def _species_blocks(frame: Frame) -> tuple[list[str], dict[int, int]]:
+    """Return the POSCAR species blocks as element symbols, and each atom's block."""
+
+    blocks: list[str] = []
+    block_of: dict[int, int] = {}
+    for atom in frame.atoms:
+        symbol = element_symbol(atom.element)
+        if not blocks or blocks[-1] != symbol:
+            blocks.append(symbol)
+        block_of[atom.index] = len(blocks) - 1
+    return blocks, block_of
+
+
+def _frame_zval(directory: Path, blocks: list[str]) -> tuple[Path, tuple[tuple[str, float], ...]]:
+    """Return the frame's ZVAL file and entries, which must match its species blocks."""
+
+    source = next(
+        (directory / name for name in NET_CHARGE_SOURCES if (directory / name).is_file()), None
+    )
+    if source is None:
+        raise DescriptorError("no POTCAR or OUTCAR in the frame directory")
+    zval = read_vasp_zval(source)
+    species = [element for element, _ in zval]
+    if species != blocks:
+        raise DescriptorError(
+            f"{source.name} species {' '.join(species)} do not match the POSCAR species "
+            f"{' '.join(blocks)}, which VASP pairs by position"
+        )
+    return source, zval
+
+
+def attach_net_charges(frame: Frame, directory: str | Path) -> Frame:
+    """Attach ``net_charge`` = ZVAL - population to Bader and BaderKit atom populations.
+
+    ZVAL comes from the first of ``POTCAR`` and ``OUTCAR`` in the frame *directory*.
+    VASP pairs their entries with the POSCAR species blocks by position, so ZVAL is
+    taken per block, and the two orders must agree. Otherwise nothing is attached and
+    ``net_charge_unavailable`` in the frame metadata says why; ZVAL is never assumed.
+    Populations stay in ``charge``. DDEC charges are already net charges, and BaderKit
+    basins and oxidation states are not atom populations, so they are left alone.
+    """
+
+    if not any(_is_population(feature) for feature in frame.features):
+        return frame
+    blocks, block_of = _species_blocks(frame)
+    try:
+        source, zval = _frame_zval(Path(directory), blocks)
+    except (DescriptorError, VaspParseError) as exc:
+        return replace(frame, metadata={**frame.metadata, "net_charge_unavailable": str(exc)})
+    features = list(frame.features)
+    sums: dict[str, list[float]] = {}
+    for position, feature in enumerate(features):
+        if not _is_population(feature) or feature.charge is None:
+            continue
+        net_charge = zval[block_of[feature.neighbor_atom_indices[0]]][1] - feature.charge
+        features[position] = replace(
+            feature, attributes={**feature.attributes, "net_charge": net_charge}
+        )
+        producer = str(feature.attributes.get("descriptor_producer"))
+        sums.setdefault(producer, []).append(net_charge)
+    metadata = dict(frame.metadata)
+    metadata["descriptor_sources"] = [*metadata.get("descriptor_sources", []), str(source)]
+    metadata["descriptor_documents"] = [
+        *metadata.get("descriptor_documents", []),
+        {
+            "schema_version": SCHEMA_VERSION,
+            "producer": {"name": "vasp"},
+            "metadata": {
+                "native_format": source.name,
+                "potcar_species": [element for element, _ in zval],
+                "zval": [value for _, value in zval],
+                "net_charge_convention": (
+                    "net_charge is ZVAL minus the Bader electron population, in e; positive "
+                    "values mean electron deficiency."
+                ),
+                "net_charge_sum": {
+                    producer: math.fsum(values) for producer, values in sorted(sums.items())
+                },
             },
         },
     ]

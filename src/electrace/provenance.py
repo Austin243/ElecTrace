@@ -26,7 +26,8 @@ def fingerprint_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
     """Create stable path/size/hash records for existing regular files."""
 
     records: list[dict[str, Any]] = []
-    for item in sorted((Path(path).resolve() for path in paths), key=str):
+    # One file can serve twice, such as an OUTCAR read for both energy and ZVAL.
+    for item in sorted({Path(path).resolve() for path in paths}, key=str):
         if not item.is_file():
             continue
         stat = item.stat()

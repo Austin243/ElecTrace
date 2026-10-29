@@ -15,9 +15,11 @@ import numpy as np
 
 from electrace import __version__
 from electrace._files import atomic_write_text
+from electrace.bonds import bond_records
 from electrace.config import ElecTraceConfig, load_config
 from electrace.events import EventDetectionConfig, _as_finite_float, track_sequence
 from electrace.export import (
+    write_bonds_csv,
     write_events_csv,
     write_json,
     write_track_summary_csv,
@@ -165,7 +167,7 @@ def _observation(
     parent_track_ids: Iterable[str] = (),
 ) -> dict[str, Any]:
     position = feature.fractional_position
-    return {
+    observation = {
         "track_id": track_id,
         "frame": frame.index,
         "frame_label": frame.label,
@@ -181,6 +183,10 @@ def _observation(
         "neighbor_atom_indices": list(feature.neighbor_atom_indices),
         "attributes": dict(feature.attributes),
     }
+    if "net_charge" in feature.attributes:
+        # A Bader charge is a population; its net charge gets its own CSV column.
+        observation["net_charge"] = feature.attributes["net_charge"]
+    return observation
 
 
 def _build_tracks(
@@ -369,25 +375,30 @@ def _check_focus_atoms(sequence: Sequence, focus_atoms: Iterable[int]) -> None:
             )
 
 
-def _focus_identity_warnings(
-    sequence: Sequence, atom_matches: Iterable[MatchResult], focus_atoms: list[int]
+def _identity_warnings(
+    sequence: Sequence,
+    atom_matches: Iterable[MatchResult],
+    atoms: Iterable[int],
+    subject: str,
+    uses: str,
 ) -> list[str]:
-    """Flag focus atoms matched to a different index, which geometric identity allows."""
+    """Flag atoms matched to a different index, which geometric identity allows."""
 
     labels = {frame.index: frame.label for frame in sequence.frames}
+    indices = sorted(set(atoms))
     warnings: list[str] = []
     for result in atom_matches:
         mapping = result.mapping
         moved = [
             f"{index}→{mapping.get(index, 'unmatched')}"
-            for index in focus_atoms
+            for index in indices
             if mapping.get(index) != index
         ]
         if moved:
             warnings.append(
                 f"Frames {labels[result.previous_frame_index]}→{labels[result.current_frame_index]}: "
-                f"focus atom(s) matched to another index ({', '.join(moved)}); the focus "
-                "uses each frame's own atom indices."
+                f"{subject} atom(s) matched to another index ({', '.join(moved)}); {uses} "
+                "each frame's own atom indices."
             )
     return warnings
 
@@ -422,11 +433,15 @@ def _focus_view(
         )
     ]
     observations = [item for item in tracks if item["track_id"] in kept]
+    bonds = [
+        item for item in analysis["bonds"] if focus.intersection((item["atom_a"], item["atom_b"]))
+    ]
     first = sequence.frames[0]
     return {
         "events": events,
         "tracks": observations,
         "track_summary": [item for item in analysis["track_summary"] if item["track_id"] in kept],
+        "bonds": bonds,
         "focus": {
             "atoms": [
                 {"index": index, "element": first.atom_by_index(index).element}
@@ -435,6 +450,7 @@ def _focus_view(
             "tracks": {"reported": len(kept), "total": len(analysis["track_summary"])},
             "observations": {"reported": len(observations), "total": len(tracks)},
             "events": {"reported": len(events), "total": len(analysis["events"])},
+            "bonds": {"reported": len(bonds), "total": len(analysis["bonds"])},
         },
     }
 
@@ -499,14 +515,20 @@ def analyze_sequence(
     event_config = _event_config(config)
     tracking = track_sequence(sequence, atom_config, feature_config, event_config)
     tracks, track_warnings = _build_tracks(sequence, tracking.feature_matches)
-    descriptors = sorted(
-        {*config.events.descriptor_thresholds, *config.matching.descriptor_scales}
-        - {"charge", "volume"}
+    configured = {*config.events.descriptor_thresholds, *config.matching.descriptor_scales}
+    descriptors = sorted(configured - {"charge", "net_charge", "volume"})
+    net_charges = "net_charge" in configured or any(
+        "net_charge" in item.attributes for frame in sequence.frames for item in frame.features
     )
-    track_summary = _summarize_tracks(sequence, tracks, ("charge", "volume", *descriptors))
+    track_summary = _summarize_tracks(
+        sequence,
+        tracks,
+        ("charge", *(("net_charge",) if net_charges else ()), "volume", *descriptors),
+    )
+    bonds, bond_warnings = bond_records(sequence, tracks)
     descriptor_documents, descriptor_warnings = _descriptor_provenance(sequence)
 
-    warnings = [*track_warnings, *descriptor_warnings]
+    warnings = [*track_warnings, *descriptor_warnings, *bond_warnings]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
     if missing_features:
         warnings.append(
@@ -525,6 +547,16 @@ def analyze_sequence(
             + ", ".join(missing_spin)
             + "; spin is missing there, not zero."
         )
+    without_net_charges: dict[str, list[str]] = {}
+    for frame in sequence.frames:
+        reason = frame.metadata.get("net_charge_unavailable")
+        if isinstance(reason, str):
+            without_net_charges.setdefault(reason, []).append(frame.label)
+    warnings.extend(
+        f"No net charges for frame(s) {', '.join(labels)} ({reason}); their Bader charges "
+        "are electron populations only."
+        for reason, labels in without_net_charges.items()
+    )
     missing_energies = [frame.label for frame in sequence.frames if frame.energy is None]
     if missing_energies:
         warnings.append("No VASP energy was found for frame(s): " + ", ".join(missing_energies))
@@ -536,7 +568,20 @@ def analyze_sequence(
             "VASP 4 element symbols were inferred for frame(s): " + ", ".join(inferred_symbols)
         )
     if focus_atoms:
-        warnings.extend(_focus_identity_warnings(sequence, tracking.atom_matches, focus_atoms))
+        warnings.extend(
+            _identity_warnings(
+                sequence, tracking.atom_matches, focus_atoms, "focus", "the focus uses"
+            )
+        )
+    warnings.extend(
+        _identity_warnings(
+            sequence,
+            tracking.atom_matches,
+            (index for item in bonds for index in (item["atom_a"], item["atom_b"])),
+            "bond",
+            "bond rows use",
+        )
+    )
 
     path = Path(config_path).resolve() if config_path is not None else None
     sources = fingerprint_files(_source_files(sequence, path))
@@ -594,6 +639,7 @@ def analyze_sequence(
         "events": events,
         "tracks": tracks,
         "track_summary": track_summary,
+        "bonds": bonds,
         "barrier": barrier,
         "diagnostics": tracking.diagnostics,
     }
@@ -641,6 +687,7 @@ def _prepare_output(directory: Path, overwrite: bool) -> None:
 _KNOWN_BUNDLE_ARTIFACTS = frozenset(
     {
         "analysis.json",
+        "bonds.csv",
         "events.csv",
         "feature_tracks.csv",
         "report.html",
@@ -674,6 +721,7 @@ def write_analysis_bundle(
                 analysis.get("track_summary", []), directory / "track_summary.csv"
             )
         )
+        written.append(write_bonds_csv(analysis.get("bonds", []), directory / "bonds.csv"))
     if config.outputs.html_report:
         written.append(render_html_report(analysis, directory / "report.html"))
 

@@ -23,12 +23,14 @@ electrace inspect electrace-results
 For an agent or script, append `--json` to either command. With ElecTrace
 0.1.0a5, a successful run of the checked configuration reports:
 
-- 7 ordered frames and no analysis warnings;
+- 7 ordered frames and one warning: the frames have no `POTCAR` or `OUTCAR`, so
+  the Bader charges stay electron populations;
 - 35 feature observations belonging to 5 tracks;
 - 20 events: 19 descriptor changes (17 confirmed, 2 right-censored) and one
   confirmed candidate connectivity change;
-- `analysis.json`, `events.csv`, `feature_tracks.csv`, `track_summary.csv`,
-  `report.html`, and `manifest.json` in `electrace-results/`.
+- 14 bond rows for 3 bonds;
+- `analysis.json`, `bonds.csv`, `events.csv`, `feature_tracks.csv`,
+  `track_summary.csv`, `report.html`, and `manifest.json` in `electrace-results/`.
 
 The generated result bundle is intentionally ignored by Git because it records
 run-local paths, timestamps, hashes, and platform provenance.
@@ -52,7 +54,20 @@ between frames 02 and 03 as a candidate `connectivity_change`
 between those frames, which weakens the atom correspondence; the event evidence
 lists atom identity, motion, and shared-neighbor geometry separately for review.
 `ACF.dat` `CHARGE` values are integrated electron populations, not signed net
-atomic charges.
+atomic charges. ElecTrace adds net charges only when a frame's `POTCAR` or `OUTCAR`
+gives ZVAL, and this example ships neither.
+
+`bonds.csv` lists the same critical points by atom pair instead of by track:
+
+| Bond | Atoms | Frames |
+| --- | --- | --- |
+| `B00001` | C0–N1 | 00–06 |
+| `B00002` | C0–H2 | 00–02 |
+| `B00003` | N1–H2 | 03–06 |
+
+`B00002` ends at frame 02 and `B00003` begins at frame 03. Both rows come from track
+`T00005`, but they are different bonds and are never joined. Each row carries the
+interatomic distance and critic2's field and Laplacian for that frame.
 
 The event thresholds in `electrace.toml` are illustrative and system-specific.
 Here, event persistence means the matched feature lineage remains observable; it

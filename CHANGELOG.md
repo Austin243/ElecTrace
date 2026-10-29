@@ -4,6 +4,25 @@
 
 ### Added
 
+- A per-bond view: one record per atom pair, periodic image, and frame for each
+  feature tied to exactly two atoms, such as critic2 bond critical points and LOBSTER
+  bonds. Each record has the interatomic distance (the minimum image, or the
+  feature's own lattice translation), the critical point's `field` and `laplacian`,
+  and LOBSTER `icohp` and `icobi`, with missing values null. Features on one pair and
+  image are joined; two that give the same quantity keep separate rows. It is
+  `bonds` in `analysis.json`, `bonds.csv`, and a report table. Rows are keyed by atoms
+  and image, never by feature track, so a bond that forms or breaks, or a critical
+  point that moves to another pair (HCN `E00004`, C–H → N–H), begins or ends rows.
+  `bond_id` follows a pair and image through atoms that wrap across the cell between
+  frames. With `focus_atoms`, only pairs that include a focus atom are reported.
+- `net_charge` (ZVAL minus population) on Bader and BaderKit atom populations when
+  the frame directory's `POTCAR` or `OUTCAR` gives a ZVAL for every POSCAR species
+  block in order. Populations stay in `charge`. Otherwise the charges stay
+  populations and a warning names the frames and the reason; ZVAL is never assumed.
+  DDEC charges, already net charges, are unchanged. Net charges are carried into
+  feature tracks (a `net_charge` column in `feature_tracks.csv`), the whole-path
+  summary, and the report, and each frame's sum is recorded under
+  `provenance.descriptor_documents`.
 - Per-atom spin populations for collinear `ISPIN = 2` VASP runs.
   `electrace volume CHGCAR --split-spin` writes `spin/CHGCAR_tot` and
   `spin/CHGCAR_mag` unchanged in value and sign; it refuses one-grid, truncated,
@@ -51,6 +70,10 @@
 
 ### Changed
 
+- A LOBSTER bond with a lattice translation records `lattice_translation_atom`, the
+  atom whose image the translation selects. That is LOBSTER's second label, which
+  can be the lower index (`Cl5 Na1`), so sorted `neighbor_atom_indices` alone could
+  not place the image.
 - A LOBSTER bond from an atom to its own periodic image lists the atom once in
   `neighbor_atom_indices`, with `lattice_translation` naming the image. Such rows,
   common in real `ICOHPLIST` files, previously made the whole file fail. LOBSTER

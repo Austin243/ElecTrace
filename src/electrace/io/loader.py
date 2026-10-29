@@ -13,6 +13,7 @@ from .descriptors import (
     DescriptorDocument,
     DescriptorError,
     attach_descriptors,
+    attach_net_charges,
     attach_spin_populations,
     load_descriptor,
 )
@@ -179,7 +180,7 @@ def _load_discovered(
             )
         if spin_paths:
             frame = attach_spin_populations(frame, spin_paths[0])
-        frames.append(frame)
+        frames.append(attach_net_charges(frame, source.directory))
     return frames
 
 

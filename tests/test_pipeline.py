@@ -21,6 +21,7 @@ def test_demo_pipeline_analyzes_and_writes_report_bundle(tmp_path: Path) -> None
     assert analysis["provenance"]["descriptor_producers"] == ["electrace-demo"]
     assert {path.name for path in artifacts.files} == {
         "analysis.json",
+        "bonds.csv",
         "events.csv",
         "feature_tracks.csv",
         "manifest.json",

@@ -16,10 +16,13 @@ workflow.
 - Reads `POSCAR`/`CONTCAR` structures and VASP `ELFCAR`/`CHGCAR` grids, and splits a
   spin-polarized `CHGCAR` into total and magnetization grids for Bader.
 - Ingests supported Bader/BaderKit, critic2, LOBSTER, and Chargemol results, including
-  per-atom spin populations and spin-resolved LOBSTER lists.
+  per-atom spin populations and spin-resolved LOBSTER lists, and gives Bader net
+  charges when a frame's `POTCAR` or `OUTCAR` supplies ZVAL.
 - Matches atoms and electronic features across periodic and changing cells.
 - Builds feature correspondences and reports births, deaths, conservation-backed
   split/merge candidates, and descriptor changes.
+- Lists each bond's distance, critical-point density and Laplacian, and ICOHP/ICOBI
+  frame by frame, with rows that begin or end as bonds form or break.
 - Stages VASP, Bader/BaderKit, critic2, and LOBSTER steps from a YAML workflow.
 - Writes JSON, CSV, and HTML results with available source and tool provenance.
 
