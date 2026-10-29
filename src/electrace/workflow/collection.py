@@ -18,13 +18,13 @@ from electrace.config import (
     OutputConfig,
     load_config,
 )
-from electrace.io.descriptors import load_descriptor
+from electrace.io.descriptors import NET_CHARGE_SOURCES, load_descriptor
 from electrace.io.vasp import read_poscar
 from electrace.pipeline import AnalysisArtifacts, run_project
 
 from .manifest import load_workflow_manifest
 from .models import WorkflowManifest
-from .staging import StagedWorkflow, descriptor_outputs, load_staged_workflow
+from .staging import StagedFrame, StagedWorkflow, descriptor_outputs, load_staged_workflow
 
 COLLECTION_SCHEMA_VERSION = "electrace.collection.v1"
 COLLECTION_DIRECTORY = "analysis"
@@ -151,6 +151,23 @@ def _render_config(config: ElecTraceConfig) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _zval_source(manifest: WorkflowManifest, frame: StagedFrame) -> Path | None:
+    """Return the POTCAR or OUTCAR that gives ZVAL for a frame's collected Bader charges.
+
+    A VASP step's POTCAR comes first, since that step ran the density. Without one, the
+    source frame's own POTCAR or OUTCAR is used. A VASP step's OUTCAR is not collected:
+    its energy would replace the source frame's.
+    """
+
+    candidates = [
+        frame.workspace_directory / step.id / "POTCAR"
+        for step in manifest.steps
+        if step.kind == "vasp"
+    ]
+    candidates.extend(frame.source_directory / name for name in NET_CHARGE_SOURCES)
+    return next((path for path in candidates if path.is_file()), None)
+
+
 def _expected_descriptor_ids(staged: StagedWorkflow, manifest: WorkflowManifest) -> tuple[str, ...]:
     steps = tuple(step for step in manifest.steps if step.kind != "vasp")
     if not steps:
@@ -260,6 +277,11 @@ def collect_workflow_outputs(
                     encoding="utf-8",
                 )
                 written.append(energy)
+            zval = _zval_source(manifest, frame)
+            if zval is not None:
+                valence = Path("input") / frame.analysis_label / zval.name
+                shutil.copy2(zval, temporary / valence)
+                written.append(valence)
 
         destinations: set[Path] = set()
         for job_id in expected_ids:

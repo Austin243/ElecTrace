@@ -130,7 +130,7 @@
           "parent_track_ids": {"type": "array", "items": {"type": "string"}},
           "changes": {
             "type": "object",
-            "description": "Keyed by charge, volume, and each configured descriptor (such as icohp or spin), in native units.",
+            "description": "Keyed by charge, volume, net_charge when any frame has net charges, and each configured descriptor (such as icohp or spin), in native units.",
             "additionalProperties": {
               "type": "object",
               "required": ["observed", "net_change", "range", "largest_step"],
@@ -164,6 +164,57 @@
         "additionalProperties": true
       }
     },
+    "bonds": {
+      "type": "array",
+      "description": "One record per atom pair, periodic image, and frame for features tied to exactly two atoms, ordered by bond and frame. Reporting only: no thresholds or events.",
+      "items": {
+        "type": "object",
+        "required": [
+          "bond_id",
+          "frame",
+          "frame_label",
+          "atom_a",
+          "element_a",
+          "atom_b",
+          "element_b",
+          "lattice_translation",
+          "distance",
+          "field",
+          "laplacian",
+          "icohp",
+          "icobi",
+          "feature_ids",
+          "track_ids"
+        ],
+        "properties": {
+          "bond_id": {
+            "type": "string",
+            "description": "One atom pair and periodic image along the path, followed through atoms that wrap across the cell. A row begins or ends where no feature ties the pair."
+          },
+          "frame": {"type": "integer", "minimum": 0},
+          "frame_label": {"type": "string"},
+          "atom_a": {"type": "integer", "minimum": 0, "description": "0-based POSCAR index; atom_a <= atom_b."},
+          "element_a": {"type": "string"},
+          "atom_b": {"type": "integer", "minimum": 0, "description": "0-based POSCAR index; equal to atom_a for a bond to the atom's own image."},
+          "element_b": {"type": "string"},
+          "lattice_translation": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Image of atom_b joined to atom_a in this frame's fractional coordinates: the feature's own translation, else the nearest image."
+          },
+          "distance": {"type": "number", "minimum": 0, "description": "Interatomic distance in angstrom."},
+          "field": {"type": ["number", "null"], "description": "Density at the bond critical point (critic2 units)."},
+          "laplacian": {"type": ["number", "null"], "description": "Laplacian at the bond critical point (critic2 units)."},
+          "icohp": {"type": ["number", "null"], "description": "LOBSTER ICOHP in eV."},
+          "icobi": {"type": ["number", "null"], "description": "LOBSTER ICOBI."},
+          "feature_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+          "track_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
     "barrier": {
       "type": "object",
       "description": "Highest-energy frame(s) used to place events. Reporting only: no tolerance or thresholds.",
@@ -182,7 +233,7 @@
     },
     "focus": {
       "type": "object",
-      "description": "Present only with outputs.focus_atoms. Events, tracks, and track_summary then cover the tracks tied to these atoms; with focus_atoms = \"auto\" and no atom selected, they cover everything.",
+      "description": "Present only with outputs.focus_atoms. Events, tracks, and track_summary then cover the tracks tied to these atoms, and bonds the pairs that include one; with focus_atoms = \"auto\" and no atom selected, they cover everything.",
       "required": ["atoms", "tracks", "observations", "events"],
       "properties": {
         "atoms": {
@@ -207,6 +258,7 @@
         "tracks": {"$ref": "#/$defs/focus_count"},
         "observations": {"$ref": "#/$defs/focus_count"},
         "events": {"$ref": "#/$defs/focus_count"},
+        "bonds": {"$ref": "#/$defs/focus_count"},
         "selection": {"const": "auto", "description": "Present with focus_atoms = \"auto\"."},
         "rules": {
           "type": "object",

@@ -27,7 +27,9 @@ commands. Prepare Slurm scripts without `--yes`, review them, then submit with
 
 For spin-polarized runs, `electrace volume CHGCAR --split-spin` prepares the Bader
 spin-population run described in [Using ElecTrace](workflows.md#spin-polarized-runs).
-Never assume an `ISPIN` value; missing spin populations stay missing.
+Never assume an `ISPIN` value; missing spin populations stay missing. Likewise never
+assume a ZVAL: Bader net charges come only from each frame's `POTCAR` or `OUTCAR`, as
+described in [Net atomic charges](workflows.md#net-atomic-charges).
 
 After outputs exist, run `electrace workflow analyze MANIFEST --json`. Surface
 warnings and missing evidence. Never treat Bader/DDEC values as definitive oxidation

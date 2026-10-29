@@ -39,6 +39,7 @@ The deterministic demo is a regression fixture, not scientific validation.
 - `src/electrace/geometry.py`: periodic and deformation-aware geometry.
 - `src/electrace/matching.py`: atom/feature assignment and split/merge candidates.
 - `src/electrace/events.py`: event evidence and consecutive-frame persistence.
+- `src/electrace/bonds.py`: per-bond records for features tied to two atoms.
 - `src/electrace/io/`: VASP discovery, parsing, descriptor normalization.
 - `src/electrace/plugins/`: capability checks and non-executing command plans.
 - `src/electrace/workflow/`: manifests, staging, explicit execution, and collection.

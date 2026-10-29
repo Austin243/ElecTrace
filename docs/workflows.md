@@ -41,6 +41,28 @@ threshold. The report's table has one group per quantity, listing tracks by max 
 largest first; quantities are not ranked against each other because their units
 differ. The CSV and JSON keep track order.
 
+`bonds.csv`, `bonds` in `analysis.json`, and the report's per-bond table give one row
+per atom pair, periodic image, and frame for each feature tied to exactly two atoms:
+critic2 bond critical points, through their two attractor atoms, and LOBSTER bonds.
+A row holds the interatomic distance in Å, the critical point's `field` and
+`laplacian` in critic2's units, and LOBSTER's `icohp` (eV) and `icobi`; a value with no
+source in that frame is empty, never zero. Features on one pair and image are joined,
+so a critical point and LOBSTER's ICOHP for the same bond share a row; two features
+that give the same quantity keep separate rows, and a warning names them. The distance
+uses the feature's `lattice_translation` when it has one (LOBSTER's eight-column
+rows) and the nearest image otherwise. A two-atom feature whose translation does not
+say which atom it moves (`lattice_translation_atom`), as in LOBSTER features saved as
+canonical JSON by earlier versions, has no bond row; a warning counts such features
+and names their frames, and reading the native LOBSTER list again restores the rows.
+
+Rows are keyed by atoms and image, never by feature track. A bond that forms or
+breaks, or a critical point that moves to another pair, ends one bond's rows and
+begins another's, and the report marks where each run of rows begins and ends.
+`bond_id` names one pair and image along the path and stays the same when an atom
+wraps across the cell between frames. Atoms are each frame's 0-based POSCAR indices,
+as for `focus_atoms`; with geometric identity, a warning names bond atoms matched to
+another index.
+
 When every frame has an energy, each event is labelled `before`, `spanning`, or
 `after` the highest-energy frame (`barrier_position` in `analysis.json` and
 `events.csv`). An event spans the barrier when its step starts or ends at that frame,
@@ -65,10 +87,11 @@ Matching still uses every atom and feature, so assignments, IDs, and confidences
 not change. Events, `feature_tracks.csv`, `track_summary`, the other CSV files, and
 the report keep only the tracks tied to those atoms, through `neighbor_atom_indices`
 or, for an atom-centered feature, the atom itself, plus the events on those tracks. A
-track is kept whole when any of its observations touches a focus atom. `focus` in
-`analysis.json` lists the atoms with their elements and the reported and total
-numbers of tracks, observations, and events. Warnings are not filtered. An index that
-is not an atom of every frame stops the analysis before any output is written.
+track is kept whole when any of its observations touches a focus atom. Bond rows are
+kept when either atom is a focus atom. `focus` in `analysis.json` lists the atoms with
+their elements and the reported and total numbers of tracks, observations, events,
+and bond rows. Warnings are not filtered. An index that is not an atom of every frame
+stops the analysis before any output is written.
 
 To let ElecTrace choose the atoms, set:
 
@@ -163,7 +186,8 @@ electrace inspect electrace-results
 
 With ElecTrace 0.1.0a5, the checked configuration produces 7 frames, 35 feature
 observations, 20 events (19 descriptor changes and one candidate
-bond-critical-point connectivity change), and no warnings. See the
+bond-critical-point connectivity change), 14 bond rows, and one warning: the example
+has no `POTCAR` or `OUTCAR`, so its Bader charges stay electron populations. See the
 [example guide](https://github.com/Austin243/ElecTrace/blob/main/examples/hcn-hnc/README.md)
 for what to inspect and the
 [generation record](https://github.com/Austin243/ElecTrace/blob/main/examples/hcn-hnc/generation/PROVENANCE.md)
@@ -195,6 +219,35 @@ translations T and −T with the same distance and values, so the first row beco
 the feature and the mirrored row is counted as `collapsed_self_image_rows` in the
 document metadata; mirrored rows that disagree are an error. Atom labels must be an
 element and an index, such as `Na1`. LCFO fragment lists and n-center `NcICOBILIST` files are not supported.
+A translated bond also records `lattice_translation_atom`, the atom whose image the
+translation selects: LOBSTER's second label, which can be the lower index, as in
+`Cl5 Na1`.
+
+## Net atomic charges
+
+Bader `ACF.dat` charges and BaderKit `atom_charges` are electron populations, kept in
+`charge`. When the frame directory holds a `POTCAR` or an `OUTCAR` (the first found, in
+that order), ElecTrace reads each entry's `TITEL` and `ZVAL`, from an `OUTCAR` only
+its copy of the `POTCAR` headers, and adds `net_charge` = ZVAL − population to each
+Bader and BaderKit atom feature. VASP pairs `POTCAR` entries with `POSCAR` species
+blocks by position, so ZVAL is taken per block of the species line and counts, and
+the element orders must agree. Adjacent blocks of one element stay apart, as in
+`Fe Fe O` for two magnetic sublattices or `Ga As H H` for two pseudo-hydrogens.
+Labels are compared by element symbol, so `C_h` or `H1.25` matches `C` or `H`. When
+the file is missing, a species has no ZVAL, the orders differ, or a VASP 4 `POSCAR`
+names no species, the frame keeps populations only. A warning then names the frames
+and the reason, which is also `net_charge_unavailable` in each frame's `metadata` in
+`analysis.json`. ZVAL is never assumed. In an NEB, whose endpoint directories usually
+have no `OUTCAR`, place the band's `POTCAR`, or a link to it, in each frame directory;
+`electrace workflow analyze` collects the `POTCAR` its VASP step used.
+
+DDEC charges are already net charges and are unchanged. BaderKit basins and
+oxidation states get no net charge. `net_charge` is tracked with its feature: it is a
+column of `feature_tracks.csv` and a quantity in the whole-path summary. Each frame's
+sum of net charges, `net_charge_sum`, is recorded with the ZVAL values under
+`provenance.descriptor_documents`, whose producer `vasp` is then listed in
+`provenance.descriptor_producers`, and shown in the report's frame inventory. The sum
+is zero only when the populations place every valence electron on an atom.
 
 ## Spin-polarized runs
 
@@ -334,10 +387,15 @@ electrace workflow analyze electrace-workflow.yaml --json
 
 Analysis collects supported outputs, normalizes them, matches atoms and electronic
 features across frames, and writes the same result bundle used for existing evidence.
+For [net charges](#net-atomic-charges), each frame's collection also holds the
+`POTCAR` its VASP step used or, when that step has none, the source frame's own
+`POTCAR` or `OUTCAR`. A VASP step's `OUTCAR` is not collected, because its energy
+would replace the source frame's.
 
 ## Scientific boundaries
 
-- Bader and DDEC populations are not unique formal oxidation states.
+- Bader and DDEC charges, and net charges from Bader populations, are not unique
+  formal oxidation states.
 - ICOHP/ICOBI values depend on the projection basis and integration convention.
 - critic2 support normalizes critical-point topology; it does not integrate ELF basins.
 - Spin populations depend on the Bader partition and keep VASP's sign; non-collinear

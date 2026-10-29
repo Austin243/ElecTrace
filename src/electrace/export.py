@@ -139,6 +139,33 @@ def write_track_summary_csv(summary: Iterable[Mapping[str, Any]], path: str | Pa
     return output
 
 
+def write_bonds_csv(bonds: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+    """Write one formula-neutralized row per bond and frame, grouped by bond."""
+
+    rows = _flatten_csv_rows(bonds, context="bonds CSV")
+    output = Path(path)
+    preferred = [
+        "bond_id",
+        "frame",
+        "frame_label",
+        "atom_a",
+        "element_a",
+        "atom_b",
+        "element_b",
+        "lattice_translation",
+        "distance",
+        "field",
+        "laplacian",
+        "icohp",
+        "icobi",
+        "feature_ids",
+        "track_ids",
+    ]
+    extras = sorted({key for row in rows for key in row if key not in preferred})
+    _write_csv(rows, preferred + extras, output)
+    return output
+
+
 def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
     """Write formula-neutralized feature-track observations in long form."""
 

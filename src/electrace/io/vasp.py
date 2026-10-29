@@ -31,6 +31,7 @@ class PoscarData:
     coordinate_mode: str
     symbols_inferred: bool = False
     species: tuple[str, ...] = ()  # species-line labels, in file order
+    counts: tuple[int, ...] = ()  # atoms per species-line label
 
     def __post_init__(self) -> None:
         if not self.elements:
@@ -53,6 +54,11 @@ _OSZICAR_F = re.compile(
     r"(?:^|\s)F=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)",
     re.IGNORECASE,
 )
+_TITEL = re.compile(r"^\s*TITEL\s*=\s*\S+\s+(\S+)")
+_ZVAL = re.compile(
+    r"\bPOMASS\s*=[^;]*;\s*ZVAL\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)"
+)
+_ELEMENT_SYMBOL = re.compile(r"[A-Z][a-z]?")
 
 
 def _float(token: str, *, context: str) -> float:
@@ -235,6 +241,7 @@ def parse_poscar(path: str | Path) -> PoscarData:
         coordinate_mode=coordinate_mode,
         symbols_inferred=symbols_inferred,
         species=tuple(symbols),
+        counts=tuple(counts),
     )
 
 
@@ -255,6 +262,10 @@ def read_poscar(
         "comment": data.comment,
         "coordinate_mode": data.coordinate_mode,
         "symbols_inferred": data.symbols_inferred,
+        # Species blocks as VASP pairs them with POTCAR entries; adjacent blocks of one
+        # element (Fe Fe O) stay apart.
+        "species": list(data.species),
+        "species_counts": list(data.counts),
     }
     if metadata:
         frame_metadata.update(metadata)
@@ -277,6 +288,51 @@ def read_poscar(
         energy=energy,
         metadata=frame_metadata,
     )
+
+
+def element_symbol(label: str) -> str:
+    """Return the element symbol that starts a species label such as ``Fe_pv`` or ``H.75``."""
+
+    match = _ELEMENT_SYMBOL.match(label)
+    return match.group(0) if match else label
+
+
+def read_vasp_zval(path: str | Path) -> tuple[tuple[str, float], ...]:
+    """Return the element and ZVAL of each entry in a POTCAR or OUTCAR, in file order.
+
+    Each entry's ``TITEL`` line precedes its ``POMASS = ...; ZVAL = ...`` line in both
+    files. An OUTCAR is read only up to ``ions per type``, which follows its copy of the
+    POTCAR headers.
+    """
+
+    source = Path(path)
+    entries: list[tuple[str, float]] = []
+    label: str | None = None
+    try:
+        with source.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if "ions per type" in line:
+                    break
+                titel = _TITEL.match(line)
+                if titel is not None:
+                    if label is not None:
+                        raise VaspParseError(f"{source.name} entry {label} has no ZVAL")
+                    label = titel.group(1)
+                    continue
+                zval = _ZVAL.search(line)
+                if zval is not None:
+                    if label is None:
+                        raise VaspParseError(f"{source.name} has a ZVAL line without a TITEL")
+                    value = _float(zval.group(1), context=f"{source.name} ZVAL")
+                    entries.append((element_symbol(label), value))
+                    label = None
+    except OSError as exc:
+        raise VaspParseError(f"cannot read {source}: {exc}") from exc
+    if label is not None:
+        raise VaspParseError(f"{source.name} entry {label} has no ZVAL")
+    if not entries:
+        raise VaspParseError(f"{source.name} has no TITEL and ZVAL lines")
+    return tuple(entries)
 
 
 def read_vasp_energy(path: str | Path) -> float | None:

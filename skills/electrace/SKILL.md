@@ -31,6 +31,14 @@ element and distance at every step. Events compare adjacent frames only, so also
 `track_summary` in `analysis.json` (or `track_summary.csv`) for each track's net
 change, range, and largest single step over the whole path.
 
+For per-bond trajectories, read `bonds` in `analysis.json` (or `bonds.csv`): one row
+per atom pair, periodic image, and frame with the distance, critic2 `field` and
+`laplacian`, and LOBSTER `icohp`/`icobi`. Rows begin or end where no feature ties the
+pair, so do not join a pair's rows to another pair's through a shared feature track.
+Bader charges are electron populations; `net_charge` (ZVAL − population) exists only
+where the frame's `POTCAR` or `OUTCAR` gave ZVAL, and a warning names the frames
+without it.
+
 For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
 indices), or to `"auto"` to select the atoms whose bonds, spin, or bond-critical-point
 neighbors change, so the report stays readable. Matching still uses every atom. Quote
@@ -75,5 +83,8 @@ electrace workflow analyze electrace-workflow.yaml --json
 - Treat missing evidence as missing and surface external-tool failures.
 - Never assume an `ISPIN` value. Spin populations follow the Bader partition and
   VASP's sign; a frame without them has no spin value, not zero.
+- Never assume a ZVAL or compute net charges by hand from populations.
+  `workflow analyze` collects the `POTCAR` the VASP step used. For existing outputs,
+  ask the user to place the frames' `POTCAR` or `OUTCAR` in each frame directory.
 - Filesystem completion does not establish electronic, grid, projection, or
   scientific convergence.

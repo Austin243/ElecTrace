@@ -56,6 +56,15 @@ spread and largest step of each quantity. It applies no threshold, creates no
 events, and inherits the frame sampling and feature matching; a track that starts or
 ends mid-path covers only that segment.
 
+A bond row records that a feature ties two atoms in a sampled frame; it is not a
+bond test. LOBSTER lists every pair within its configured distance range, so a
+LOBSTER row can continue where no critical point exists. A row that begins or ends
+places a feature's appearance or loss only to within the frame spacing. critic2
+records carry no lattice translation, so their distance is to the nearest image; in a
+cell narrower than about twice a bond, a critical point joining a farther image, or
+an atom's own image, is not represented correctly. Following an image from frame to
+frame assumes each atom moves less than half a cell vector per step.
+
 `focus_atoms` changes what is reported, not what is matched. Features without
 recorded atoms, such as non-nuclear attractors or ring and cage critical points
 without attractor atoms, belong to no focus and are left out, so check an unfocused
@@ -88,6 +97,10 @@ no interior maximum.
 
 - Bader and DDEC charges depend on the partitioning scheme and are not automatically
   formal oxidation states.
+- A net charge is the pseudopotential's ZVAL minus the Bader population, so it
+  inherits the partition and the valence configuration. The atoms' net charges sum to
+  zero only when every valence electron lies in an atomic basin; electride sites in
+  BadELF, for example, hold electrons without a nucleus.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.
 - ELF topology depends on the wavefunction or density, grid, and analysis settings.
 - COHP/COBI depends on basis, projection, and integration choices; ICOHP is not a
