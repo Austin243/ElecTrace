@@ -63,6 +63,28 @@ wraps across the cell between frames. Atoms are each frame's 0-based POSCAR indi
 as for `focus_atoms`; with geometric identity, a warning names bond atoms matched to
 another index.
 
+In a molecular crystal, weak intermolecular contacts give bond, ring, and cage critical
+points with densities near 0.01–0.03 a.u. that appear and disappear between frames,
+and their births, deaths, and connectivity changes can outnumber the reaction's own
+events. A cutoff per kind leaves such events out of the report:
+
+```toml
+[events.critical_point_min_field]
+bond_critical_point = 0.05
+```
+
+An event is left out when every critical point in it stays below the cutoff for its
+kind in the frame where it exists: the new point of a birth, the lost point of a death,
+and both frames of a connectivity change. Property changes, other features, kinds
+without a cutoff, and points without a `field` are always reported. Event numbering,
+confidences, tracks, summaries, and bond rows use every critical point, so the IDs of
+reported events keep gaps. `suppressed_events` in `analysis.json` records the cutoffs
+and the counts left out per kind and event type over every atom, before any focus,
+and the report's timeline says how many were left out. Ring critical points of covalent rings, such as a triazine, also
+have densities near 0.02 a.u., so set a ring cutoff only when ring formation is not
+under study. The value is in the units of the critical point's `field`: a.u. for
+critic2.
+
 When every frame has an energy, each event is labelled `before`, `spanning`, or
 `after` the highest-energy frame (`barrier_position` in `analysis.json` and
 `events.csv`). An event spans the barrier when its step starts or ends at that frame,
@@ -111,7 +133,10 @@ The focus then holds every atom that one of three rules selects:
   spin populations are present.
 - **bcp**: the atom is a neighbor, before or after, of a bond-critical-point
   connectivity change. The rule runs when bond critical points, such as critic2's,
-  exist.
+  exist. With `bond_critical_point` under `[events.critical_point_min_field]`, a change
+  whose critical point stays below that density in both frames is ignored, and
+  `weak_changes_ignored` counts such changes. Without the cutoff, weak contacts in a
+  molecular crystal can select a large share of the atoms.
 
 The default cutoffs, in Å, are:
 

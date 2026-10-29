@@ -4,6 +4,17 @@
 
 ### Added
 
+- Opt-in `[events.critical_point_min_field]`, a density cutoff per critical-point
+  kind (`bond_critical_point`, `ring_critical_point`, `cage_critical_point`). A birth,
+  death, or connectivity change whose critical points all stay below their kind's
+  cutoff is left out of the reported events, and `suppressed_events` counts what was
+  left out. With a `bond_critical_point` cutoff, `focus_atoms = "auto"` ignores weak
+  connectivity changes. In three 288-atom acetonitrile NEB bands, 72 of 83, 125 of
+  133, and 148 of 164 bond-critical-point births, deaths, and connectivity changes
+  stayed below 0.05 a.u., every ring and cage birth and death stayed below 0.03 a.u.,
+  and the automatic focus fell from 93–105 atoms to 4–22. Numbering, confidences,
+  tracks, summaries, and bond rows are unchanged; without the table, outputs are
+  unchanged.
 - Opt-in `[outputs] match_details = false` leaves each frame's feature list and the
   atom and feature match edges out of `analysis.json` and `report.html`. Tracks,
   events, `track_summary`, `focus`, and the CSV files do not change, and a rerun with

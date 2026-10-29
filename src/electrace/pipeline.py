@@ -17,7 +17,13 @@ from electrace import __version__
 from electrace._files import atomic_write_text
 from electrace.bonds import bond_records
 from electrace.config import ElecTraceConfig, load_config
-from electrace.events import EventDetectionConfig, _as_finite_float, track_sequence
+from electrace.events import (
+    EventDetectionConfig,
+    _as_finite_float,
+    critical_point_fields,
+    track_sequence,
+    weak_critical_point_kind,
+)
 from electrace.export import (
     write_bonds_csv,
     write_events_csv,
@@ -545,6 +551,7 @@ def analyze_sequence(
             tracking.events,
             bond_cutoffs=config.outputs.bond_cutoffs(),
             spin_threshold=config.events.descriptor_thresholds.get("spin"),
+            critical_point_min_field=config.events.critical_point_min_field,
         )
         focus_atoms = list(selection.rules)
     else:
@@ -631,6 +638,29 @@ def analyze_sequence(
     barrier = _locate_barrier(sequence, series_kind)
     for event in events:
         event["barrier_position"] = _barrier_position(event, barrier["frames"])
+    # Numbering, confidences, and barrier labels already used every event, so weak
+    # critical-point events leave gaps in the IDs, as a focus does.
+    min_field = config.events.critical_point_min_field
+    suppressed: dict[str, dict[str, int]] = {}
+    if min_field:
+        fields = critical_point_fields(sequence)
+        kept = []
+        for event in events:
+            kind = weak_critical_point_kind(
+                event["type"],
+                event["frame_before"],
+                event["frame_after"],
+                event["source_ids"],
+                event["target_ids"],
+                fields,
+                min_field,
+            )
+            if kind is None:
+                kept.append(event)
+            else:
+                counts = suppressed.setdefault(kind, {})
+                counts[event["type"]] = counts.get(event["type"], 0) + 1
+        events = kept
     analysis: dict[str, Any] = {
         "schema_version": "0.1",
         "software_version": __version__,
@@ -667,6 +697,11 @@ def analyze_sequence(
         "barrier": barrier,
         "diagnostics": tracking.diagnostics,
     }
+    if min_field:
+        analysis["suppressed_events"] = {
+            "critical_point_min_field": dict(min_field),
+            "counts": suppressed,
+        }
     if focus_atoms:
         analysis.update(_focus_view(sequence, focus_atoms, analysis))
         # Spectators exist only outside a focus. The floor uses every track, while

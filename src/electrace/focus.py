@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 from electrace.config import bond_pair
-from electrace.events import _as_finite_float
+from electrace.events import _as_finite_float, critical_point_fields, weak_critical_point_kind
 from electrace.models import Event, EventType, FeatureKind, Frame, Sequence
 
 FOCUS_RULES = ("bond", "spin", "bcp")
@@ -143,6 +143,7 @@ def select_focus_atoms(
     *,
     bond_cutoffs: Mapping[str, float],
     spin_threshold: float | None,
+    critical_point_min_field: Mapping[str, float] | None = None,
 ) -> AutoFocus:
     """Select the atoms whose bonds, spin, or bond-critical-point neighbors change.
 
@@ -151,7 +152,9 @@ def select_focus_atoms(
       explicit focus.
     - spin: an atom-charge track's spin changes between adjacent frames by at least
       the configured spin threshold, the test spin events use.
-    - bcp: the atoms before and after a bond-critical-point connectivity change.
+    - bcp: the atoms before and after a bond-critical-point connectivity change. With
+      a ``bond_critical_point`` density cutoff, a change whose critical point stays
+      below it in both frames, a weak contact, is ignored.
     """
 
     position = {frame.index: number for number, frame in enumerate(sequence.frames)}
@@ -216,12 +219,35 @@ def select_focus_atoms(
         for feature in frame.features
     ):
         changes = [item for item in events if item.event_type is EventType.CONNECTIVITY_CHANGE]
+        cutoffs = dict(critical_point_min_field or {})
+        ignored = 0
+        if FeatureKind.BOND_CRITICAL_POINT.value in cutoffs:
+            fields = critical_point_fields(sequence)
+            strong = [
+                item
+                for item in changes
+                if weak_critical_point_kind(
+                    item.event_type,
+                    item.frame_before,
+                    item.frame_after,
+                    item.source_ids,
+                    item.target_ids,
+                    fields,
+                    cutoffs,
+                )
+                is None
+            ]
+            ignored = len(changes) - len(strong)
+            changes = strong
         chosen["bcp"] = {
             int(atom["index"])
             for item in changes
             for atom in (*item.evidence["neighbors_before"], *item.evidence["neighbors_after"])
         }
         selection.records["bcp"] = {"applied": True, "connectivity_changes": len(changes)}
+        if FeatureKind.BOND_CRITICAL_POINT.value in cutoffs:
+            selection.records["bcp"]["min_field"] = cutoffs[FeatureKind.BOND_CRITICAL_POINT.value]
+            selection.records["bcp"]["weak_changes_ignored"] = ignored
     else:
         selection.records["bcp"] = {
             "applied": False,
