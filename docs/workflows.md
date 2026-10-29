@@ -84,7 +84,8 @@ match_details = false
 
 Tracks, events with their evidence, `track_summary`, `focus`, the CSV files, frame
 counts, unmatched IDs, and match diagnostics do not change. Every feature observation
-is still in `tracks` unless a focus filters it. The configuration echo in
+is still in `tracks` unless a focus filters it, but tracks do not carry voxel supports
+(`voxel_indices`), so these are only in the default output. The configuration echo in
 `analysis.json` records the setting. Matching is deterministic, so a rerun with the
 default restores the omitted records for review.
 

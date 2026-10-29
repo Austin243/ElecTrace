@@ -641,16 +641,20 @@ def _prepare_output(directory: Path, overwrite: bool) -> None:
 def _without_match_details(analysis: Mapping[str, Any]) -> dict[str, Any]:
     """Drop each frame's feature list and the atom and feature match edges.
 
-    Every feature observation is already in ``tracks``, unless a focus filtered them,
-    and events keep their own match evidence. Counts, unmatched IDs, and match
-    diagnostics stay.
+    Every feature observation except its voxel support is already in ``tracks``,
+    unless a focus filtered them, and events keep their own match evidence. Counts,
+    unmatched IDs, and match diagnostics stay. The configuration record says the
+    details were left out even when the analysis itself ran with the default.
     """
 
     def without(record: Mapping[str, Any], key: str) -> dict[str, Any]:
         return {name: value for name, value in record.items() if name != key}
 
+    configuration = dict(analysis.get("configuration", {}))
+    configuration["outputs"] = {**configuration.get("outputs", {}), "match_details": False}
     return {
         **analysis,
+        "configuration": configuration,
         "frames": [without(frame, "features") for frame in analysis["frames"]],
         "transitions": [
             {
