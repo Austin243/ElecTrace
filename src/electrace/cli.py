@@ -30,7 +30,7 @@ from electrace.plugins import (
     plan_plugin,
     plan_plugin_path,
 )
-from electrace.volume import read_vasp_grid, split_spin_density
+from electrace.volume import read_vasp_grid, split_spin_density, sum_density_grids
 from electrace.workflow import dump_starter_manifest, validate_workflow
 from electrace.workflow.collection import (
     analyze_collected_workflow,
@@ -582,14 +582,42 @@ def volume(
         "--split-spin",
         help="Write CHGCAR_tot and CHGCAR_mag from a collinear ISPIN = 2 CHGCAR.",
     ),
-    output_dir: Path | None = typer.Option(
-        None, "--output-dir", help="Directory for --split-spin files; default spin/ beside PATH."
+    add: Path | None = typer.Option(
+        None,
+        "--add",
+        help="Write CHGCAR_sum = PATH + ADD, such as AECCAR0 + AECCAR2 for bader -ref.",
     ),
-    force: bool = typer.Option(False, "--force", help="Replace existing --split-spin files."),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        help="Directory for --split-spin or --add files; default spin/ or the directory of PATH.",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Replace existing --split-spin or --add files."
+    ),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Read a VASP volumetric grid directly; summarize, sample, or split its spin grids."""
+    """Read a VASP volumetric grid directly; summarize, sample, sum, or split its spin grids."""
 
+    if add is not None:
+        if split_spin or sample is not None or dataset:
+            _fail(
+                "--add cannot be combined with --split-spin, --dataset, or --sample",
+                as_json=as_json,
+                command="volume",
+            )
+        try:
+            payload = sum_density_grids(path, add, output_dir, overwrite=force)
+        except (OSError, TypeError, ValueError) as exc:
+            _fail_exception(exc, command="volume", as_json=as_json)
+        _finish(
+            "volume",
+            payload,
+            as_json,
+            f"[green]Wrote[/green] {payload['written']}",
+            f"Integrated sum: {payload['integrated_sum']:.4f}",
+        )
+        return
     if split_spin:
         if sample is not None or dataset:
             _fail(
@@ -613,7 +641,7 @@ def volume(
         return
     if output_dir is not None or force:
         _fail(
-            "--output-dir and --force apply only to --split-spin",
+            "--output-dir and --force apply only to --split-spin and --add",
             as_json=as_json,
             command="volume",
         )

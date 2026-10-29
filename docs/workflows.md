@@ -329,6 +329,25 @@ second grid, mismatched grids, or non-collinear output. `bader CHGCAR` reads onl
 total-density grid and writes the charges to `ACF.dat`. The last command integrates
 the magnetization within the same total-density basins and writes `spin/ACF.dat`.
 
+With `LAECHG = .TRUE.`, VASP also writes the frozen core density (`AECCAR0`) and the
+valence density with its PAW one-centre corrections (`AECCAR2`). Their sum
+approximates the all-electron density, whose maxima sit on the nuclei, and is the
+usual Bader reference. Use it for both partitions so that charge and spin share their
+basins:
+
+```bash
+electrace volume AECCAR0 --add AECCAR2
+bader CHGCAR -ref CHGCAR_sum
+electrace volume CHGCAR --split-spin
+cd spin && bader CHGCAR_mag -ref ../CHGCAR_sum
+```
+
+`--add` writes `CHGCAR_sum` beside `AECCAR0`, or in `--output-dir`, in the layout
+Bader reads, and reports each file's integral and the sum's. It uses the first grid
+of each file and stops, writing nothing, when the two files differ in grid, lattice,
+species, or atom positions, as files from different runs or images do. `--force`
+replaces an existing `CHGCAR_sum`.
+
 During analysis, each atom's value in `spin/ACF.dat` becomes the `spin` descriptor
 on that frame's Bader atom-charge features and is tracked with them. Like other
 descriptors, it is thresholded and summarized once listed under
@@ -443,16 +462,19 @@ generated commands and inputs before authorizing work.
 | Goal | Step | Capability | Collected output |
 | --- | --- | --- | --- |
 | VASP static calculation | `vasp` | user-defined | manifest `expected_outputs` |
+| AECCAR0 + AECCAR2 reference | `volume` | `aeccar_sum` | none; writes `CHGCAR_sum` |
+| Spin split | `volume` | `split_spin` | none; writes `CHGCAR_tot`, `CHGCAR_mag` |
 | Bader charge analysis | `bader` | `bader_charges` | `ACF.dat` |
+| Bader spin populations | `bader` | `spin_populations` | `spin/ACF.dat` |
 | BaderKit charge analysis | `baderkit` | `bader_charges` | `bader.json` |
 | BadELF or NNA analysis | `baderkit` | `elf_basins` or `non_nuclear_attractors` | `badelf.json` |
 | QTAIM/ELF critical points | `critic2` | `qtaim_critical_points` or `non_nuclear_attractors` | `critic2.features.json` |
 | Integrated COHP/COBI | `lobster` | `cohp` or `cobi` | `ICOHPLIST.lobster` or `ICOBILIST.lobster` |
 
 Chargemol can be planned and its existing results can be parsed, but workflow v1 does
-not stage a Chargemol step. Workflow v1 also does not stage the spin split, which
-must run between the VASP and Bader jobs; use the commands in
-[Spin-polarized runs](#spin-polarized-runs).
+not stage a Chargemol step. `volume` steps run ElecTrace itself, through an
+`executables` entry that names the installation the jobs should use, on grids from
+earlier steps; see [All-electron density analysis](#all-electron-density-analysis).
 
 Each step points to an executable entry and may declare a template directory,
 dependencies, expected outputs, environment variables, and plugin options. VASP
@@ -466,6 +488,88 @@ staging stop when a frame's species order differs from the template `POTCAR`'s
 matches `Fe` or `H`. Validation warns when the order cannot be checked: a `POTCAR`
 without `TITEL` lines, or a VASP 4 structure file without species names, for which
 only the species count is compared.
+
+## All-electron density analysis
+
+Bader charges and spin populations on the AECCAR0 + AECCAR2 reference, and critic2
+critical points of the all-electron density, take six steps per frame.
+[`examples/electrace.density-workflow.yaml`](https://github.com/Austin243/ElecTrace/blob/main/examples/electrace.density-workflow.yaml)
+is a complete manifest:
+
+| Step | Kind and capability | Command in the step directory |
+| --- | --- | --- |
+| `vasp` | `vasp` | VASP with `LCHARG`, `LAECHG`, and `ISPIN = 2`; `expected_outputs` lists `CHGCAR`, `AECCAR0`, `AECCAR2` |
+| `reference` | `volume`, `aeccar_sum` | `electrace volume AECCAR0 --add AECCAR2` |
+| `charges` | `bader`, `bader_charges` | `bader CHGCAR -ref CHGCAR_sum` |
+| `split` | `volume`, `split_spin` | `electrace volume CHGCAR --split-spin` |
+| `spin` | `bader`, `spin_populations` | `bader CHGCAR_mag -ref CHGCAR_sum` |
+| `critic2` | `critic2` with `seeds: periodic` | `critic2 -q critic2.in critic2.cro` |
+
+Each step links its inputs from the steps in its `depends_on`. The `volume` steps
+write into their own directories, replace their outputs when a job reruns, and are
+not collected. The spin step's `ACF.dat` is collected as `spin/ACF.dat`, so analysis
+attaches each atom's magnetization to its Bader charge. For an `ISPIN = 1` run, leave
+out `split` and `spin`.
+
+A `spin_populations` step needs `reference_file`. Validation stops unless the
+workflow also has a `bader_charges` step whose basins are the same: the same
+`reference_file`, or, for a charge step without one, `CHGCAR_tot`. Staging stops when
+a `volume`, spin, or periodic critic2 step needs a file that none of its dependencies
+declares as an output and no template or input link provides, such as `AECCAR2`
+missing from the VASP step's `expected_outputs`, and when any step needs a file that a
+`volume` step writes without depending on that step. These mistakes would otherwise
+appear only after the VASP job.
+
+### critic2 with periodic seeds
+
+With `seeds: periodic`, staging writes `critic2.in` in the critic2 step directory.
+The input reads the crystal from `AECCAR0`, searches AECCAR0 + AECCAR2 with
+`SMOOTHRHO`, discards points where that density is below 1e-5 a.u. as vacuum
+artifacts, and starts the search from explicit seeds:
+
+- one `SEED LINE` for each atom pair within `seed_distance`, counting periodic images,
+  holding the `seed_points` interior points that `SEED PAIR` would use, k/(n + 1) of
+  the way along the pair for k = 1 … n (one point is written as a `SEED POINT` at the
+  midpoint);
+- with `seed_triplets`, one `SEED POINT` at the barycenter of each atom triplet whose
+  three distances are all within `seed_distance`, each triplet once.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `seeds` | `auto` | `auto`: the plan without seeds, unchanged; `periodic`: the input above |
+| `seed_distance` | 6.0 | Pair and triplet distance in bohr, critic2's length unit |
+| `seed_points` | 20 | Points on each pair's line |
+| `seed_triplets` | `true` | Add triplet barycenters |
+
+critic2's own `SEED PAIR` and `SEED TRIPLET`, in 1.2 through the current master, use
+the atoms' in-cell positions without periodic images, so a bond across a cell face gets
+no seeds; without seeds, `AUTO` subdivides the Wigner–Seitz cell. In 33 images of three
+288-atom acetonitrile NEB bands, `SEED PAIR DIST 6 NPTS 20` missed 21 covalent C–H and
+N–H bond critical points, all across a cell face, and left Morse sums of −5 to 7
+(zero in 5 images); `AUTO` alone gave 94 in the one image tried. The defaults above
+recovered all 21 and gave zero in 27 images and ±1 in the other 6. Six bohr (3.2 Å)
+spans covalent bonds and the shorter intermolecular contacts. Those inputs had
+74,000–86,000 seeds per image, and each image took 66–77 minutes on 32 OpenMP threads.
+Each frame's sum is in `critical_point_counts` in `analysis.json`.
+
+Pairs come from an exact image search. On each axis, an image within the distance is
+at most 1/2 + `seed_distance`/h lattice vectors from the component-rounded one, where h
+is the spacing of that axis's lattice planes, so skewed cells need no reduced basis.
+When a cell is narrower than twice the distance, a pair can have several images
+within it, and an atom can bond to its own image; each image gets its own line. In the
+acetonitrile cells every pair had one image within the distance, the minimum image,
+and the generated inputs reproduce the inputs that ran, line for line, from the same
+positions. A structure with no pair within the distance stops validation, because
+critic2 would otherwise fall back to its default seeding.
+
+The seeds are placed from the frame's structure, which staging copies into the step
+directory, while critic2 reads the crystal from the `AECCAR0` header. The two agree
+to the header's six decimals when the VASP step does not move the atoms (`NSW = 0`),
+as for the images of a path. The `CRYSTAL` line names the structure's species in
+order; critic2 uses these names only when the `AECCAR0` header has none. A periodic
+step takes no `field_file` or `input_file`, plans `qtaim_critical_points` only, and
+cannot have `critic2.in` in its template directory. `electrace plan critic2` with
+`seeds = "periodic"` lists `critic2.in` as an input that staging writes.
 
 ## Run locally
 

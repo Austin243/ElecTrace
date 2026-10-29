@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 class Capability(StrEnum):
     BADER_CHARGES = "bader_charges"
+    SPIN_POPULATIONS = "spin_populations"
     ELF_BASINS = "elf_basins"
     NON_NUCLEAR_ATTRACTORS = "non_nuclear_attractors"
     QTAIM_CRITICAL_POINTS = "qtaim_critical_points"

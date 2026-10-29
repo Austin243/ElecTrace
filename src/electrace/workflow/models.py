@@ -15,7 +15,7 @@ JSONScalar: TypeAlias = bool | int | float | str | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 
 _SERIES_KINDS = {"auto", "neb", "ordered", "pressure", "static"}
-_STEP_KINDS = {"bader", "baderkit", "critic2", "lobster", "vasp"}
+_STEP_KINDS = {"bader", "baderkit", "critic2", "lobster", "vasp", "volume"}
 _IDENTIFIER = re.compile(r"[a-z][a-z0-9_-]*\Z")
 _CAPABILITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 _DIRECTIVE = re.compile(r"[a-z][a-z0-9-]*\Z")

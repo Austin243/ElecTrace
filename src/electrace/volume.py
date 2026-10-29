@@ -22,7 +22,11 @@ FloatGrid: TypeAlias = npt.NDArray[np.float64]
 
 DEFAULT_MAX_POINTS = 100_000_000
 SPIN_SPLIT_NAMES = ("CHGCAR_tot", "CHGCAR_mag")
+DENSITY_SUM_NAME = "CHGCAR_sum"
 _INTEGER = re.compile(r"[+-]?\d+\Z")
+# Both grids of one run carry the same header text, which VASP writes with six
+# decimals; anything larger means the files describe different structures.
+_HEADER_TOLERANCE = 1.0e-5
 
 
 class VaspGridError(ValueError):
@@ -428,12 +432,83 @@ def split_spin_density(
     }
 
 
+def _structure_mismatch(first: VaspGridMetadata, second: VaspGridMetadata) -> str | None:
+    """Return how two grid headers differ in grid, cell, or atoms, or None."""
+
+    if first.shape != second.shape:
+        return f"grid {first.shape} differs from {second.shape}"
+    if (first.species, first.atom_counts) != (second.species, second.atom_counts):
+        return (
+            f"species {' '.join(first.species)} ({' '.join(map(str, first.atom_counts))}) "
+            f"differ from {' '.join(second.species)} ({' '.join(map(str, second.atom_counts))})"
+        )
+    if not np.allclose(first.cell, second.cell, rtol=0.0, atol=_HEADER_TOLERANCE):
+        return "lattice vectors differ"
+    shift = np.subtract(first.fractional_positions, second.fractional_positions)
+    shift -= np.rint(shift)
+    if np.abs(shift).max() > _HEADER_TOLERANCE:
+        atom = int(np.abs(shift).max(axis=1).argmax())
+        return f"atom {atom + 1} positions differ"
+    return None
+
+
+def sum_density_grids(
+    path: str | Path,
+    other: str | Path,
+    output_directory: str | Path | None = None,
+    *,
+    overwrite: bool = False,
+    max_points: int = DEFAULT_MAX_POINTS,
+) -> dict[str, object]:
+    """Write ``CHGCAR_sum``, the sum of two grids of one structure, such as AECCAR0 + AECCAR2.
+
+    With ``LAECHG = .TRUE.``, VASP writes the frozen core density (AECCAR0) and the
+    valence density with its one-centre PAW corrections (AECCAR2) on the fine grid.
+    Their sum approximates the all-electron density, whose maxima sit on the nuclei,
+    so ``bader CHGCAR -ref CHGCAR_sum`` places the Bader basins. The first dataset of
+    each file is used, values keep VASP's rho*V scaling, and the header is the first
+    file's. Grids, lattices, species, and atom positions must agree, which catches
+    files from different runs or images; nothing is written otherwise.
+    """
+
+    first = read_vasp_grid(path, max_points=max_points)
+    second = read_vasp_grid(other, max_points=max_points)
+    mismatch = _structure_mismatch(first.metadata, second.metadata)
+    if mismatch is not None:
+        raise VaspGridError(
+            f"{first.metadata.source} and {second.metadata.source} do not describe one "
+            f"structure and grid: {mismatch}; no {DENSITY_SUM_NAME} was written"
+        )
+    directory = (
+        Path(output_directory).expanduser().resolve()
+        if output_directory is not None
+        else first.metadata.source.parent
+    )
+    target = directory / DENSITY_SUM_NAME
+    if target.resolve() in {first.metadata.source, second.metadata.source}:
+        raise ValueError(f"{target} would replace one of the summed files")
+    if (target.exists() or target.is_symlink()) and not overwrite:
+        raise FileExistsError(f"refusing to replace existing {target}")
+    total = VaspGrid(first.metadata, first.data + second.data)
+    _write_grid(total, target)
+    return {
+        "sources": [str(first.metadata.source), str(second.metadata.source)],
+        "dataset_counts": [first.metadata.dataset_count, second.metadata.dataset_count],
+        "shape": list(total.shape),
+        "integrated": [float(first.data.mean()), float(second.data.mean())],
+        "integrated_sum": float(total.data.mean()),
+        "written": str(target),
+    }
+
+
 __all__ = [
     "DEFAULT_MAX_POINTS",
+    "DENSITY_SUM_NAME",
     "SPIN_SPLIT_NAMES",
     "VaspGrid",
     "VaspGridError",
     "VaspGridMetadata",
     "read_vasp_grid",
     "split_spin_density",
+    "sum_density_grids",
 ]
