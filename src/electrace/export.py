@@ -166,6 +166,41 @@ def write_bonds_csv(bonds: Iterable[Mapping[str, Any]], path: str | Path) -> Pat
     return output
 
 
+def write_atom_groups_csv(groups: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+    """Write one row per atom group, charge producer, and frame; atoms are in the JSON."""
+
+    fields = [
+        "group_id",
+        "source",
+        "formula",
+        "atom_count",
+        "producer",
+        "frame",
+        "frame_label",
+        "charge",
+        "net_charge",
+        "spin",
+    ]
+    rows = _flatten_csv_rows(
+        (
+            {
+                "group_id": group["group_id"],
+                "source": group["source"],
+                "formula": group["formula"],
+                "atom_count": len(group["atoms"]),
+                "producer": group["producer"],
+                **{name: value[name] for name in fields[5:]},
+            }
+            for group in groups
+            for value in group["values"]
+        ),
+        context="atom-groups CSV",
+    )
+    output = Path(path)
+    _write_csv(rows, fields, output)
+    return output
+
+
 def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
     """Write formula-neutralized feature-track observations in long form."""
 

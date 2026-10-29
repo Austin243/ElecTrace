@@ -244,6 +244,121 @@
         "additionalProperties": false
       }
     },
+    "atom_groups": {
+      "type": "object",
+      "description": "Present only with outputs.atom_groups or outputs.molecule_groups: atom charges and spins summed over groups of atoms frame by frame, and a noise floor from spectator molecules. Reporting only: no thresholds or events.",
+      "required": ["molecules", "noise_floor", "groups"],
+      "properties": {
+        "molecules": {
+          "type": "object",
+          "description": "The first frame's molecules: atoms joined by bonds under the element-pair cutoffs of focus_atoms = \"auto\". Spectators keep every bond through every frame and hold no focus atom. Without counts, reason says why molecules are not defined.",
+          "required": ["cutoffs"],
+          "properties": {
+            "frame": {"type": "integer", "minimum": 0},
+            "cutoffs": {"type": "object", "additionalProperties": {"type": "number", "exclusiveMinimum": 0}},
+            "count": {"type": "integer", "minimum": 0},
+            "formulas": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+            "spectators": {"type": "integer", "minimum": 0},
+            "spectator_formulas": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+            "reported": {"type": "integer", "minimum": 0, "description": "Molecules reported as groups: all of them, or with a focus those that hold a focus atom."},
+            "reason": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "noise_floor": {
+          "type": "array",
+          "description": "Percentiles of the adjacent-frame absolute change of spectator-molecule sums, per producer and quantity. A fixed group's net charge changes by as much as its population, so the charge floor serves both.",
+          "items": {
+            "type": "object",
+            "required": ["producer", "quantity", "molecules", "steps", "median", "p95", "p99"],
+            "properties": {
+              "producer": {"type": ["string", "null"]},
+              "quantity": {"enum": ["charge", "spin"]},
+              "molecules": {"type": "integer", "minimum": 1},
+              "steps": {"type": "integer", "minimum": 1},
+              "median": {"type": "number", "minimum": 0},
+              "p95": {"type": "number", "minimum": 0},
+              "p99": {"type": "number", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        },
+        "groups": {
+          "type": "array",
+          "description": "One record per group and charge producer: configured groups in configuration order, then molecules.",
+          "items": {
+            "type": "object",
+            "required": ["group_id", "source", "atoms", "formula", "producer", "cut_bonds", "values", "changes"],
+            "properties": {
+              "group_id": {"type": "string", "description": "The configured name, or M001, M002, ... for molecules in order of their lowest atom index."},
+              "source": {"enum": ["configured", "molecule"]},
+              "atoms": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 1, "description": "0-based POSCAR indices, ascending."},
+              "formula": {"type": "string", "description": "Hill formula of the group's atoms."},
+              "producer": {"type": ["string", "null"]},
+              "cut_bonds": {
+                "type": ["array", "null"],
+                "items": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+                "description": "First-frame bonds with exactly one atom in the group; null when molecules are not defined. Such a group keeps that bond's partition surface, whose noise is closer to single atoms'."
+              },
+              "values": {
+                "type": "array",
+                "description": "One entry per frame. A quantity is null when any atom of the group lacks it in that frame, never a partial sum.",
+                "items": {
+                  "type": "object",
+                  "required": ["frame", "frame_label", "charge", "net_charge", "spin"],
+                  "properties": {
+                    "frame": {"type": "integer", "minimum": 0},
+                    "frame_label": {"type": "string"},
+                    "charge": {"type": ["number", "null"], "description": "Sum of the producer's atom charges, as it gives them: Bader populations, DDEC net charges."},
+                    "net_charge": {"type": ["number", "null"], "description": "Sum of ZVAL minus population."},
+                    "spin": {"type": ["number", "null"]}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "changes": {
+                "type": "object",
+                "description": "Keyed by each quantity with a value in some frame.",
+                "propertyNames": {"enum": ["charge", "net_charge", "spin"]},
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["observed", "net_change", "range", "largest_step"],
+                  "properties": {
+                    "observed": {"type": "integer", "minimum": 0},
+                    "net_change": {"type": ["number", "null"]},
+                    "range": {"type": ["number", "null"], "minimum": 0},
+                    "largest_step": {
+                      "type": ["object", "null"],
+                      "required": ["frame_before", "frame_after", "delta"],
+                      "properties": {
+                        "frame_before": {"type": "integer", "minimum": 0},
+                        "frame_after": {"type": "integer", "minimum": 0},
+                        "delta": {"type": "number"},
+                        "ratio_to_floor": {
+                          "type": "object",
+                          "description": "|delta| over each spectator-molecule percentile of the same producer: the spin floor for spin, the charge floor otherwise.",
+                          "required": ["median", "p95", "p99"],
+                          "properties": {
+                            "median": {"$ref": "#/$defs/floor_ratio"},
+                            "p95": {"$ref": "#/$defs/floor_ratio"},
+                            "p99": {"$ref": "#/$defs/floor_ratio"}
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "suppressed_events": {
       "type": "object",
       "description": "Present only with events.critical_point_min_field: the cutoffs, and how many births, deaths, and connectivity changes of weaker critical points were left out of events, per kind and event type, over every atom before any focus. Reporting only.",

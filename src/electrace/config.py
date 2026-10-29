@@ -28,6 +28,7 @@ _ROOT_KEYS = frozenset(
 )
 _PROJECT_KEYS = frozenset({"name", "series_kind"})
 _ELEMENT = re.compile(r"[A-Z][a-z]{0,2}")
+_MOLECULE_ID = re.compile(r"M\d+")
 
 # Covalent bond cutoffs (angstrom) for focus_atoms = "auto", keyed by bond_pair().
 DEFAULT_BOND_CUTOFFS: dict[str, float] = {
@@ -334,16 +335,40 @@ class OutputConfig:
     # Zero-based POSCAR indices, or "auto" to select the atoms whose bonds, spin, or
     # bond critical points change; an empty list reports every feature.
     focus_atoms: list[int] | str = field(default_factory=list)
-    # Element-pair cutoffs (angstrom) that replace DEFAULT_BOND_CUTOFFS entries for "auto".
+    # Element-pair cutoffs (angstrom) that replace DEFAULT_BOND_CUTOFFS entries for "auto"
+    # and for the molecules that atom groups use.
     focus_bond_cutoffs: dict[str, float] = field(default_factory=dict)
     # False leaves each frame's feature list and the match edges out of
     # analysis.json and the report; tracks, events, and summaries are unchanged.
     match_details: bool = True
+    # Named groups of zero-based POSCAR indices whose atom charges and spins are summed
+    # frame by frame; molecule_groups adds each molecule of the first frame.
+    atom_groups: dict[str, list[int]] = field(default_factory=dict)
+    molecule_groups: bool = False
 
     def __post_init__(self) -> None:
         self.directory = _string(self.directory, "outputs.directory")
-        for name in ("html_report", "json", "csv", "match_details"):
+        for name in ("html_report", "json", "csv", "match_details", "molecule_groups"):
             setattr(self, name, _boolean(getattr(self, name), f"outputs.{name}"))
+        if not isinstance(self.atom_groups, dict):
+            raise TypeError("outputs.atom_groups must be a table of atom-index arrays")
+        groups: dict[str, list[int]] = {}
+        for name, atoms in self.atom_groups.items():
+            key = _string(name, "outputs.atom_groups key")
+            if _MOLECULE_ID.fullmatch(key):
+                raise ValueError(
+                    f"outputs.atom_groups.{key}: names such as M001 are kept for molecules"
+                )
+            if not isinstance(atoms, (list, tuple)) or not atoms:
+                raise TypeError(
+                    f"outputs.atom_groups.{key} must be a non-empty array of atom indices"
+                )
+            for index in atoms:
+                _integer(index, f"each outputs.atom_groups.{key} entry", minimum=0)
+            if len(set(atoms)) != len(atoms):
+                raise ValueError(f"outputs.atom_groups.{key} must not repeat an atom index")
+            groups[key] = sorted(atoms)
+        self.atom_groups = groups
         if isinstance(self.focus_atoms, str):
             if self.focus_atoms.strip().casefold() != "auto":
                 raise ValueError('outputs.focus_atoms must be "auto" or an array of atom indices')
@@ -358,8 +383,13 @@ class OutputConfig:
             self.focus_atoms = sorted(self.focus_atoms)
         if not isinstance(self.focus_bond_cutoffs, dict):
             raise TypeError("outputs.focus_bond_cutoffs must be a table")
-        if self.focus_bond_cutoffs and self.focus_atoms != "auto":
-            raise ValueError('outputs.focus_bond_cutoffs applies only with focus_atoms = "auto"')
+        if self.focus_bond_cutoffs and not (
+            self.focus_atoms == "auto" or self.atom_groups or self.molecule_groups
+        ):
+            raise ValueError(
+                'outputs.focus_bond_cutoffs applies only with focus_atoms = "auto", '
+                "atom_groups, or molecule_groups"
+            )
         cutoffs: dict[str, float] = {}
         for key, value in self.focus_bond_cutoffs.items():
             parts = _string(key, "outputs.focus_bond_cutoffs key").split("-")
@@ -377,7 +407,7 @@ class OutputConfig:
         self.focus_bond_cutoffs = cutoffs
 
     def bond_cutoffs(self) -> dict[str, float]:
-        """Return the cutoffs for focus_atoms = "auto": the defaults, then any overrides."""
+        """Return the bond cutoffs for "auto" and molecules: the defaults, then overrides."""
 
         return {**DEFAULT_BOND_CUTOFFS, **self.focus_bond_cutoffs}
 
@@ -437,6 +467,10 @@ class ElecTraceConfig:
             del result["outputs"]["focus_bond_cutoffs"]
         if self.outputs.match_details:
             del result["outputs"]["match_details"]
+        if not self.outputs.atom_groups:
+            del result["outputs"]["atom_groups"]
+        if not self.outputs.molecule_groups:
+            del result["outputs"]["molecule_groups"]
         if not self.events.critical_point_min_field:
             del result["events"]["critical_point_min_field"]
         _validate_json(result)
@@ -545,6 +579,13 @@ csv = true
 # Leave each frame's feature list and the match edges out of analysis.json and
 # report.html; tracks, events, and summaries are unchanged.
 # match_details = false
+# Sum atom charges and spins over each molecule of the first frame (atoms bonded
+# under the element-pair cutoffs of focus_atoms = "auto"). Molecules that keep their
+# bonds and hold no focus atom give a noise floor for every group.
+# molecule_groups = true
+# Named groups of 0-based POSCAR atom indices to sum as well:
+# [outputs.atom_groups]
+# donor = [41, 64, 89]
 
 [plugins.critic2]
 enabled = true
