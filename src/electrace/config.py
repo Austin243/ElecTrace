@@ -292,10 +292,13 @@ class OutputConfig:
     csv: bool = True
     # Zero-based POSCAR indices; an empty list reports every feature.
     focus_atoms: list[int] = field(default_factory=list)
+    # False leaves each frame's feature list and the match edges out of
+    # analysis.json and the report; tracks, events, and summaries are unchanged.
+    match_details: bool = True
 
     def __post_init__(self) -> None:
         self.directory = _string(self.directory, "outputs.directory")
-        for name in ("html_report", "json", "csv"):
+        for name in ("html_report", "json", "csv", "match_details"):
             setattr(self, name, _boolean(getattr(self, name), f"outputs.{name}"))
         if not isinstance(self.focus_atoms, (list, tuple)):
             raise TypeError("outputs.focus_atoms must be an array of atom indices")
@@ -354,9 +357,11 @@ class ElecTraceConfig:
         """Return a JSON-serializable nested mapping."""
 
         result = asdict(self)
+        # At their defaults, record the configuration exactly as before these options existed.
         if not self.outputs.focus_atoms:
-            # Without a focus, record the configuration exactly as before the option existed.
             del result["outputs"]["focus_atoms"]
+        if self.outputs.match_details:
+            del result["outputs"]["match_details"]
         _validate_json(result)
         return result
 
@@ -453,6 +458,9 @@ csv = true
 # Report only features tied to these 0-based POSCAR atom indices; matching
 # still uses every atom and feature.
 # focus_atoms = [0, 2]
+# Leave each frame's feature list and the match edges out of analysis.json and
+# report.html; tracks, events, and summaries are unchanged.
+# match_details = false
 
 [plugins.critic2]
 enabled = true

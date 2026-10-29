@@ -174,12 +174,21 @@ def _minimum_image_fractional_displacement(
     periodic: PBC,
     sigma_min: float,
 ) -> FloatArray:
-    """Nearest-image implementation for already validated, broadcast inputs."""
+    """Nearest-image implementation for already validated, broadcast inputs.
+
+    Any image other than the component-rounded one differs from it by a nonzero
+    lattice vector, so it is at least ``sigma_min - |rounded|`` long.  A rounded image
+    shorter than ``sigma_min / 2`` is therefore the nearest image, and it is exactly
+    what :func:`_nearest_image_single` returns; a small margin keeps rounding error and
+    that search's tie tolerance from mattering.  Only longer rounded images are searched.
+    """
 
     flat = (second - first).reshape(-1, 3)
-    result = np.empty_like(flat)
-    for index, delta in enumerate(flat):
-        result[index] = _nearest_image_single(delta, lattice, periodic, sigma_min)
+    # Integer shifts, as in _nearest_image_single, so even signed zeros agree.
+    result = flat - np.where(periodic, np.rint(flat), 0.0).astype(np.int64)
+    lengths = np.linalg.norm(result @ lattice, axis=-1)
+    for index in np.flatnonzero(lengths >= 0.5 * sigma_min * (1.0 - 1.0e-6)):
+        result[index] = _nearest_image_single(flat[index], lattice, periodic, sigma_min)
     return cast(FloatArray, result.reshape(first.shape))
 
 
@@ -242,6 +251,39 @@ def deformation_aware_distance(
         axis=-1,
     )
     return float(result) if result.ndim == 0 else result
+
+
+def deformation_aware_distance_lower_bound(
+    fractional_a: ArrayLike,
+    fractional_b: ArrayLike,
+    cell_a: ArrayLike,
+    cell_b: ArrayLike,
+    pbc: Sequence[bool] | bool = (True, True, True),
+) -> FloatArray:
+    """Return a lower bound on the mean-metric distance for every pair of rows.
+
+    Entry ``[i, j]`` bounds :func:`deformation_aware_distance` between row ``i`` of
+    *fractional_a* and row ``j`` of *fractional_b*.  A Cartesian vector ``f @ cell``
+    is at least ``|f_k| * h_k`` long for each axis ``k``, where ``h_k`` is the spacing
+    of the lattice planes spanned by the other two cell vectors.  Lattice translations
+    change ``f_k`` only by integers on periodic axes, so every image is at least
+    ``max_k(distance from f_k to the nearest integer) * h_k`` long.  The bound is
+    vectorized and never exceeds the exact distance, which makes it a safe cutoff
+    filter before the exact nearest-image search.
+    """
+
+    metric_cell = metric_average_cell(cell_a, cell_b)
+    spacing = 1.0 / np.linalg.norm(np.linalg.inv(metric_cell), axis=0)
+    first = np.asarray(fractional_a, dtype=float).reshape(-1, 3)
+    second = np.asarray(fractional_b, dtype=float).reshape(-1, 3)
+    periodic = as_pbc(pbc)
+    bound = np.zeros((len(first), len(second)), dtype=float)
+    for axis in range(3):
+        delta = second[None, :, axis] - first[:, None, axis]
+        if periodic[axis]:
+            delta -= np.rint(delta)
+        np.maximum(bound, np.abs(delta) * spacing[axis], out=bound)
+    return bound
 
 
 def periodic_voxel_overlap(

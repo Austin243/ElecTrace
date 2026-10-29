@@ -63,6 +63,10 @@ run before concluding that nothing changed elsewhere. The focus uses each frame'
 atom indices; with geometric identity, ElecTrace warns when a focus atom is matched to
 a different index.
 
+`match_details = false` also changes only what is written. The per-pair match
+evidence it leaves out is what a review of a surprising mapping needs, so rerun with
+the default before reviewing one.
+
 Barrier labels compare each event's step with the highest-energy sampled frame. For an
 NEB this is the highest image, not the saddle point; for a static scan it is the scan
 maximum. A spanning event changes on a step that touches that frame, which the frame

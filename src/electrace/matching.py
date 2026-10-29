@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
 from typing import Any
@@ -23,6 +23,7 @@ import numpy.typing as npt
 from .geometry import (
     as_pbc,
     deformation_aware_distance,
+    deformation_aware_distance_lower_bound,
     minimum_image_displacement,
     periodic_voxel_overlap,
 )
@@ -178,7 +179,9 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
 
     The implementation is the shortest-augmenting-path form of the Hungarian
     algorithm.  It is deterministic and supports infinite forbidden edges by
-    replacing them with a provably dominant finite sentinel.
+    replacing them with a provably dominant finite sentinel.  Each column scan is
+    vectorized with the scalar algorithm's element-wise arithmetic and its choice of
+    the first minimal column, so the assignment does not depend on the vectorization.
     """
 
     cost, sentinel = _finite_cost_matrix(cost_matrix)
@@ -204,28 +207,21 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
         while True:
             used[column0] = True
             row0 = int(column_match[column0])
-            delta = np.inf
-            column1 = 0
-            for column in range(1, columns + 1):
-                if used[column]:
-                    continue
-                reduced = (
-                    cost[row0 - 1, column - 1] - potential_rows[row0] - potential_columns[column]
-                )
-                if reduced < minimum[column]:
-                    minimum[column] = reduced
-                    predecessor[column] = column0
-                if minimum[column] < delta:
-                    delta = minimum[column]
-                    column1 = column
+            # Unused columns in increasing order; column 0 is always used.
+            free = np.flatnonzero(~used)
+            reduced = cost[row0 - 1, free - 1] - potential_rows[row0] - potential_columns[free]
+            improved = reduced < minimum[free]
+            minimum[free[improved]] = reduced[improved]
+            predecessor[free[improved]] = column0
+            nearest = int(np.argmin(minimum[free]))
+            delta = minimum[free[nearest]]
+            column1 = int(free[nearest])
             if not math.isfinite(float(delta)):
                 raise ValueError("assignment problem is infeasible")
-            for column in range(columns + 1):
-                if used[column]:
-                    potential_rows[column_match[column]] += delta
-                    potential_columns[column] -= delta
-                else:
-                    minimum[column] -= delta
+            # Used columns hold distinct rows: matched ones plus the row being inserted.
+            potential_rows[column_match[used]] += delta
+            potential_columns[used] -= delta
+            minimum[~used] -= delta
             column0 = column1
             if column_match[column0] == 0:
                 break
@@ -381,32 +377,34 @@ def match_atoms(
     settings = config or AtomMatchConfig()
     if settings.identity == "index":
         return _match_atoms_by_index(previous, current, settings)
+    if settings.allow_element_change:
+        allowed = np.ones((len(previous.atoms), len(current.atoms)), dtype=bool)
+    else:
+        before = np.array([atom.element.casefold() for atom in previous.atoms], dtype=str)
+        after = np.array([atom.element.casefold() for atom in current.atoms], dtype=str)
+        allowed = before[:, None] == after[None, :]
     distances = _candidate_distances(
         previous.atoms,
         current.atoms,
-        (
-            (row, column)
-            for row, source in enumerate(previous.atoms)
-            for column, target in enumerate(current.atoms)
-            if settings.allow_element_change
-            or source.element.casefold() == target.element.casefold()
-        ),
+        allowed,
         previous.cell,
         current.cell,
         settings.pbc,
+        settings.max_distance,
     )
     costs = np.full((len(previous.atoms), len(current.atoms)), np.inf, dtype=float)
+    # Every other pair has an infinite cost, so only these can match or need evidence.
     evidence: dict[tuple[int, int], dict[str, Any]] = {}
-    for row, source in enumerate(previous.atoms):
-        for column, target in enumerate(current.atoms):
-            cost, pair_evidence = _atom_pair(
-                source,
-                target,
-                float(distances[row, column]),
-                settings,
-            )
-            costs[row, column] = cost
-            evidence[row, column] = pair_evidence
+    rows, columns = np.nonzero(distances <= settings.max_distance)
+    for row, column in zip(rows.tolist(), columns.tolist(), strict=True):
+        cost, pair_evidence = _atom_pair(
+            previous.atoms[row],
+            current.atoms[column],
+            float(distances[row, column]),
+            settings,
+        )
+        costs[row, column] = cost
+        evidence[row, column] = pair_evidence
     matched, unmatched_rows, unmatched_columns, total = _assign_with_unmatched(
         costs, settings.unmatched_cost
     )
@@ -510,29 +508,35 @@ def _cell_volume_ratio(previous: Frame, current: Frame) -> float:
 def _candidate_distances(
     previous: Sequence[Atom | Feature],
     current: Sequence[Atom | Feature],
-    pairs: Iterable[tuple[int, int]],
+    allowed: npt.NDArray[np.bool_],
     previous_cell: npt.ArrayLike,
     current_cell: npt.ArrayLike,
     pbc: tuple[bool, bool, bool],
+    gate: float,
 ) -> FloatArray:
-    """Evaluate deformation-aware geometry once for all semantically viable pairs."""
+    """Evaluate deformation-aware geometry for allowed pairs that may lie within *gate*.
+
+    A vectorized lower bound first discards pairs that are certainly farther apart
+    than the gate; they, like disallowed pairs, keep an infinite distance.  Every other
+    allowed pair gets its exact distance, which may still exceed the gate.
+    """
 
     distances = np.full((len(previous), len(current)), np.inf, dtype=float)
-    flat_indices = np.fromiter(
-        (index for pair in pairs for index in pair),
-        dtype=np.intp,
-    )
-    if flat_indices.size == 0:
+    if not allowed.any():
         return distances
-    pair_indices = flat_indices.reshape(-1, 2)
-    rows = pair_indices[:, 0]
-    columns = pair_indices[:, 1]
     previous_positions = np.asarray(
         [entity.fractional_position for entity in previous], dtype=float
     ).reshape(len(previous), 3)
     current_positions = np.asarray(
         [entity.fractional_position for entity in current], dtype=float
     ).reshape(len(current), 3)
+    bound = deformation_aware_distance_lower_bound(
+        previous_positions, current_positions, previous_cell, current_cell, pbc
+    )
+    # The relative margin absorbs rounding in the bound; the exact distance decides.
+    rows, columns = np.nonzero(allowed & (bound <= gate * (1.0 + 1.0e-9)))
+    if rows.size == 0:
+        return distances
     source_positions = previous_positions[rows]
     target_positions = current_positions[columns]
     values = np.asarray(
@@ -675,6 +679,52 @@ def _semantic_compatibility(source: Feature, target: Feature) -> tuple[bool, dic
     return not reasons, {"compatible": not reasons, "rejection_reasons": reasons}
 
 
+def _semantic_signature(feature: Feature) -> tuple[Any, ...]:
+    """Everything :func:`_compatible_kind` and :func:`_semantic_compatibility` read."""
+
+    return (
+        feature.kind,
+        _declared_descriptor_families(feature),
+        _semantic_token(feature.attributes.get("charge_definition")),
+        feature.charge is not None,
+        _semantic_token(feature.attributes.get("charge_convention")),
+        _semantic_token(feature.attributes.get("descriptor_producer")),
+    )
+
+
+def _compatible_pairs(
+    previous: Sequence[Feature],
+    current: Sequence[Feature],
+    config: FeatureMatchConfig,
+) -> tuple[npt.NDArray[np.bool_], int]:
+    """Return the kind- and semantics-compatible pairs and the semantic rejection count.
+
+    Compatibility depends only on the features' signatures, so it is decided once per
+    pair of signature groups.  Rejections count kind-compatible pairs with
+    contradictory semantics, at any distance.
+    """
+
+    def groups(features: Sequence[Feature]) -> list[list[int]]:
+        result: dict[tuple[Any, ...], list[int]] = {}
+        for index, feature in enumerate(features):
+            result.setdefault(_semantic_signature(feature), []).append(index)
+        return list(result.values())
+
+    allowed = np.zeros((len(previous), len(current)), dtype=bool)
+    rejections = 0
+    current_groups = groups(current)
+    for rows in groups(previous):
+        for columns in current_groups:
+            source, target = previous[rows[0]], current[columns[0]]
+            if not _compatible_kind(source, target, config):
+                continue
+            if _semantic_compatibility(source, target)[0]:
+                allowed[np.ix_(rows, columns)] = True
+            else:
+                rejections += len(rows) * len(columns)
+    return allowed, rejections
+
+
 def _grid_shape(feature: Feature, frame: Frame) -> tuple[int, int, int] | None:
     value = feature.attributes.get("grid_shape", frame.metadata.get("grid_shape"))
     if value is None:
@@ -710,6 +760,67 @@ def _voxel_similarity(
     )
 
 
+def _shared_neighbor_motion(
+    source: Feature,
+    target: Feature,
+    previous: Frame,
+    current: Frame,
+    atom_mapping: Mapping[int, int],
+    config: FeatureMatchConfig,
+) -> list[dict[str, Any]]:
+    """Bond-critical-point motion relative to each shared, already-matched neighbor.
+
+    Supplemental geometry only: it does not modify cost or confidence.  Each anchor
+    is a shared, already-matched neighbor; all of them are reported.
+    """
+
+    old_atoms = {atom.index: atom for atom in previous.atoms}
+    new_atoms = {atom.index: atom for atom in current.atoms}
+    motion = []
+    for old_id in source.neighbor_atom_indices:
+        new_id = atom_mapping.get(old_id)
+        if (
+            new_id not in target.neighbor_atom_indices
+            or old_id not in old_atoms
+            or new_id not in new_atoms
+        ):
+            continue
+        old_atom, new_atom = old_atoms[old_id], new_atoms[new_id]
+        old_offset = np.asarray(source.fractional_position) - old_atom.fractional_position
+        new_offset = np.asarray(target.fractional_position) - new_atom.fractional_position
+        motion.append(
+            {
+                "source_atom_index": old_id,
+                "target_atom_index": new_id,
+                "element": old_atom.element,
+                "relative_displacement_angstrom": deformation_aware_distance(
+                    old_offset, new_offset, previous.cell, current.cell, config.pbc
+                ),
+                "distance_before_angstrom": float(
+                    np.linalg.norm(
+                        minimum_image_displacement(
+                            old_atom.fractional_position,
+                            source.fractional_position,
+                            previous.cell,
+                            config.pbc,
+                        )
+                    )
+                ),
+                "distance_after_angstrom": float(
+                    np.linalg.norm(
+                        minimum_image_displacement(
+                            new_atom.fractional_position,
+                            target.fractional_position,
+                            current.cell,
+                            config.pbc,
+                        )
+                    )
+                ),
+            }
+        )
+    return motion
+
+
 def _feature_pair(
     source: Feature,
     target: Feature,
@@ -720,7 +831,15 @@ def _feature_pair(
     *,
     distance: float,
     distance_gate: float | None = None,
+    motion_evidence: bool = True,
 ) -> tuple[float, dict[str, Any]]:
+    """Score one candidate pair; ``motion_evidence=False`` skips supplemental geometry.
+
+    Matching scans score many pairs that are never reported, so they skip the
+    bond-critical-point motion evidence and :func:`_direct_feature_edge` adds it to
+    the edges that are.
+    """
+
     kind_match = source.kind == target.kind
     if not _compatible_kind(source, target, config):
         return math.inf, {"kind_match": False}
@@ -761,54 +880,10 @@ def _feature_pair(
         components["neighbors"] = (1.0 - neighbor_similarity, config.neighbor_weight)
         evidence["neighbor_similarity"] = neighbor_similarity
 
-    if source.kind == target.kind == FeatureKind.BOND_CRITICAL_POINT:
-        # Supplemental geometry only: it does not modify cost or confidence.
-        # Each anchor is a shared, already-matched neighbor; report all of them.
-        old_atoms = {atom.index: atom for atom in previous.atoms}
-        new_atoms = {atom.index: atom for atom in current.atoms}
-        motion = []
-        for old_id in source.neighbor_atom_indices:
-            new_id = atom_mapping.get(old_id)
-            if (
-                new_id not in target.neighbor_atom_indices
-                or old_id not in old_atoms
-                or new_id not in new_atoms
-            ):
-                continue
-            old_atom, new_atom = old_atoms[old_id], new_atoms[new_id]
-            old_offset = np.asarray(source.fractional_position) - old_atom.fractional_position
-            new_offset = np.asarray(target.fractional_position) - new_atom.fractional_position
-            motion.append(
-                {
-                    "source_atom_index": old_id,
-                    "target_atom_index": new_id,
-                    "element": old_atom.element,
-                    "relative_displacement_angstrom": deformation_aware_distance(
-                        old_offset, new_offset, previous.cell, current.cell, config.pbc
-                    ),
-                    "distance_before_angstrom": float(
-                        np.linalg.norm(
-                            minimum_image_displacement(
-                                old_atom.fractional_position,
-                                source.fractional_position,
-                                previous.cell,
-                                config.pbc,
-                            )
-                        )
-                    ),
-                    "distance_after_angstrom": float(
-                        np.linalg.norm(
-                            minimum_image_displacement(
-                                new_atom.fractional_position,
-                                target.fractional_position,
-                                current.cell,
-                                config.pbc,
-                            )
-                        )
-                    ),
-                }
-            )
-        evidence["shared_neighbor_motion"] = motion
+    if motion_evidence and source.kind == target.kind == FeatureKind.BOND_CRITICAL_POINT:
+        evidence["shared_neighbor_motion"] = _shared_neighbor_motion(
+            source, target, previous, current, atom_mapping, config
+        )
 
     voxel_similarity = _voxel_similarity(source, target, previous, current)
     if voxel_similarity is not None:
@@ -1016,7 +1091,9 @@ def _augment_hyperedges(
 ) -> tuple[list[MatchEdge], set[int], set[int], list[dict[str, Any]]]:
     if not config.detect_splits_merges or not direct:
         direct_edges = [
-            _direct_feature_edge(row, column, costs, pair_evidence, previous, current)
+            _direct_feature_edge(
+                row, column, costs, pair_evidence, previous, current, atom_mapping, config
+            )
             for row, column in direct
         ]
         return direct_edges, unmatched_rows, unmatched_columns, []
@@ -1024,10 +1101,13 @@ def _augment_hyperedges(
     matched_rows = {row for row, _ in direct}
     matched_columns = {column for _, column in direct}
     # Assign every unmatched entity to its best compatible direct backbone.
+    # Pairs beyond the split/merge gate cannot qualify, so they are skipped unscored.
     split_candidates: dict[int, list[tuple[int, float, dict[str, Any]]]] = {}
     for column in unmatched_columns:
         choices: list[tuple[float, int, dict[str, Any]]] = []
         for row in matched_rows:
+            if distances[row, column] > config.split_merge_distance:
+                continue
             cost, evidence = _feature_pair(
                 previous.features[row],
                 current.features[column],
@@ -1037,6 +1117,7 @@ def _augment_hyperedges(
                 config,
                 distance=float(distances[row, column]),
                 distance_gate=config.split_merge_distance,
+                motion_evidence=False,
             )
             structural_cost = _hyperedge_member_cost(evidence, config)
             if math.isfinite(cost) and structural_cost <= config.split_merge_max_cost:
@@ -1050,6 +1131,8 @@ def _augment_hyperedges(
     for row in unmatched_rows:
         choices = []
         for column in matched_columns:
+            if distances[row, column] > config.split_merge_distance:
+                continue
             cost, evidence = _feature_pair(
                 previous.features[row],
                 current.features[column],
@@ -1059,6 +1142,7 @@ def _augment_hyperedges(
                 config,
                 distance=float(distances[row, column]),
                 distance_gate=config.split_merge_distance,
+                motion_evidence=False,
             )
             structural_cost = _hyperedge_member_cost(evidence, config)
             if math.isfinite(cost) and structural_cost <= config.split_merge_max_cost:
@@ -1191,7 +1275,11 @@ def _augment_hyperedges(
                         }
                     )
                 rejections.append(rejection)
-            edges.append(_direct_feature_edge(row, column, costs, pair_evidence, previous, current))
+            edges.append(
+                _direct_feature_edge(
+                    row, column, costs, pair_evidence, previous, current, atom_mapping, config
+                )
+            )
     rejections.sort(
         key=lambda item: (
             str(item["relation"]),
@@ -1215,11 +1303,17 @@ def _direct_feature_edge(
     pair_evidence: Mapping[tuple[int, int], dict[str, Any]],
     previous: Frame,
     current: Frame,
+    atom_mapping: Mapping[int, int],
+    config: FeatureMatchConfig,
 ) -> MatchEdge:
     source = previous.features[row]
     target = current.features[column]
     quality, quality_evidence = _quality_factor((source, target))
     evidence = dict(pair_evidence[row, column])
+    if source.kind == target.kind == FeatureKind.BOND_CRITICAL_POINT:
+        evidence["shared_neighbor_motion"] = _shared_neighbor_motion(
+            source, target, previous, current, atom_mapping, config
+        )
     evidence.update(quality_evidence)
     return MatchEdge(
         source_ids=(source.id,),
@@ -1240,38 +1334,36 @@ def match_features(
 
     settings = config or FeatureMatchConfig()
     mapping = _atom_mapping(atom_mapping)
+    allowed, semantic_rejections = _compatible_pairs(previous.features, current.features, settings)
     distances = _candidate_distances(
         previous.features,
         current.features,
-        (
-            (row, column)
-            for row, source in enumerate(previous.features)
-            for column, target in enumerate(current.features)
-            if _compatible_kind(source, target, settings)
-            and _semantic_compatibility(source, target)[0]
-        ),
+        allowed,
         previous.cell,
         current.cell,
         settings.pbc,
+        # Split/merge candidates reuse these distances with their own gate.
+        max(settings.max_distance, settings.split_merge_distance),
     )
     costs = np.full((len(previous.features), len(current.features)), np.inf, dtype=float)
+    # Every other pair has an infinite cost, so only these can match or need evidence.
     pair_evidence: dict[tuple[int, int], dict[str, Any]] = {}
-    for row, source in enumerate(previous.features):
-        for column, target in enumerate(current.features):
-            cost, evidence = _feature_pair(
-                source,
-                target,
-                previous,
-                current,
-                mapping,
-                settings,
-                distance=float(distances[row, column]),
-            )
-            if cost > settings.max_cost:
-                cost = math.inf
-                evidence["rejected_by_max_cost"] = True
-            costs[row, column] = cost
-            pair_evidence[row, column] = evidence
+    rows, columns = np.nonzero(distances <= settings.max_distance)
+    for row, column in zip(rows.tolist(), columns.tolist(), strict=True):
+        cost, evidence = _feature_pair(
+            previous.features[row],
+            current.features[column],
+            previous,
+            current,
+            mapping,
+            settings,
+            distance=float(distances[row, column]),
+            motion_evidence=False,
+        )
+        if cost > settings.max_cost:
+            continue
+        costs[row, column] = cost
+        pair_evidence[row, column] = evidence
 
     direct, unmatched_rows, unmatched_columns, _ = _assign_with_unmatched(
         costs, settings.unmatched_cost
@@ -1303,10 +1395,7 @@ def match_features(
         diagnostics={
             "entity": "feature",
             "candidate_pairs": int(np.isfinite(costs).sum()),
-            "semantic_rejections": sum(
-                pair.get("semantic_compatibility", {}).get("compatible") is False
-                for pair in pair_evidence.values()
-            ),
+            "semantic_rejections": semantic_rejections,
             "one_to_one_backbone": len(direct),
             "hyperedges": sum(
                 len(edge.source_ids) != 1 or len(edge.target_ids) != 1 for edge in edges

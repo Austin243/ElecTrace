@@ -4,6 +4,13 @@
 
 ### Added
 
+- Opt-in `[outputs] match_details = false` leaves each frame's feature list and the
+  atom and feature match edges out of `analysis.json` and `report.html`. Tracks,
+  events, `track_summary`, `focus`, and the CSV files do not change, and a rerun with
+  the default restores the omitted records. For a synthetic 288-atom path with about
+  1,540 features per frame, `analysis.json` drops from 45 to 14 MiB and the report
+  from 26 to 9 MiB; with a four-atom focus, to 1.4 and 0.8 MiB. Without the setting,
+  outputs are unchanged.
 - Per-atom spin populations for collinear `ISPIN = 2` VASP runs.
   `electrace volume CHGCAR --split-spin` writes `spin/CHGCAR_tot` and
   `spin/CHGCAR_mag` unchanged in value and sign; it refuses one-grid, truncated,
@@ -51,6 +58,18 @@
 
 ### Changed
 
+- Matching is much faster for large cells; assignments, confidences, diagnostics,
+  events, and outputs are unchanged. Only pairs that can match are scored: a
+  vectorized lower bound on the minimum-image distance skips pairs beyond the
+  displacement gates, and compatibility is checked once per group of features with
+  the same kind and semantics. The image search is skipped when the
+  component-rounded image is shorter than half the cell's smallest singular value,
+  since no other image can then be nearer. Bond-critical-point motion evidence is
+  computed only for reported edges, and the bundled assignment solver used without
+  SciPy is vectorized. A 288-atom acetonitrile NEB band (11 images, Bader charges and
+  spins) takes 0.6 s instead of 9.5 s with SciPy and 4 s instead of 76 s without it.
+  A synthetic path with about 1,540 features per frame takes 6 s instead of 191 s,
+  with peak memory 0.66 GB instead of 1.5 GB.
 - A LOBSTER bond from an atom to its own periodic image lists the atom once in
   `neighbor_atom_indices`, with `lattice_translation` naming the image. Such rows,
   common in real `ICOHPLIST` files, previously made the whole file fail. LOBSTER

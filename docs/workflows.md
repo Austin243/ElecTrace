@@ -70,6 +70,24 @@ track is kept whole when any of its observations touches a focus atom. `focus` i
 numbers of tracks, observations, and events. Warnings are not filtered. An index that
 is not an atom of every frame stops the analysis before any output is written.
 
+## Smaller outputs for large cells
+
+By default, `analysis.json` and `report.html` also hold every frame's feature list
+and every atom and feature match edge with its scoring evidence. With about 1,500
+critic2 and Bader features per frame, these records make up most of both files. To
+leave them out:
+
+```toml
+[outputs]
+match_details = false
+```
+
+Tracks, events with their evidence, `track_summary`, `focus`, the CSV files, frame
+counts, unmatched IDs, and match diagnostics do not change. Every feature observation
+is still in `tracks` unless a focus filters it. The configuration echo in
+`analysis.json` records the setting. Matching is deterministic, so a rerun with the
+default restores the omitted records for review.
+
 ## Golden path from existing results
 
 The repository includes a small, real native-output example generated from a

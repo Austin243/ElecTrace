@@ -54,6 +54,9 @@ csv = true
 # Report only features tied to these 0-based POSCAR atom indices, such as the
 # reacting atoms of a large cell; matching still uses every atom and feature.
 # focus_atoms = [12, 13, 40]
+# Leave each frame's feature list and the match edges out of analysis.json and
+# report.html; tracks, events, and summaries are unchanged.
+# match_details = false
 
 # Plugins are inspected and planned by ElecTrace, but never executed implicitly.
 [plugins.baderkit]

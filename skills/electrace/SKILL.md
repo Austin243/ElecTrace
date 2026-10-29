@@ -34,7 +34,10 @@ change, range, and largest single step over the whole path.
 For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
 indices) so the report stays readable. Matching still uses every atom. Quote the
 reported and total counts from `focus` in `analysis.json`, and never present a
-focused run as the whole path. When every frame has an energy, events carry
+focused run as the whole path. `[outputs] match_details = false` leaves each frame's
+feature list and the match edges out of `analysis.json` and the report; tracks,
+events, and summaries do not change. Rerun with the default before reviewing a
+surprising match. When every frame has an energy, events carry
 `barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
 frame is not a located transition state.
 
