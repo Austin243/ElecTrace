@@ -40,4 +40,9 @@ warnings and missing evidence. Never treat Bader/DDEC values as definitive oxida
 states, ICOHP as a transferable bond energy, or a filesystem-complete job as proof of
 scientific convergence.
 
+To draw chosen bonds and atoms along the path, install `electrace[plot]` and run
+`electrace figure RESULTS --bond C41-H227 --atom H227 --output NAME --json`, as
+described in [Path figures](workflows.md#path-figures). Report its warnings: a
+missing panel or a gap is missing evidence, not zero.
+
 The installable skill is in [`skills/electrace`](https://github.com/Austin243/ElecTrace/tree/main/skills/electrace).

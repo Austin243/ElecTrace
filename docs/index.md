@@ -5,8 +5,9 @@ It can analyze existing Bader, BadELF, critic2, LOBSTER, Chargemol, and normaliz
 feature records, or stage user-configured VASP and descriptor calculations locally or
 through Slurm.
 
-- [Using ElecTrace](workflows.md): install, analyze existing results, select frames,
-  stage calculations, run locally, submit through Slurm, and collect outputs.
+- [Using ElecTrace](workflows.md): install, analyze existing results, draw path
+  figures, select frames, stage calculations, run locally, submit through Slurm, and
+  collect outputs.
 - [Coding-agent reference](agents.md): compact command routing and authorization rules.
 - [Scientific scope and limitations](scientific-scope.md): interpretation boundaries.
 

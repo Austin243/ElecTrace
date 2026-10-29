@@ -370,6 +370,68 @@ blocks of LOBSTER 3.x–5.0 or the two-column rows of LOBSTER 5.1. `icohp` (or
 and `icohp_up` and `icohp_down` (or `icobi_up` and `icobi_down`) hold LOBSTER's
 spin 1 and spin 2.
 
+## Path figures
+
+`electrace figure` draws chosen bonds and atoms of one analysis along the path, on a
+shared frame axis, as a figure for a paper. It needs the plotting extra:
+
+```bash
+python -m pip install "electrace[plot]"
+electrace figure electrace-results \
+  --bond C41-H227 --bond H227-N260 --bond C41-C64 \
+  --atom C41 --atom H227 --atom N260 --atom C64 \
+  --output E10dir501_p35
+```
+
+The panels, top to bottom:
+
+- **A**: the energy relative to the first frame. A dashed line through every panel
+  marks the highest-energy frame from `barrier`, labelled with its rise above the
+  first frame.
+- **B**: the density at each chosen bond's critical point (`field`, a.u. for
+  critic2), over the bond's interatomic distance.
+- **C**: each chosen atom's net charge, over its spin. The net charge is ZVAL minus
+  the Bader or BaderKit population, or the DDEC charge.
+
+A filled dot between two frames marks a step on which ElecTrace reports an event for
+that bond or atom. A critical point that appears, vanishes, changes neighbors, or
+changes its density is marked on the bond's density; a charge or spin change, on the
+atom's net charge or spin. Events that change only a Laplacian, ICOHP, or volume are
+not drawn, and `--json` lists every event with the panels that mark it.
+
+Atoms are 0-based POSCAR indices, as for `focus_atoms`, with or without the element
+(`H227` or `227`); a given element must match the analysis. A bond is two atoms in
+either order (`C41-H227` or `227-41`), or a `bond_id` from `bonds.csv`, which picks
+one periodic image. The command writes `E10dir501_p35.pdf` and `E10dir501_p35.svg`,
+with text kept as text, and a 600 dpi `E10dir501_p35.png`, one PNAS column (8.7 cm)
+wide. It does not replace existing files without `--force`. With `--json`, it also
+returns the plotted values, null where a value is missing, each series' events, and
+the warnings.
+
+Missing values are gaps, never zeros. A bond's density exists only in the frames
+where a critical point ties its two atoms, so a bond that forms or breaks starts or
+ends mid-path. Its distance comes from the frame geometry in every frame, for the
+periodic image of its bond rows (the minimum image for a pair without rows), so it
+continues where no critical point exists. A pair with rows for several periodic
+images gives one series per `bond_id`. A frame with two values for one series shows
+both as points, without a line through that frame. A panel without values, such as
+the energy panel without energies or the density panel of an analysis without a bond
+view, is left out, and a warning says why. In a focused analysis, a bond with neither atom in the focus, or an atom outside the
+focus, is not drawn, because the analysis left out its records; analyze without
+`focus_atoms`, or with the atom in the focus.
+
+All chosen bonds or atoms share one scale per quantity. The density axis starts at
+zero, and the spin axis spans at least ±0.1 μB, so a closed-shell path reads as zero.
+To compare several figures on the same scales, set limits:
+
+```bash
+electrace figure electrace-results --bond C14-N262 --atom N254 \
+  --ylim rho=0:0.4 --ylim spin=-0.2:1 --output T0206_p20
+```
+
+The quantities are `energy`, `rho`, `distance`, `charge`, and `spin`. The figure uses
+Arial where it is installed, and each series is a named group in the SVG.
+
 ## Select frames and stage calculations
 
 Create and edit a workflow manifest:
