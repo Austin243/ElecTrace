@@ -93,6 +93,74 @@ their elements and the reported and total numbers of tracks, observations, event
 and bond rows. Warnings are not filtered. An index that is not an atom of every frame
 stops the analysis before any output is written.
 
+To let ElecTrace choose the atoms, set:
+
+```toml
+[outputs]
+focus_atoms = "auto"
+```
+
+The focus then holds every atom that one of three rules selects:
+
+- **bond**: a covalent bond to the atom is present in some frames and absent in
+  others. Two atoms are bonded when their minimum-image distance is below the cutoff
+  for their element pair.
+- **spin**: the atom's spin population changes between adjacent frames by at least
+  the `spin` threshold under `[events.descriptor_thresholds]`, the same test spin
+  events use. Without that threshold the rule does not run, and the analysis warns if
+  spin populations are present.
+- **bcp**: the atom is a neighbor, before or after, of a bond-critical-point
+  connectivity change. The rule runs when bond critical points, such as critic2's,
+  exist.
+
+The default cutoffs, in Å, are:
+
+| Pair | C–C | C–N | N–N | C–H | N–H | H–H |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cutoff | 1.75 | 1.75 | 1.65 | 1.30 | 1.25 | 0.90 |
+
+Set or replace a pair's cutoff under `[outputs.focus_bond_cutoffs]`, naming the two
+elements in either order; the other defaults stay:
+
+```toml
+[outputs.focus_bond_cutoffs]
+C-O = 1.60
+N-C = 1.70
+```
+
+A pair present in the structure without a cutoff is never bonded, and the analysis
+warns and names it. In each frame, the cutoff of every element pair present there
+must be at most half the frame's smallest lattice-plane spacing, so that an atom pair
+has only one image within it; a smaller or more skewed cell stops the analysis. Bonds
+are compared by each frame's own atom indices, so every frame must list the same
+elements in the same order.
+
+`focus` in `analysis.json` then also gives each atom's `rules`, `selection = "auto"`,
+and, under `rules`, the cutoffs used, the bonds that change, the spin threshold, the
+number of connectivity changes, and the reason any rule did not run. If no rule
+selects an atom, the analysis warns and reports every feature, as without a focus.
+
+## Spectator noise floor
+
+Atoms away from the reaction still change charge, volume, and spin between frames.
+When a focus holds atoms, from a list or from `"auto"`, `noise_floor` in
+`analysis.json` and the report give, for each producer, element, and quantity
+(charge, volume, spin), the median and the 95th and 99th percentiles of the
+adjacent-frame |Δ| of spectator atoms: the atom tracks that never touch a focus atom.
+Values are in each source tool's units, with the numbers of atoms and steps behind
+them. The atom values are the per-atom Bader, BaderKit, or DDEC charge features with
+their volumes and spins; BaderKit's per-maximum basins are left out so that no atom
+counts twice. Without a focus, the reacting atoms cannot be told apart from
+spectators, so there is no floor and the outputs are unchanged.
+
+Each reported property change of an atom-charge feature then carries `noise_floor`:
+for each flagged charge, volume, or spin change, the change and its magnitude divided
+by the floor's median, 95th, and 99th percentiles for that element. A ratio is `null`
+where the percentile is zero, as for spin in a closed-shell path. Volume events are
+flagged by relative change, but the ratio uses the absolute change, like the floor.
+The report's timeline shows the ratio to the 99th percentile. This is reporting only:
+thresholds, events, and confidences do not change.
+
 ## Golden path from existing results
 
 The repository includes a small, real native-output example generated from a

@@ -103,6 +103,7 @@ _HTML = """<!doctype html>
       <section><h2>Event composition</h2><div id="composition"></div></section>
     </div>
     <section><h2>Electronic event timeline</h2><div class="timeline" id="timeline"></div></section>
+    <div id="noise"></div>
     <section><h2>Whole-path track changes</h2><div id="summary"></div></section>
     <section><h2>Per-bond view</h2><div id="bonds"></div></section>
     <section><h2>Frame inventory</h2><div id="frames"></div></section>
@@ -133,12 +134,16 @@ _HTML = """<!doctype html>
     document.getElementById("cards").innerHTML = cards.map(([n,l]) => `<div class="card"><b>${esc(n)}</b><small>${esc(l)}</small></div>`).join("");
     const focus = data.focus;
     if (focus) {
-      const atoms = (focus.atoms || []).map(a => `${a.element}[${a.index}]`).join(", ");
+      const ruleNames = {bond: "bond change", spin: "spin change", bcp: "BCP connectivity change"};
+      const atoms = (focus.atoms || []).map(a => `${a.element}[${a.index}]${a.rules ? ` (${a.rules.map(r => ruleNames[r] || r).join(", ")})` : ""}`).join(", ");
       const part = (c, noun) => `${c?.reported ?? "—"} of ${c?.total ?? "—"} ${noun}`;
+      const auto = focus.selection === "auto";
       const parts = [part(focus.tracks, "tracks"), part(focus.observations, "feature observations"), part(focus.events, "events")];
       if (focus.bonds) parts.push(part(focus.bonds, "bond rows"));
       const listed = `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
-      document.getElementById("focus").innerHTML = `<p class="muted">${esc(`Focus on ${atoms}: reporting ${listed}. Matching and warnings cover every atom and feature.`)}</p>`;
+      const text = auto && !(focus.atoms || []).length ? "Automatic focus selected no atoms, so every feature is reported." : `${auto ? "Automatic focus" : "Focus"} on ${atoms}: reporting ${listed}. Matching and warnings cover every atom and feature.`;
+      const skipped = Object.entries(focus.rules || {}).filter(([, r]) => r.applied === false).map(([k, r]) => ` The ${ruleNames[k] || k} rule did not run: ${r.reason}`).join("");
+      document.getElementById("focus").innerHTML = `<p class="muted">${esc(text + skipped)}</p>`;
     }
 
     const frameName = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
@@ -208,8 +213,25 @@ _HTML = """<!doctype html>
       const evidence=type === "connectivity_change" ? connectivityEvidence(e) : `<div class="confidence"><i style="width:${confidence*100}%"></i></div>`;
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
       const place=placeLabels[e.barrier_position] ? `<br><small>${esc(placeLabels[e.barrier_position])}</small>` : "";
-      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}</div><span>${status}</span></div>`;
+      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>';
+
+    function noiseNote(e) {
+      const n = e.noise_floor;
+      if (!n) return '';
+      const parts = Object.entries(n.changes || {}).map(([q, c]) => {
+        const ratio = c.ratio_to_floor?.p99;
+        return `${q} ${Number(c.delta) > 0 ? "+" : ""}${fmt(c.delta)}: ${ratio == null ? `the ${n.element} spectator 99th percentile is zero` : `${fmt(ratio, 1)} times the ${n.element} spectator 99th percentile`}`;
+      });
+      return `<small class="muted">${esc(parts.join("; "))}</small>`;
+    }
+    function noiseFloor(entries) {
+      if (!entries.length) return '<div class="empty">No spectator atom charges, volumes, or spins to compare.</div>';
+      const rows = entries.map(e => `<tr><td>${esc(e.element)}</td><td>${esc(e.quantity)}</td><td>${esc(e.producer ?? "—")}</td><td>${esc(e.atoms)}</td><td>${esc(e.steps)}</td><td>${fmt(e.median, 4)}</td><td>${fmt(e.p95, 4)}</td><td>${fmt(e.p99, 4)}</td></tr>`).join('');
+      return `<p class="muted">Adjacent-frame |Δ| over atom-charge tracks that never touch a focus atom, in each source tool's units. Reporting only: event thresholds are unchanged. Each atom event above gives its change as a multiple of the 99th percentile for its element.</p><div class="scroll"><table><thead><tr><th>Element</th><th>Quantity</th><th>Source</th><th>Atoms</th><th>Steps</th><th>Median</th><th>95th</th><th>99th</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    // Spectators exist only outside a focus, so an analysis without one has no floor.
+    if (Array.isArray(data.noise_floor)) document.getElementById("noise").innerHTML = `<section><h2>Spectator noise floor</h2>${noiseFloor(data.noise_floor)}</section>`;
 
     const summary = data.track_summary || [];
     const signed = value => value == null || Number.isNaN(Number(value)) ? "—" : `${Number(value) > 0 ? "+" : ""}${fmt(value)}`;

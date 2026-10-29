@@ -40,9 +40,14 @@ where the frame's `POTCAR` or `OUTCAR` gave ZVAL, and a warning names the frames
 without it.
 
 For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
-indices) so the report stays readable. Matching still uses every atom. Quote the
-reported and total counts from `focus` in `analysis.json`, and never present a
-focused run as the whole path. When every frame has an energy, events carry
+indices), or to `"auto"` to select the atoms whose bonds, spin, or bond-critical-point
+neighbors change, so the report stays readable. Matching still uses every atom. Quote
+the reported and total counts from `focus` in `analysis.json`, and for `"auto"` each
+atom's `rules` and any warning about missing bond cutoffs or a missing spin threshold.
+Never present a focused run as the whole path. With a focus, compare charge,
+volume, and spin events with `noise_floor`, the percentiles of atoms outside the
+focus for each element, before describing a change as chemical; without a focus
+there is no floor. When every frame has an energy, events carry
 `barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
 frame is not a located transition state.
 

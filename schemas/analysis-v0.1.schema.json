@@ -59,6 +59,43 @@
           "barrier_position": {
             "enum": ["before", "spanning", "after", null],
             "description": "Event step relative to the highest-energy frame(s): spanning when the step starts or ends at one; null when events are not placed."
+          },
+          "noise_floor": {
+            "type": "object",
+            "description": "Present only when a focus holds atoms, on a reported property change of an atom-charge feature whose producer, element, and a flagged quantity have a noise_floor entry. Reporting only.",
+            "required": ["element", "producer", "changes"],
+            "properties": {
+              "element": {"type": "string"},
+              "producer": {"type": ["string", "null"]},
+              "changes": {
+                "type": "object",
+                "description": "Keyed by each flagged quantity (charge, volume, or spin).",
+                "propertyNames": {"enum": ["charge", "volume", "spin"]},
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["delta", "ratio_to_floor"],
+                  "properties": {
+                    "delta": {
+                      "type": "number",
+                      "description": "Target minus source value in native units; absolute even for volume events, which are flagged by relative change."
+                    },
+                    "ratio_to_floor": {
+                      "type": "object",
+                      "description": "abs(delta) divided by each floor percentile; null where that percentile is zero.",
+                      "required": ["median", "p95", "p99"],
+                      "properties": {
+                        "median": {"$ref": "#/$defs/floor_ratio"},
+                        "p95": {"$ref": "#/$defs/floor_ratio"},
+                        "p99": {"$ref": "#/$defs/floor_ratio"}
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": true
@@ -196,7 +233,7 @@
     },
     "focus": {
       "type": "object",
-      "description": "Present only with outputs.focus_atoms. Events, tracks, and track_summary then cover the tracks tied to these atoms, and bonds the pairs that include one.",
+      "description": "Present only with outputs.focus_atoms. Events, tracks, and track_summary then cover the tracks tied to these atoms, and bonds the pairs that include one; with focus_atoms = \"auto\" and no atom selected, they cover everything.",
       "required": ["atoms", "tracks", "observations", "events"],
       "properties": {
         "atoms": {
@@ -206,7 +243,14 @@
             "required": ["index", "element"],
             "properties": {
               "index": {"type": "integer", "minimum": 0},
-              "element": {"type": "string"}
+              "element": {"type": "string"},
+              "rules": {
+                "type": "array",
+                "description": "With focus_atoms = \"auto\": the rules that selected the atom.",
+                "items": {"enum": ["bond", "spin", "bcp"]},
+                "minItems": 1,
+                "uniqueItems": true
+              }
             },
             "additionalProperties": false
           }
@@ -214,12 +258,84 @@
         "tracks": {"$ref": "#/$defs/focus_count"},
         "observations": {"$ref": "#/$defs/focus_count"},
         "events": {"$ref": "#/$defs/focus_count"},
-        "bonds": {"$ref": "#/$defs/focus_count"}
+        "bonds": {"$ref": "#/$defs/focus_count"},
+        "selection": {"const": "auto", "description": "Present with focus_atoms = \"auto\"."},
+        "rules": {
+          "type": "object",
+          "description": "Present with focus_atoms = \"auto\": each rule's settings, and why a rule did not run.",
+          "required": ["bond", "spin", "bcp"],
+          "properties": {
+            "bond": {
+              "type": "object",
+              "required": ["applied", "cutoffs", "changed_bonds"],
+              "properties": {
+                "applied": {"const": true},
+                "cutoffs": {
+                  "type": "object",
+                  "description": "Element-pair cutoffs in angstrom, keyed like \"H-N\".",
+                  "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+                },
+                "changed_bonds": {
+                  "type": "array",
+                  "description": "Atom pairs bonded in some frames and not in others.",
+                  "items": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0},
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "spin": {
+              "type": "object",
+              "required": ["applied", "threshold"],
+              "properties": {
+                "applied": {"type": "boolean"},
+                "threshold": {"type": ["number", "null"], "exclusiveMinimum": 0},
+                "reason": {"type": "string"}
+              },
+              "additionalProperties": false
+            },
+            "bcp": {
+              "type": "object",
+              "required": ["applied", "connectivity_changes"],
+              "properties": {
+                "applied": {"type": "boolean"},
+                "connectivity_changes": {"type": "integer", "minimum": 0},
+                "reason": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
+    },
+    "noise_floor": {
+      "type": "array",
+      "description": "Present only when a focus holds atoms: percentiles of the adjacent-frame absolute change of spectator atom-charge features (tracks that never touch a focus atom), per producer, element, and quantity. Reporting only: no thresholds or events.",
+      "items": {
+        "type": "object",
+        "required": ["producer", "element", "quantity", "atoms", "steps", "median", "p95", "p99"],
+        "properties": {
+          "producer": {"type": ["string", "null"]},
+          "element": {"type": "string"},
+          "quantity": {"enum": ["charge", "volume", "spin"]},
+          "atoms": {"type": "integer", "minimum": 1},
+          "steps": {"type": "integer", "minimum": 1},
+          "median": {"type": "number", "minimum": 0},
+          "p95": {"type": "number", "minimum": 0},
+          "p99": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
     }
   },
   "$defs": {
+    "floor_ratio": {"type": ["number", "null"], "minimum": 0},
     "focus_count": {
       "type": "object",
       "required": ["reported", "total"],
