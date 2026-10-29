@@ -87,6 +87,14 @@ a few steps, so read them with `steps`. An event several times above the 99th
 percentile is unusual for a spectator but not proof of chemistry, and a change near
 the floor can still be real.
 
+A path figure draws only what `analysis.json` holds for the chosen bonds and atoms.
+Its dashed line marks the highest-energy sampled frame, not a located saddle point,
+and a dot places an event within one step of the sampled frames. A gap in a bond's
+density means that no critical point tied the two atoms in that frame; an incomplete
+critic2 search gives the same gap, so compare its Morse sum before reading a gap as a
+broken bond. The distance continues through such gaps because it comes from the
+geometry, not from a critical point.
+
 `match_details = false` also changes only what is written. The per-pair match
 evidence it leaves out is what a review of a surprising mapping needs, so rerun with
 the default before reviewing one.

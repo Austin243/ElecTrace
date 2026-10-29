@@ -69,6 +69,18 @@ gives ZVAL, and this example ships neither.
 `T00005`, but they are different bonds and are never joined. Each row carries the
 interatomic distance and critic2's field and Laplacian for that frame.
 
+With `electrace[plot]` installed, draw the three bonds along the scan:
+
+```bash
+electrace figure electrace-results --bond C0-H2 --bond N1-H2 --bond C0-N1 --output hcn-hnc
+```
+
+The C–H density ends at frame 02 and the N–H density begins at frame 03, while both
+distances continue through the scan. The dots between frames 02 and 03 mark `E00004`,
+the reassignment, and `E00009`, the density change on the same step. The figure has
+no charge or spin panel, because the example has neither net charges nor spin
+populations, and a warning says so.
+
 The event thresholds in `electrace.toml` are illustrative and system-specific.
 Here, event persistence means the matched feature lineage remains observable; it
 does not prove that a changed descriptor stays constant or that a particular

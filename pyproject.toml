@@ -42,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 accelerate = ["scipy>=1.11"]
+plot = ["matplotlib>=3.8"]
 docs = [
   "jsonschema>=4.23,<5",
   "mkdocs>=1.6",
@@ -59,6 +60,7 @@ dev = [
   "ruff>=0.6",
 ]
 all = [
+  "matplotlib>=3.8",
   "scipy>=1.11",
 ]
 
@@ -116,5 +118,5 @@ warn_unreachable = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["scipy.*"]
+module = ["scipy.*", "matplotlib.*"]
 ignore_missing_imports = true

@@ -38,6 +38,12 @@ gives a ZVAL for each `POSCAR` species block in order. `workflow analyze` collec
 the `POTCAR` the VASP step used; a VASP 4 `POSCAR` without species names gets no net
 charges.
 
+`electrace figure RESULTS --bond A-B --atom A --output NAME` (with
+`electrace[plot]`) reads `analysis.json` only and writes `NAME.pdf`, `NAME.svg`, and
+a 600 dpi `NAME.png`: the energy, the critical-point density over the distance of each
+bond, and the net charge over the spin of each atom. Gaps stay gaps, and atoms or
+bonds that a focus left out are not drawn.
+
 Current boundaries: external programs and pseudopotentials are user-supplied;
 critic2 integration reports critical-point topology rather than integrated ELF basin
 populations; the spin split is not a workflow step and non-collinear spin is

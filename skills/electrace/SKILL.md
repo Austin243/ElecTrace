@@ -1,6 +1,6 @@
 ---
 name: electrace
-description: Analyze Bader, BadELF, QTAIM/critic2, LOBSTER, DDEC, spin-population, and VASP grid evidence across ordered periodic frames, including VASP NEB paths. Use ElecTrace to select frames, stage local or Slurm calculations, parse outputs, track changes, and generate reports. Do not use it as a convergence or formal-oxidation-state oracle.
+description: Analyze Bader, BadELF, QTAIM/critic2, LOBSTER, DDEC, spin-population, and VASP grid evidence across ordered periodic frames, including VASP NEB paths. Use ElecTrace to select frames, stage local or Slurm calculations, parse outputs, track changes, and generate reports and path figures. Do not use it as a convergence or formal-oxidation-state oracle.
 ---
 
 # Use ElecTrace
@@ -55,6 +55,13 @@ summaries do not change. Rerun with the default before reviewing a surprising ma
 When every frame has an energy, events carry
 `barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
 frame is not a located transition state.
+
+To draw chosen bonds and atoms along the path, install `electrace[plot]` and run
+`electrace figure RESULTS --bond C41-H227 --atom H227 --output NAME --json`. It
+writes PDF, SVG, and a 600 dpi PNG of the energy, the bond-critical-point densities
+over the distances, and the net charges over the spins, with events marked. Report
+its warnings: a missing panel, an atom outside the focus, or a density gap is
+missing evidence, not zero. Use `--ylim` to put several figures on the same scales.
 
 ## Missing calculations
 

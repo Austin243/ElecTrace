@@ -4,6 +4,17 @@
 
 ### Added
 
+- `electrace figure` draws one `analysis.json` as a path figure: the energy profile,
+  the density at the critical points of chosen bonds over their distances, and the net
+  charges over the spins of chosen atoms, on one frame axis. A dashed line marks the
+  highest-energy frame from `barrier`, and a dot between two frames marks each step
+  with an event on a chosen bond or atom, on the quantity that changed. It writes PDF
+  and SVG with editable text and a 600 dpi PNG, one PNAS column wide, and `--json`
+  returns the plotted values, events, and warnings. Missing values are gaps, never
+  zeros; distances come from the frame geometry for the bond rows' periodic image;
+  panels without data, and bonds or atoms that a focus left out, are not drawn and a
+  warning says why. `--ylim` sets shared scales. Matplotlib is the optional `plot`
+  extra, also in `all`; nothing else needs it. Existing outputs are unchanged.
 - Opt-in `[events.critical_point_min_field]`, a density cutoff per critical-point
   kind (`bond_critical_point`, `ring_critical_point`, `cage_critical_point`). A birth,
   death, or connectivity change whose critical points all stay below their kind's

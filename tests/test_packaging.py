@@ -31,7 +31,8 @@ def test_runtime_extras_match_import_boundaries() -> None:
 
     assert required == {"numpy", "pyyaml", "rich", "typer"}
     assert _names(optional["accelerate"]) == {"scipy"}
-    assert _names(optional["all"]) == {"scipy"}
+    assert _names(optional["plot"]) == {"matplotlib"}
+    assert _names(optional["all"]) == {"matplotlib", "scipy"}
     optional_names = {name for requirements in optional.values() for name in _names(requirements)}
     assert optional_names.isdisjoint({"ase", "mkdocstrings", "types-setuptools"})
     assert "typer>=0.20" in project["dependencies"]

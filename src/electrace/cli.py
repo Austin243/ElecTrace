@@ -18,6 +18,7 @@ from electrace import __version__
 from electrace.cli_output import failure, serialize, success
 from electrace.config import load_config, write_default_config
 from electrace.demo import generate_demo
+from electrace.figure import parse_limits, write_path_figure
 from electrace.io import load_sequence
 from electrace.pipeline import load_and_analyze, run_project
 from electrace.plugins import (
@@ -455,6 +456,56 @@ def inspect(
             "—" if frame.energy is None else f"{frame.energy:.6f}",
         )
     console.print(table)
+
+
+@app.command()
+def figure(
+    target: Path = typer.Argument(
+        ..., help="An analysis.json, or the result directory holding it."
+    ),
+    bond: list[str] = typer.Option(
+        [], "--bond", "-b", help="A bond to draw, as C41-H227, 41-227, or a bond_id such as B00334."
+    ),
+    atom: list[str] = typer.Option([], "--atom", "-a", help="An atom to draw, as H227 or 227."),
+    output: Path = typer.Option(
+        Path("path-figure"), "--output", "-o", help="Output path; .pdf, .svg, and .png are added."
+    ),
+    ylim: list[str] = typer.Option(
+        [], "--ylim", help="Axis limits as QUANTITY=LOW:HIGH, such as rho=0:0.4."
+    ),
+    force: bool = typer.Option(False, "--force", help="Replace existing figure files."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Draw the energy, bond critical points, and atom charges and spins along the path."""
+
+    try:
+        analysis = _read_analysis(target)
+        if analysis is None:
+            _fail(
+                "Expected analysis.json or a result directory holding one",
+                as_json=as_json,
+                command="figure",
+            )
+        payload = write_path_figure(
+            analysis,
+            output,
+            bonds=bond,
+            atoms=atom,
+            limits=parse_limits(ylim),
+            overwrite=force,
+        )
+    except ImportError as exc:
+        _fail(str(exc), as_json=as_json, command="figure", error_code="missing_dependency")
+    except (OSError, TypeError, ValueError) as exc:
+        _fail_exception(exc, command="figure", as_json=as_json)
+    warnings = payload.pop("warnings")
+    if as_json:
+        _emit_json("figure", payload, warnings=warnings)
+        return
+    for written in payload["files"]:
+        console.print(f"[green]Wrote[/green] {written}")
+    for warning in warnings:
+        console.print(f"[yellow]Warning:[/yellow] {escape(warning)}")
 
 
 @app.command()

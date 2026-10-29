@@ -23,6 +23,8 @@ workflow.
   split/merge candidates, and descriptor changes.
 - Lists each bond's distance, critical-point density and Laplacian, and ICOHP/ICOBI
   frame by frame, with rows that begin or end as bonds form or break.
+- Draws chosen bonds and atoms along the path as a figure: the energy profile, the
+  bond-critical-point densities and distances, and the net charges and spins.
 - Stages VASP, Bader/BaderKit, critic2, and LOBSTER steps from a YAML workflow.
 - Writes JSON, CSV, and HTML results with available source and tool provenance.
 
@@ -39,8 +41,8 @@ python -m pip install .
 
 The base installation includes a deterministic assignment solver. Use
 `python -m pip install ".[accelerate]"` for the SciPy solver, which is much faster
-for cells with hundreds of features per frame, or
-`python -m pip install ".[all]"` for all optional features.
+for cells with hundreds of features per frame, `python -m pip install ".[plot]"`
+for path figures, or `python -m pip install ".[all]"` for all optional features.
 
 ## Try the demo
 
@@ -76,6 +78,13 @@ electrace init electrace.toml --images /absolute/path/to/neb-images
 # Review electrace.toml and set the descriptor source as needed.
 electrace analyze electrace.toml
 electrace inspect electrace-results
+```
+
+To draw chosen bonds and atoms along the path as PDF, SVG, and PNG files, see
+[path figures](docs/workflows.md#path-figures):
+
+```bash
+electrace figure electrace-results --bond C41-H227 --atom H227 --output path-figure
 ```
 
 VASP scalar grids can also be summarized or sampled directly:
