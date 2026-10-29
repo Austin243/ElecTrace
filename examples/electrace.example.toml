@@ -53,6 +53,7 @@ json = true
 csv = true
 # Report only features tied to these 0-based POSCAR atom indices, such as the
 # reacting atoms of a large cell; matching still uses every atom and feature.
+# "auto" selects the atoms whose bonds, spin, or bond critical points change.
 # focus_atoms = [12, 13, 40]
 # Leave each frame's feature list and the match edges out of analysis.json and
 # report.html; tracks, events, and summaries are unchanged.

@@ -103,7 +103,9 @@ _HTML = """<!doctype html>
       <section><h2>Event composition</h2><div id="composition"></div></section>
     </div>
     <section><h2>Electronic event timeline</h2><div class="timeline" id="timeline"></div></section>
+    <div id="noise"></div>
     <section><h2>Whole-path track changes</h2><div id="summary"></div></section>
+    <section><h2>Per-bond view</h2><div id="bonds"></div></section>
     <section><h2>Frame inventory</h2><div id="frames"></div></section>
     <section><h2>Provenance and audit trail</h2><div id="audit"></div></section>
   </main>
@@ -132,9 +134,16 @@ _HTML = """<!doctype html>
     document.getElementById("cards").innerHTML = cards.map(([n,l]) => `<div class="card"><b>${esc(n)}</b><small>${esc(l)}</small></div>`).join("");
     const focus = data.focus;
     if (focus) {
-      const atoms = (focus.atoms || []).map(a => `${a.element}[${a.index}]`).join(", ");
+      const ruleNames = {bond: "bond change", spin: "spin change", bcp: "BCP connectivity change"};
+      const atoms = (focus.atoms || []).map(a => `${a.element}[${a.index}]${a.rules ? ` (${a.rules.map(r => ruleNames[r] || r).join(", ")})` : ""}`).join(", ");
       const part = (c, noun) => `${c?.reported ?? "—"} of ${c?.total ?? "—"} ${noun}`;
-      document.getElementById("focus").innerHTML = `<p class="muted">${esc(`Focus on ${atoms}: reporting ${part(focus.tracks, "tracks")}, ${part(focus.observations, "feature observations")}, and ${part(focus.events, "events")}. Matching and warnings cover every atom and feature.`)}</p>`;
+      const auto = focus.selection === "auto";
+      const parts = [part(focus.tracks, "tracks"), part(focus.observations, "feature observations"), part(focus.events, "events")];
+      if (focus.bonds) parts.push(part(focus.bonds, "bond rows"));
+      const listed = `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+      const text = auto && !(focus.atoms || []).length ? "Automatic focus selected no atoms, so every feature is reported." : `${auto ? "Automatic focus" : "Focus"} on ${atoms}: reporting ${listed}. Matching and warnings cover every atom and feature.`;
+      const skipped = Object.entries(focus.rules || {}).filter(([, r]) => r.applied === false).map(([k, r]) => ` The ${ruleNames[k] || k} rule did not run: ${r.reason}`).join("");
+      document.getElementById("focus").innerHTML = `<p class="muted">${esc(text + skipped)}</p>`;
     }
 
     const frameName = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
@@ -204,8 +213,25 @@ _HTML = """<!doctype html>
       const evidence=type === "connectivity_change" ? connectivityEvidence(e) : `<div class="confidence"><i style="width:${confidence*100}%"></i></div>`;
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
       const place=placeLabels[e.barrier_position] ? `<br><small>${esc(placeLabels[e.barrier_position])}</small>` : "";
-      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}</div><span>${status}</span></div>`;
+      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>';
+
+    function noiseNote(e) {
+      const n = e.noise_floor;
+      if (!n) return '';
+      const parts = Object.entries(n.changes || {}).map(([q, c]) => {
+        const ratio = c.ratio_to_floor?.p99;
+        return `${q} ${Number(c.delta) > 0 ? "+" : ""}${fmt(c.delta)}: ${ratio == null ? `the ${n.element} spectator 99th percentile is zero` : `${fmt(ratio, 1)} times the ${n.element} spectator 99th percentile`}`;
+      });
+      return `<small class="muted">${esc(parts.join("; "))}</small>`;
+    }
+    function noiseFloor(entries) {
+      if (!entries.length) return '<div class="empty">No spectator atom charges, volumes, or spins to compare.</div>';
+      const rows = entries.map(e => `<tr><td>${esc(e.element)}</td><td>${esc(e.quantity)}</td><td>${esc(e.producer ?? "—")}</td><td>${esc(e.atoms)}</td><td>${esc(e.steps)}</td><td>${fmt(e.median, 4)}</td><td>${fmt(e.p95, 4)}</td><td>${fmt(e.p99, 4)}</td></tr>`).join('');
+      return `<p class="muted">Adjacent-frame |Δ| over atom-charge tracks that never touch a focus atom, in each source tool's units. Reporting only: event thresholds are unchanged. Each atom event above gives its change as a multiple of the 99th percentile for its element.</p><div class="scroll"><table><thead><tr><th>Element</th><th>Quantity</th><th>Source</th><th>Atoms</th><th>Steps</th><th>Median</th><th>95th</th><th>99th</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    // Spectators exist only outside a focus, so an analysis without one has no floor.
+    if (Array.isArray(data.noise_floor)) document.getElementById("noise").innerHTML = `<section><h2>Spectator noise floor</h2>${noiseFloor(data.noise_floor)}</section>`;
 
     const summary = data.track_summary || [];
     const signed = value => value == null || Number.isNaN(Number(value)) ? "—" : `${Number(value) > 0 ? "+" : ""}${fmt(value)}`;
@@ -231,7 +257,31 @@ _HTML = """<!doctype html>
     }
     document.getElementById("summary").innerHTML = trackSummary();
 
-    document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th></tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
+    const bonds = data.bonds || [];
+    function bondTable() {
+      if (!bonds.length) return '<div class="empty">No feature ties exactly two atoms in this analysis.</div>';
+      const heads = {field: "Field", laplacian: "Laplacian", icohp: "ICOHP (eV)", icobi: "ICOBI"};
+      const shown = Object.keys(heads).filter(q => bonds.some(b => b[q] != null));
+      // A row begins or ends where the neighboring frame has no row for that bond.
+      const present = new Set(bonds.map(b => `${b.bond_id}@${position(b.frame)}`));
+      const last = frames.length - 1;
+      const body = bonds.map(b => {
+        const i = position(b.frame);
+        const marks = [i > 0 && !present.has(`${b.bond_id}@${i-1}`) ? "begins" : "", i < last && !present.has(`${b.bond_id}@${i+1}`) ? "ends" : ""].filter(Boolean).join(", ");
+        return `<tr><td>${esc(b.element_a)}[${esc(b.atom_a)}]–${esc(b.element_b)}[${esc(b.atom_b)}] <small class="muted">${esc(b.bond_id)}</small></td><td>${esc(frameName(b.frame))}${marks ? ` <small class="muted">${marks}</small>` : ""}</td><td>${fmt(b.distance)}</td>${shown.map(q => `<td>${fmt(b[q], 4)}</td>`).join("")}<td>${esc((b.track_ids || []).join(", "))}</td></tr>`;
+      }).join("");
+      return `<p class="muted">One row per atom pair, periodic image, and frame for each feature tied to exactly two atoms, such as a critic2 bond critical point or a LOBSTER bond; features on one pair and image are joined. Atoms are 0-based POSCAR indices. Distance is the minimum image unless the feature names a lattice translation. Field and Laplacian are critic2's values at the critical point in its units; ICOHP is in eV. Rows begin or end where no feature ties a pair, so a bond that forms or breaks, or a critical point that moves to another pair, starts or stops rows; rows are never joined across pairs, although one feature track can cross several.</p><div class="scroll"><table><thead><tr><th>Atoms</th><th>Frame</th><th>Distance (Å)</th>${shown.map(q => `<th>${heads[q]}</th>`).join("")}<th>Tracks</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+    document.getElementById("bonds").innerHTML = bondTable();
+
+    const netSums = {};
+    for (const d of (data.provenance || {}).descriptor_documents || []) {
+      const sums = (d.metadata || {}).net_charge_sum;
+      if (sums && d.frame) netSums[d.frame.index] = sums;
+    }
+    const hasNet = Object.keys(netSums).length > 0;
+    const netCell = f => hasNet ? `<td>${Object.entries(netSums[f.index] || {}).map(([p, v]) => `${esc(p)} ${Number(v) > 0 ? "+" : ""}${fmt(v, 6)}`).join(", ") || "—"}</td>` : "";
+    document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th>${hasNet ? "<th>Net charge sum</th>" : ""}</tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td>${netCell(f)}</tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
 
     const audit = {configuration:data.configuration||{}, provenance:data.provenance||{}, warnings:data.warnings||[]};
     document.getElementById("audit").innerHTML = `<details open><summary>Warnings (${audit.warnings.length})</summary>${audit.warnings.length?`<ul>${audit.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:'<p class="muted">No pipeline warnings.</p>'}</details><details><summary>Configuration</summary><pre>${esc(JSON.stringify(audit.configuration,null,2))}</pre></details><details><summary>Provenance</summary><pre>${esc(JSON.stringify(audit.provenance,null,2))}</pre></details><details><summary>Canonical analysis JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;
