@@ -13,8 +13,9 @@ workflow.
 ## What it does
 
 - Discovers ordered VASP frame directories and selects individual frames or slices.
-- Reads `POSCAR`/`CONTCAR` structures and VASP `ELFCAR`/`CHGCAR` grids, and splits a
-  spin-polarized `CHGCAR` into total and magnetization grids for Bader.
+- Reads `POSCAR`/`CONTCAR` structures and VASP `ELFCAR`/`CHGCAR` grids, sums
+  `AECCAR0` and `AECCAR2` into a Bader reference, and splits a spin-polarized
+  `CHGCAR` into total and magnetization grids for Bader.
 - Ingests supported Bader/BaderKit, critic2, LOBSTER, and Chargemol results, including
   per-atom spin populations and spin-resolved LOBSTER lists, and gives Bader net
   charges when a frame's `POTCAR` or `OUTCAR` supplies ZVAL.
@@ -23,7 +24,9 @@ workflow.
   split/merge candidates, and descriptor changes.
 - Lists each bond's distance, critical-point density and Laplacian, and ICOHP/ICOBI
   frame by frame, with rows that begin or end as bonds form or break.
-- Stages VASP, Bader/BaderKit, critic2, and LOBSTER steps from a YAML workflow.
+- Stages VASP, Bader/BaderKit, critic2, and LOBSTER steps from a YAML workflow,
+  including Bader charges and spin populations on the all-electron reference and a
+  critic2 search seeded along every atom pair across periodic images.
 - Writes JSON, CSV, and HTML results with available source and tool provenance.
 
 ## Install
@@ -84,11 +87,15 @@ VASP scalar grids can also be summarized or sampled directly:
 electrace volume /path/to/ELFCAR
 electrace volume /path/to/ELFCAR --sample 0.5,0.5,0.5
 electrace volume /path/to/CHGCAR --split-spin
+electrace volume /path/to/AECCAR0 --add /path/to/AECCAR2
 ```
 
 For a spin-polarized (`ISPIN = 2`) run, `--split-spin` writes `spin/CHGCAR_tot` and
-`spin/CHGCAR_mag` for a Bader spin-population run; see
-[spin-polarized runs](docs/workflows.md#spin-polarized-runs).
+`spin/CHGCAR_mag` for a Bader spin-population run, and `--add` writes `CHGCAR_sum`, the
+all-electron reference for `bader -ref`; see
+[spin-polarized runs](docs/workflows.md#spin-polarized-runs). A workflow can run both
+for every frame, followed by Bader and critic2; see
+[all-electron density analysis](docs/workflows.md#all-electron-density-analysis).
 
 ## Run calculations across frames
 

@@ -73,6 +73,13 @@ executable = "baderkit"
 [plugins.critic2]
 enabled = true
 executable = "critic2"
+# "periodic" runs critic2.in, which workflow staging writes: AECCAR0 + AECCAR2 seeded
+# along every atom pair (and triplet) within seed_distance bohr, counting periodic
+# images. The values shown are the defaults.
+# seeds = "periodic"
+# seed_distance = 6.0
+# seed_points = 20
+# seed_triplets = true
 
 [plugins.lobster]
 enabled = false

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import Capability, CommandPlan, DoctorReport, resolve_executable
+from .critic2_input import ALL_ELECTRON_FILES, PERIODIC_INPUT_NAME, seed_settings
 
 
 def _directory(path: str | Path) -> Path:
@@ -174,7 +175,10 @@ class BaderPlugin(_BuiltinPlugin):
 
     name = "bader"
     default_executable = "bader"
-    capabilities: tuple[Capability, ...] = (Capability.BADER_CHARGES,)
+    capabilities: tuple[Capability, ...] = (
+        Capability.BADER_CHARGES,
+        Capability.SPIN_POPULATIONS,
+    )
 
     def plan(
         self,
@@ -182,7 +186,7 @@ class BaderPlugin(_BuiltinPlugin):
         *,
         capability: Capability | str | None = None,
         executable: str | None = None,
-        charge_file: str = "CHGCAR",
+        charge_file: str | None = None,
         reference_file: str | None = None,
         **options: Any,
     ) -> CommandPlan:
@@ -190,13 +194,28 @@ class BaderPlugin(_BuiltinPlugin):
             raise TypeError(f"unknown Bader plan options: {', '.join(sorted(options))}")
         directory = _directory(frame_directory)
         selected = _capability(capability, self.capabilities, Capability.BADER_CHARGES)
-        charge = _filename(charge_file, "charge_file")
+        spin = selected is Capability.SPIN_POPULATIONS
+        if spin and reference_file is None:
+            raise ValueError(
+                "spin_populations needs reference_file, the total density whose basins "
+                "the magnetization is integrated in, such as CHGCAR_sum or CHGCAR_tot"
+            )
+        default_charge = "CHGCAR_mag" if spin else "CHGCAR"
+        charge = _filename(
+            charge_file if charge_file is not None else default_charge, "charge_file"
+        )
         argv = [executable or self.default_executable, charge]
         required = [directory / charge]
         if reference_file is not None:
             reference = _filename(reference_file, "reference_file")
             argv.extend(("-ref", reference))
             required.append(directory / reference)
+        note = (
+            "ACF.dat holds each atom's magnetization (spin up minus spin down) integrated "
+            "in the reference density's Bader basins; analysis reads it as spin/ACF.dat."
+            if spin
+            else "ACF.dat contains partition-dependent Bader electron populations, not formal oxidation states."
+        )
         return CommandPlan(
             plugin=self.name,
             capability=selected,
@@ -204,9 +223,7 @@ class BaderPlugin(_BuiltinPlugin):
             cwd=directory,
             required_inputs=tuple(required),
             expected_outputs=(directory / "ACF.dat",),
-            notes=(
-                "ACF.dat contains partition-dependent Bader electron populations, not formal oxidation states.",
-            ),
+            notes=(note,),
         )
 
 
@@ -231,6 +248,10 @@ class Critic2Plugin(_BuiltinPlugin):
         input_file: str | None = None,
         report_file: str = "critic2.features.json",
         graph: bool = True,
+        seeds: str = "auto",
+        seed_distance: float | None = None,
+        seed_points: int | None = None,
+        seed_triplets: bool | None = None,
         **options: Any,
     ) -> CommandPlan:
         if options:
@@ -239,11 +260,25 @@ class Critic2Plugin(_BuiltinPlugin):
         selected = _capability(capability, self.capabilities, Capability.QTAIM_CRITICAL_POINTS)
         command = executable or self.default_executable
         structure = _filename(structure_file, "structure_file")
+        if seeds == "periodic":
+            return self._periodic_plan(
+                directory,
+                selected,
+                command,
+                structure,
+                _json_report(report_file),
+                field_file is not None or input_file is not None,
+                seed_settings(seed_distance, seed_points, seed_triplets),
+            )
+        if seeds != "auto":
+            raise ValueError(f"critic2 seeds must be 'auto' or 'periodic', not {seeds!r}")
+        if (seed_distance, seed_points, seed_triplets) != (None, None, None):
+            raise ValueError(
+                "seed_distance, seed_points, and seed_triplets apply only with seeds = 'periodic'"
+            )
         default_field = "ELFCAR" if selected is Capability.NON_NUCLEAR_ATTRACTORS else "CHGCAR"
         field = _filename(field_file or default_field, "field_file")
-        report = _filename(report_file, "report_file")
-        if Path(report).suffix.lower() != ".json":
-            raise ValueError("critic2 report_file must have a .json suffix for CPREPORT JSON")
+        report = _json_report(report_file)
         required = [directory / structure, directory / field]
         argv: tuple[str, ...]
         if input_file:
@@ -279,6 +314,56 @@ class Critic2Plugin(_BuiltinPlugin):
                 ),
             ),
         )
+
+    def _periodic_plan(
+        self,
+        directory: Path,
+        selected: Capability,
+        command: str,
+        structure: str,
+        report: str,
+        custom_field: bool,
+        settings: tuple[float, int, bool],
+    ) -> CommandPlan:
+        """Run critic2 on the input that workflow staging writes for periodic seeds."""
+
+        if selected is not Capability.QTAIM_CRITICAL_POINTS:
+            raise ValueError(
+                "seeds = 'periodic' searches the all-electron density, so it applies to "
+                "qtaim_critical_points only"
+            )
+        if custom_field:
+            raise ValueError(
+                f"seeds = 'periodic' writes its own {PERIODIC_INPUT_NAME} from "
+                "AECCAR0 + AECCAR2; field_file and input_file do not apply"
+            )
+        distance, points, triplets = settings
+        triplet_text = ", and atom-triplet barycenters" if triplets else ""
+        return CommandPlan(
+            plugin=self.name,
+            capability=selected,
+            argv=(command, "-q", PERIODIC_INPUT_NAME, "critic2.cro"),
+            cwd=directory,
+            required_inputs=tuple(
+                directory / name for name in (structure, *ALL_ELECTRON_FILES, PERIODIC_INPUT_NAME)
+            ),
+            expected_outputs=(directory / "critic2.cro", directory / report),
+            notes=(
+                f"{PERIODIC_INPUT_NAME} searches AECCAR0 + AECCAR2 with SMOOTHRHO from "
+                f"{points}-point lines between atom pairs within {distance:g} bohr, counting "
+                f"periodic images{triplet_text}.",
+                f"electrace workflow stage writes {PERIODIC_INPUT_NAME} from {structure}; the "
+                "density must come from a calculation at that structure (NSW = 0).",
+                "The plan uses critic2's native CPREPORT JSON handoff; ElecTrace does not parse critic2.cro.",
+            ),
+        )
+
+
+def _json_report(value: str) -> str:
+    report = _filename(value, "report_file")
+    if Path(report).suffix.lower() != ".json":
+        raise ValueError("critic2 report_file must have a .json suffix for CPREPORT JSON")
+    return report
 
 
 class LobsterPlugin(_BuiltinPlugin):

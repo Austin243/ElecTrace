@@ -18,13 +18,19 @@ from electrace.config import (
     OutputConfig,
     load_config,
 )
-from electrace.io.descriptors import NET_CHARGE_SOURCES, load_descriptor
+from electrace.io.descriptors import NET_CHARGE_SOURCES, SPIN_DESCRIPTOR, load_descriptor
 from electrace.io.vasp import read_poscar
 from electrace.pipeline import AnalysisArtifacts, run_project
 
 from .manifest import load_workflow_manifest
 from .models import WorkflowManifest
-from .staging import StagedFrame, StagedWorkflow, descriptor_outputs, load_staged_workflow
+from .staging import (
+    NON_DESCRIPTOR_KINDS,
+    StagedFrame,
+    StagedWorkflow,
+    descriptor_outputs,
+    load_staged_workflow,
+)
 
 COLLECTION_SCHEMA_VERSION = "electrace.collection.v1"
 COLLECTION_DIRECTORY = "analysis"
@@ -169,7 +175,7 @@ def _zval_source(manifest: WorkflowManifest, frame: StagedFrame) -> Path | None:
 
 
 def _expected_descriptor_ids(staged: StagedWorkflow, manifest: WorkflowManifest) -> tuple[str, ...]:
-    steps = tuple(step for step in manifest.steps if step.kind != "vasp")
+    steps = tuple(step for step in manifest.steps if step.kind not in NON_DESCRIPTOR_KINDS)
     if not steps:
         raise ValueError("workflow has no descriptor steps to collect")
     return tuple(f"f{frame.index:06d}.{step.id}" for frame in staged.frames for step in steps)
@@ -284,11 +290,14 @@ def collect_workflow_outputs(
                 written.append(valence)
 
         destinations: set[Path] = set()
+        steps = {step.id: step for step in manifest.steps}
         for job_id in expected_ids:
             job = jobs.get(job_id)
             outputs = recognized.get(job_id, ())
             if job is None or not outputs:
                 raise ValueError(f"descriptor job {job_id!r} has no supported output")
+            # A spin step's ACF.dat holds magnetizations, which analysis reads from spin/.
+            spin = steps[job.task].capability == "spin_populations"
             for source in outputs:
                 if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
                     raise FileNotFoundError(f"descriptor output is missing or invalid: {source}")
@@ -298,7 +307,11 @@ def collect_workflow_outputs(
                     for frame in staged.frames
                     if frame.index == job.frame_index
                 )
-                destination = Path("descriptors") / label / source.name
+                destination = (
+                    Path("descriptors") / label / SPIN_DESCRIPTOR
+                    if spin
+                    else Path("descriptors") / label / source.name
+                )
                 if destination in destinations:
                     raise ValueError(f"descriptor output collision at {destination}")
                 destinations.add(destination)

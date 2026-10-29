@@ -106,6 +106,10 @@ no interior maximum.
   zero only when every valence electron lies in an atomic basin; electride sites in
   BadELF, for example, hold electrons without a nucleus.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.
+- critic2 finds critical points only from where its search starts, so a point missed
+  in one frame reads as a death and a birth. Periodic seeds closed the Morse sums of
+  most acetonitrile images, not all, and a sum tests completeness only in one
+  direction (see [Numerical limitations](#numerical-limitations)).
 - ELF topology depends on the wavefunction or density, grid, and analysis settings.
 - COHP/COBI depends on basis, projection, and integration choices; ICOHP is not a
   universal bond energy. A spin-resolved total is the sum of LOBSTER's two channels.

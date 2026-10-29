@@ -14,6 +14,12 @@ from typing import Any, cast
 from electrace.io.discovery import FrameSource, discover_path
 from electrace.io.vasp import parse_poscar
 from electrace.plugins import plan_plugin
+from electrace.plugins.critic2_input import (
+    ALL_ELECTRON_FILES,
+    PERIODIC_INPUT_NAME,
+    periodic_critic2_input,
+    seed_settings,
+)
 from electrace.provenance import sha256_file
 
 from ._files import absolute_lexical, atomic_write_json, atomic_write_text, symlink_component
@@ -35,6 +41,23 @@ _DESCRIPTOR_FILENAMES = frozenset(
     ICOHPLIST.lobster badelf.json bader.json critic2.features.json
     electrace.features.json features.json""".split()  # noqa: SIM905
 )
+# Steps whose outputs are grids for later steps rather than descriptors to collect.
+NON_DESCRIPTOR_KINDS = frozenset({"vasp", "volume"})
+# `electrace volume` operations as (inputs, outputs, arguments). The outputs go to the
+# step directory even though the inputs link into a dependency's directory, and a rerun
+# replaces the step's own outputs.
+_VOLUME_OPERATIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = {
+    "aeccar_sum": (
+        ALL_ELECTRON_FILES,
+        ("CHGCAR_sum",),
+        ("volume", "AECCAR0", "--add", "AECCAR2", "--output-dir", ".", "--force", "--json"),
+    ),
+    "split_spin": (
+        ("CHGCAR",),
+        ("CHGCAR_tot", "CHGCAR_mag"),
+        ("volume", "CHGCAR", "--split-spin", "--output-dir", ".", "--force", "--json"),
+    ),
+}
 
 
 def _resolve_from(base: Path, value: str) -> Path:
@@ -178,7 +201,32 @@ def _plugin_options(step: WorkflowStep) -> dict[str, JSONValue]:
     return result
 
 
+def _volume_operation(
+    step: WorkflowStep,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    operation = _VOLUME_OPERATIONS.get(step.capability or "")
+    if operation is None:
+        raise ValueError(
+            f"volume step {step.id!r} needs capability " + " or ".join(sorted(_VOLUME_OPERATIONS))
+        )
+    if _plugin_options(step):
+        raise ValueError(
+            f"volume step {step.id!r} takes no options besides environment and input_links"
+        )
+    return operation
+
+
+def _is_periodic_critic2(step: WorkflowStep) -> bool:
+    return step.kind == "critic2" and _plugin_options(step).get("seeds") == "periodic"
+
+
+def _is_spin_bader(step: WorkflowStep) -> bool:
+    return step.kind == "bader" and step.capability == "spin_populations"
+
+
 def _step_outputs(step: WorkflowStep) -> tuple[str, ...]:
+    if step.kind == "volume":
+        return _volume_operation(step)[1]
     if step.kind == "vasp":
         outputs = _string_list(
             step.options.get("outputs", step.options.get("expected_outputs")),
@@ -231,6 +279,11 @@ def _template_files(step: WorkflowStep, manifest_base: Path) -> tuple[Path, ...]
         raise ValueError(
             f"step {step.id!r} template files collide with expected outputs: "
             + ", ".join(sorted(collision))
+        )
+    if _is_periodic_critic2(step) and PERIODIC_INPUT_NAME in names:
+        raise ValueError(
+            f"step {step.id!r} writes {PERIODIC_INPUT_NAME} for periodic seeds; remove it "
+            "from the template directory"
         )
     if step.kind == "vasp" and (
         missing := set(_vasp_required_inputs(step)).difference(names, {"POSCAR"})
@@ -299,13 +352,18 @@ def _check_vasp_species(
 
 def _plugin_required_names(step: WorkflowStep) -> tuple[str, ...]:
     options = _plugin_options(step)
+    if step.kind == "volume":
+        return _volume_operation(step)[0]
     if step.kind in {"bader", "baderkit"}:
-        names = [str(options.get("charge_file", "CHGCAR"))]
+        default_charge = "CHGCAR_mag" if _is_spin_bader(step) else "CHGCAR"
+        names = [str(options.get("charge_file", default_charge))]
         if step.kind == "baderkit" and step.capability in {"elf_basins", "non_nuclear_attractors"}:
             names.append(str(options.get("elf_file", "ELFCAR")))
         if options.get("reference_file") is not None:
             names.append(str(options["reference_file"]))
         return tuple(names)
+    if _is_periodic_critic2(step):
+        return (str(options.get("structure_file", "CONTCAR")), *ALL_ELECTRON_FILES)
     if step.kind == "critic2":
         default = (
             "ELFCAR" if step.capability in {"elf_basins", "non_nuclear_attractors"} else "CHGCAR"
@@ -387,6 +445,90 @@ def _auto_plugin_inputs(
             _relative_link(candidate, target)
 
 
+def _check_step_inputs(
+    step: WorkflowStep, destination: Path, prior_steps: dict[str, WorkflowStep]
+) -> None:
+    """Stop staging when an input of a volume, spin, or periodic critic2 step has no source.
+
+    Such a step finds its inputs only in its template, its input links, the frame
+    structure, or a dependency's declared outputs. A file that an earlier volume step
+    writes must also come through ``depends_on``, whichever step reads it. Otherwise the
+    job would fail at run time, after the VASP step it waits for.
+    """
+
+    strict = step.kind == "volume" or _is_spin_bader(step) or _is_periodic_critic2(step)
+    for name in _plugin_required_names(step):
+        target = destination / name
+        if target.exists() or target.is_symlink():
+            continue
+        writers = [item for item in prior_steps.values() if name in _step_outputs(item)]
+        if writers and (strict or any(item.kind == "volume" for item in writers)):
+            raise ValueError(
+                f"step {step.id!r} needs {name}, which step {writers[-1].id!r} writes; "
+                "add that step to depends_on"
+            )
+        if strict:
+            raise ValueError(
+                f"step {step.id!r} needs {name}, but no dependency declares it as an output "
+                "and no template or input link provides it"
+            )
+
+
+def _check_spin_steps(manifest: WorkflowManifest) -> None:
+    """Require Bader charges, in the same basins, for every spin-population step.
+
+    Spin populations attach to the atoms of a ``bader`` charge step. A spin step
+    integrates the magnetization in the basins of its ``reference_file``; the charge
+    step's basins come from its own ``reference_file`` or, without one, from the total
+    density of its charge file, which ``split_spin`` also writes as ``CHGCAR_tot``.
+    """
+
+    spins = [step for step in manifest.steps if _is_spin_bader(step)]
+    if not spins:
+        return
+    charges = [
+        step
+        for step in manifest.steps
+        if step.kind == "bader" and step.capability in {None, "bader_charges"}
+    ]
+    if not charges:
+        raise ValueError(
+            f"spin step {spins[0].id!r} needs a bader step with capability bader_charges "
+            "whose atoms the spin populations attach to"
+        )
+    for spin in spins:
+        reference = _plugin_options(spin).get("reference_file")
+        if reference is None:
+            continue  # the Bader plan reports the missing reference
+        for charge in charges:
+            options = _plugin_options(charge)
+            basins = options.get("reference_file") or options.get("charge_file", "CHGCAR")
+            if reference != basins and (
+                options.get("reference_file") is not None or reference != "CHGCAR_tot"
+            ):
+                raise ValueError(
+                    f"spin step {spin.id!r} integrates the magnetization in the basins of "
+                    f"{reference}, but charge step {charge.id!r} uses {basins}; give both "
+                    "the same reference_file so that charge and spin share their basins"
+                )
+
+
+def _periodic_input(step: WorkflowStep, structure: Path) -> str:
+    options = _plugin_options(step)
+    distance, points, triplets = seed_settings(
+        options.get("seed_distance"), options.get("seed_points"), options.get("seed_triplets")
+    )
+    text, _ = periodic_critic2_input(
+        structure,
+        distance=distance,
+        points=points,
+        triplets=triplets,
+        report_file=str(options.get("report_file", "critic2.features.json")),
+        graph=bool(options.get("graph", True)),
+    )
+    return text
+
+
 def _prepare_step_directory(
     step: WorkflowStep,
     source: FrameSource,
@@ -404,6 +546,10 @@ def _prepare_step_directory(
     dependencies = tuple(prior_steps[item] for item in step.depends_on)
     _explicit_input_links(step, source, destination, directories)
     _auto_plugin_inputs(step, source, destination, dependencies, directories)
+    _check_step_inputs(step, destination, prior_steps)
+    if _is_periodic_critic2(step):
+        structure = destination / str(_plugin_options(step).get("structure_file", "CONTCAR"))
+        atomic_write_text(destination / PERIODIC_INPUT_NAME, _periodic_input(step, structure))
     if step.kind == "lobster":
         options = _plugin_options(step)
         name = _basename(options.get("input_file", "lobsterin"), "lobster input_file")
@@ -433,6 +579,22 @@ def _build_job(
     )
     job_id = f"f{frame.index:06d}.{step.id}"
     dependencies = tuple(f"f{frame.index:06d}.{item}" for item in step.depends_on)
+    if step.kind == "volume":
+        inputs, outputs, operation = _volume_operation(step)
+        return JobSpec(
+            id=job_id,
+            frame_index=frame.index,
+            frame_label=frame.label,
+            task=step.id,
+            cwd=directory,
+            argv=(*command, *operation),
+            stdin=None,
+            stdout_path=directory / "volume.stdout.log",
+            required_inputs=tuple(directory / name for name in inputs),
+            expected_outputs=tuple(directory / name for name in outputs),
+            dependencies=dependencies,
+            environment=_environment(step),
+        )
     if step.kind == "vasp":
         arguments = step.options.get("arguments", [])
         if not isinstance(arguments, list) or any(
@@ -579,7 +741,8 @@ def _manifest_jobs(
     descriptors = tuple(
         job.id
         for job in jobs
-        if next(step for step in manifest.steps if step.id == job.task).kind != "vasp"
+        if next(step for step in manifest.steps if step.id == job.task).kind
+        not in NON_DESCRIPTOR_KINDS
     )
     return validate_jobs(jobs), descriptors
 
@@ -598,6 +761,7 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
     templates = {step.id: _template_files(step, source_manifest.parent) for step in manifest.steps}
     for step in manifest.steps:
         _check_vasp_species(step, templates[step.id], selected)
+    _check_spin_steps(manifest)
     workspace.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{workspace.name}.stage-", dir=workspace.parent))
     jobs: list[JobSpec] = []
@@ -618,7 +782,7 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
                     workspace,
                 )
                 jobs.append(job)
-                if step.kind != "vasp":
+                if step.kind not in NON_DESCRIPTOR_KINDS:
                     descriptor_ids.append(job.id)
                 prior[step.id] = step
         result = StagedWorkflow(

@@ -4,6 +4,32 @@
 
 ### Added
 
+- Opt-in critic2 plan option `seeds = "periodic"`. Workflow staging writes `critic2.in`,
+  which searches the all-electron density AECCAR0 + AECCAR2 with `SMOOTHRHO`, discards
+  points below 1e-5 a.u., and seeds one `SEED LINE` per atom pair within
+  `seed_distance` bohr (default 6), counting periodic images, with `seed_points`
+  interior points (default 20), plus a `SEED POINT` at each atom-triplet barycenter
+  (`seed_triplets`, default true). critic2's own `SEED PAIR` and `SEED TRIPLET` use
+  in-cell positions, so bonds across a cell face get no seeds. The image search is
+  exact for skewed cells and seeds every image when a cell is narrower than twice the
+  distance. For the 33 images of three 288-atom acetonitrile bands, the inputs
+  reproduce, line for line, the ones whose searches recovered 21 covalent bond
+  critical points missed by `SEED PAIR` and gave Morse sums of zero in 27 images
+  (before: 5). The default plan is unchanged.
+- Workflow steps for Bader analysis on the all-electron reference. A `volume` step
+  runs ElecTrace on an earlier step's grids: `aeccar_sum` writes `CHGCAR_sum` and
+  `split_spin` writes `CHGCAR_tot` and `CHGCAR_mag`. Bader's new `spin_populations`
+  capability runs `bader CHGCAR_mag -ref REFERENCE`, and its `ACF.dat` is collected as
+  `spin/ACF.dat`; validation requires a `bader_charges` step with the same basins.
+  Staging stops when a volume, spin, or periodic critic2 step needs a file that no
+  dependency, template, or input link provides, or when a step needs a volume step's
+  output without depending on it. `examples/electrace.density-workflow.yaml` chains
+  VASP, the sum, Bader charges, the split, Bader spin, and critic2. Workflows without
+  these steps stage the same files and scripts as before.
+- `electrace volume AECCAR0 --add AECCAR2` writes `CHGCAR_sum` in the layout Bader
+  reads. It stops, writing nothing, when the two files differ in grid, lattice,
+  species, or atom positions, as files from two images do. For a 288-atom
+  acetonitrile image, its `CHGCAR_sum` is byte-identical to the one Bader used.
 - critic2 critical-point counts per frame. `critical_point_counts` in `analysis.json`
   counts every cell critical point in the `CPREPORT` JSON by signature: n (nuclei and
   non-nuclear attractors), b, r, and c, with the Morse sum n − b + r − c. A complete

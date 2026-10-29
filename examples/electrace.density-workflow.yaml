@@ -1,0 +1,106 @@
+# Public density-analysis workflow: Bader charges and spin populations on the PAW
+# all-electron reference, and critic2 critical points of the all-electron density with
+# periodic seeds. It names conventional VASP files but contains no pseudopotential,
+# executable, or scientific input data.
+schema_version: electrace.workflow.v1
+
+project:
+  root: ./vasp-neb
+  series_kind: neb
+  workspace: ./.electrace-density
+  structure: CONTCAR
+  fallback: POSCAR
+
+frames: all
+
+executables:
+  vasp:
+    path: vasp_std
+    argv_prefix:
+      - srun
+  # ElecTrace itself sums and splits the grids; name the installation the jobs should use.
+  electrace:
+    path: electrace
+  bader:
+    path: bader
+  critic2:
+    path: critic2
+
+scheduler:
+  kind: slurm
+  directives:
+    partition: compute
+    time: "04:00:00"
+    nodes: 1
+    ntasks: 32
+    cpus-per-task: 1
+    exclude: "node[1-8]"
+
+steps:
+  # A single point (NSW = 0): critic2 seeds are placed from the frame's structure. The
+  # template INCAR must write the densities (LCHARG and LAECHG = .TRUE.) and, for spin
+  # populations, use ISPIN = 2.
+  - id: vasp
+    kind: vasp
+    executable: vasp
+    template_dir: templates/vasp
+    options:
+      expected_outputs:
+        - CHGCAR
+        - AECCAR0
+        - AECCAR2
+        - OSZICAR
+
+  # CHGCAR_sum = AECCAR0 + AECCAR2, the reference whose basins Bader uses.
+  - id: reference
+    kind: volume
+    executable: electrace
+    capability: aeccar_sum
+    depends_on:
+      - vasp
+
+  # bader CHGCAR -ref CHGCAR_sum
+  - id: charges
+    kind: bader
+    executable: bader
+    depends_on:
+      - vasp
+      - reference
+    options:
+      reference_file: CHGCAR_sum
+
+  # CHGCAR_tot and CHGCAR_mag from the ISPIN = 2 CHGCAR.
+  - id: split
+    kind: volume
+    executable: electrace
+    capability: split_spin
+    depends_on:
+      - vasp
+
+  # bader CHGCAR_mag -ref CHGCAR_sum: the magnetization in the charge step's basins,
+  # collected as spin/ACF.dat.
+  - id: spin
+    kind: bader
+    executable: bader
+    capability: spin_populations
+    depends_on:
+      - split
+      - reference
+    options:
+      reference_file: CHGCAR_sum
+
+  # Staging writes critic2.in: AECCAR0 + AECCAR2 with SMOOTHRHO, seeded along every atom
+  # pair within seed_distance (bohr), counting periodic images, and at the barycenters
+  # of atom triplets. The values shown are the defaults.
+  - id: critic2
+    kind: critic2
+    executable: critic2
+    depends_on:
+      - vasp
+    options:
+      seeds: periodic
+      seed_distance: 6.0
+      seed_points: 20
+      seed_triplets: true
+      environment:
+        OMP_NUM_THREADS: "32"

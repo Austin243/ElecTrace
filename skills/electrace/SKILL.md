@@ -69,6 +69,14 @@ electrace workflow validate electrace-workflow.yaml --json
 electrace workflow stage electrace-workflow.yaml --json
 ```
 
+For Bader charges, spin populations, and critic2 critical points on the all-electron
+density, start from the repository's `examples/electrace.density-workflow.yaml`:
+`volume` steps (`aeccar_sum`, `split_spin`) run ElecTrace on the VASP grids, a Bader
+`spin_populations` step integrates the magnetization in the charge step's basins, and
+critic2 `seeds: periodic` seeds every atom pair and triplet across periodic images.
+Staging writes `critic2.in`; its header gives the seed count. Use it only for a VASP
+single point (`NSW = 0`), because the seeds come from the staged structure.
+
 Validation and staging do not execute scientific programs. For local execution, use
 `electrace workflow run MANIFEST --yes` only after the user authorizes every staged
 command. For Slurm, generate scripts without `--yes`, review them, and submit with

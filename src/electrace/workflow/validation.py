@@ -89,6 +89,7 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
         for step in manifest.steps
         for warning in _staging._check_vasp_species(step, templates[step.id], selected)
     )
+    _staging._check_spin_steps(manifest)
     frames = _staging._staged_frames(selected, workspace)
     jobs: list[JobSpec] = []
     for source, frame in zip(selected, frames, strict=True):
@@ -100,6 +101,10 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
             jobs.append(
                 _staging._rebase_job(source_job, source.directory, frame_directory / step.id)
             )
+            if _staging._is_periodic_critic2(step):
+                # Staging writes this input; building it here reports a structure that
+                # cannot be seeded before anything is written.
+                _staging._periodic_input(step, source.structure)
     warnings = (
         *_workspace_warnings(workspace),
         *_executable_warnings(manifest, source_manifest.parent),

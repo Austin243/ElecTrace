@@ -26,7 +26,11 @@ commands. Prepare Slurm scripts without `--yes`, review them, then submit with
 `--yes --force` so the reviewed generated scripts may be replaced.
 
 For spin-polarized runs, `electrace volume CHGCAR --split-spin` prepares the Bader
-spin-population run described in [Using ElecTrace](workflows.md#spin-polarized-runs).
+spin-population run described in [Using ElecTrace](workflows.md#spin-polarized-runs),
+and `electrace volume AECCAR0 --add AECCAR2` writes the all-electron Bader reference.
+A workflow runs both per frame with `volume` steps, Bader `spin_populations`, and a
+critic2 step with `seeds: periodic`, as in
+[All-electron density analysis](workflows.md#all-electron-density-analysis).
 Never assume an `ISPIN` value; missing spin populations stay missing. Likewise never
 assume a ZVAL: Bader net charges come only from each frame's `POTCAR` or `OUTCAR`, as
 described in [Net atomic charges](workflows.md#net-atomic-charges).
