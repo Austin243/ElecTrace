@@ -91,9 +91,9 @@ A path figure draws only what `analysis.json` holds for the chosen bonds and ato
 Its dashed line marks the highest-energy sampled frame, not a located saddle point,
 and a dot places an event within one step of the sampled frames. A gap in a bond's
 density means that no critical point tied the two atoms in that frame; an incomplete
-critic2 search gives the same gap, so compare its Morse sum before reading a gap as a
-broken bond. The distance continues through such gaps because it comes from the
-geometry, not from a critical point.
+critic2 search gives the same gap, so check the frame's Morse sum in
+`critical_point_counts` before reading a gap as a broken bond. The distance continues
+through such gaps because it comes from the geometry, not from a critical point.
 
 `match_details = false` also changes only what is written. The per-pair match
 evidence it leaves out is what a review of a surprising mapping needs, so rerun with
@@ -135,6 +135,12 @@ not whether the numerical change remains above its threshold in every later fram
 weak critical points from the report; it does not decide which of them are real. A
 cutoff that suits weak intermolecular contacts also hides the ring critical points of
 covalent rings.
+
+The critic2 Morse sum tests a search's completeness only in one direction. A sum that
+differs from 0 (1 for a molecule) shows that points are missing but not which ones,
+and `DISCARD` can remove them deliberately, as around a molecule in vacuum. A sum of
+0 does not show that none is missing: two missed points with opposite signs in the
+sum, such as a bond and a ring critical point, leave it unchanged.
 
 Fractional coordinates handle boundary crossings, and deformation-aware distances
 support related cells. Large reconstruction or atom permutation is not uniquely

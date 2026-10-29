@@ -17,6 +17,27 @@
       "description": "One record per frame. With configuration.outputs.match_details false, each record has no features list; feature_count remains.",
       "items": {"type": "object", "additionalProperties": true}
     },
+    "critical_point_counts": {
+      "type": "array",
+      "description": "critic2 critical points per frame, counted over every cell critical point before any density cutoff or focus. A complete search has n − b + r − c = 0 in a periodic cell and 1 for a molecule; points missed by the search or removed by DISCARD change the sum, and a missed pair of points can leave it unchanged. Empty when no frame has a critic2 document; otherwise one entry per frame and critic2 document, and one with null counts and a reason for a frame without one. Reporting only.",
+      "items": {
+        "type": "object",
+        "required": ["frame", "frame_label", "n", "b", "r", "c", "unclassified", "morse_sum", "expected_morse_sum"],
+        "properties": {
+          "frame": {"type": "integer", "minimum": 0},
+          "frame_label": {"type": "string"},
+          "n": {"type": ["integer", "null"], "minimum": 0, "description": "(3,−3) points: nuclei and non-nuclear attractors."},
+          "b": {"type": ["integer", "null"], "minimum": 0, "description": "(3,−1) bond critical points."},
+          "r": {"type": ["integer", "null"], "minimum": 0, "description": "(3,+1) ring critical points."},
+          "c": {"type": ["integer", "null"], "minimum": 0, "description": "(3,+3) cage critical points."},
+          "unclassified": {"type": ["integer", "null"], "minimum": 0, "description": "Points whose signature is missing or not −3, −1, +1, or +3."},
+          "morse_sum": {"type": ["integer", "null"], "description": "n − b + r − c; null when the counts are unknown or a point is unclassified."},
+          "expected_morse_sum": {"enum": [0, 1, null], "description": "The complete-search value: 1 when critic2 ran on a molecule (structure.is_molecule), else 0."},
+          "reason": {"type": "string", "description": "Present when morse_sum is null: why it is unknown."}
+        },
+        "additionalProperties": false
+      }
+    },
     "transitions": {
       "type": "array",
       "description": "Atom and feature matches between adjacent frames. With configuration.outputs.match_details false, the match results have no edges lists; unmatched IDs, total costs, and diagnostics remain.",

@@ -40,6 +40,10 @@ where the frame's `POTCAR` or `OUTCAR` gave ZVAL, and a warning names the frames
 without it. In molecular crystals, set `[events.critical_point_min_field]`, for
 example `bond_critical_point = 0.05`, so weak-contact critical points do not swamp the
 events; report `suppressed_events`, and leave ring cutoffs off when rings may form.
+Before calling a critical point's birth, death, or connectivity change chemistry,
+read `critical_point_counts`: a frame whose critic2 Morse sum n − b + r − c is not 0
+(1 for a molecule) is missing points, missed or removed by `DISCARD`, and a warning
+names it.
 
 For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
 indices), or to `"auto"` to select the atoms whose bonds, spin, or bond-critical-point
