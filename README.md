@@ -38,7 +38,8 @@ python -m pip install .
 ```
 
 The base installation includes a deterministic assignment solver. Use
-`python -m pip install ".[accelerate]"` for the SciPy solver, or
+`python -m pip install ".[accelerate]"` for the SciPy solver, which is much faster
+for cells with hundreds of features per frame, or
 `python -m pip install ".[all]"` for all optional features.
 
 ## Try the demo

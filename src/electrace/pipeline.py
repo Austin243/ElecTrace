@@ -714,6 +714,35 @@ def _prepare_output(directory: Path, overwrite: bool) -> None:
     directory.mkdir(parents=True, exist_ok=True)
 
 
+def _without_match_details(analysis: Mapping[str, Any]) -> dict[str, Any]:
+    """Drop each frame's feature list and the atom and feature match edges.
+
+    Every feature observation except its voxel support is already in ``tracks``,
+    unless a focus filtered them, and events keep their own match evidence. Counts,
+    unmatched IDs, and match diagnostics stay. The configuration record says the
+    details were left out even when the analysis itself ran with the default.
+    """
+
+    def without(record: Mapping[str, Any], key: str) -> dict[str, Any]:
+        return {name: value for name, value in record.items() if name != key}
+
+    configuration = dict(analysis.get("configuration", {}))
+    configuration["outputs"] = {**configuration.get("outputs", {}), "match_details": False}
+    return {
+        **analysis,
+        "configuration": configuration,
+        "frames": [without(frame, "features") for frame in analysis["frames"]],
+        "transitions": [
+            {
+                **transition,
+                "atom_matches": without(transition["atom_matches"], "edges"),
+                "feature_matches": without(transition["feature_matches"], "edges"),
+            }
+            for transition in analysis["transitions"]
+        ],
+    }
+
+
 _KNOWN_BUNDLE_ARTIFACTS = frozenset(
     {
         "analysis.json",
@@ -738,9 +767,11 @@ def write_analysis_bundle(
 
     directory = Path(output_directory).expanduser().resolve()
     _prepare_output(directory, overwrite)
+    # The CSV files hold no frame feature lists or match edges; callers keep the full analysis.
+    document = analysis if config.outputs.match_details else _without_match_details(analysis)
     written: list[Path] = []
     if config.outputs.json:
-        written.append(write_json(analysis, directory / "analysis.json"))
+        written.append(write_json(document, directory / "analysis.json"))
     if config.outputs.csv:
         written.append(write_events_csv(analysis.get("events", []), directory / "events.csv"))
         written.append(
@@ -753,7 +784,7 @@ def write_analysis_bundle(
         )
         written.append(write_bonds_csv(analysis.get("bonds", []), directory / "bonds.csv"))
     if config.outputs.html_report:
-        written.append(render_html_report(analysis, directory / "report.html"))
+        written.append(render_html_report(document, directory / "report.html"))
 
     selected = {item.name for item in written} | {"manifest.json"}
     if overwrite:

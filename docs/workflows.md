@@ -161,6 +161,25 @@ flagged by relative change, but the ratio uses the absolute change, like the flo
 The report's timeline shows the ratio to the 99th percentile. This is reporting only:
 thresholds, events, and confidences do not change.
 
+## Smaller outputs for large cells
+
+By default, `analysis.json` and `report.html` also hold every frame's feature list
+and every atom and feature match edge with its scoring evidence. With about 1,500
+critic2 and Bader features per frame, these records make up most of both files. To
+leave them out:
+
+```toml
+[outputs]
+match_details = false
+```
+
+Tracks, events with their evidence, `track_summary`, `focus`, the CSV files, frame
+counts, unmatched IDs, and match diagnostics do not change. Every feature observation
+is still in `tracks` unless a focus filters it, but tracks do not carry voxel supports
+(`voxel_indices`), so these are only in the default output. The configuration echo in
+`analysis.json` records the setting. Matching is deterministic, so a rerun with the
+default restores the omitted records for review.
+
 ## Golden path from existing results
 
 The repository includes a small, real native-output example generated from a

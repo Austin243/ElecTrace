@@ -313,10 +313,13 @@ class OutputConfig:
     focus_atoms: list[int] | str = field(default_factory=list)
     # Element-pair cutoffs (angstrom) that replace DEFAULT_BOND_CUTOFFS entries for "auto".
     focus_bond_cutoffs: dict[str, float] = field(default_factory=dict)
+    # False leaves each frame's feature list and the match edges out of
+    # analysis.json and the report; tracks, events, and summaries are unchanged.
+    match_details: bool = True
 
     def __post_init__(self) -> None:
         self.directory = _string(self.directory, "outputs.directory")
-        for name in ("html_report", "json", "csv"):
+        for name in ("html_report", "json", "csv", "match_details"):
             setattr(self, name, _boolean(getattr(self, name), f"outputs.{name}"))
         if isinstance(self.focus_atoms, str):
             if self.focus_atoms.strip().casefold() != "auto":
@@ -404,11 +407,13 @@ class ElecTraceConfig:
         """Return a JSON-serializable nested mapping."""
 
         result = asdict(self)
+        # At their defaults, record the configuration exactly as before these options existed.
         if not self.outputs.focus_atoms:
-            # Without a focus, record the configuration exactly as before the option existed.
             del result["outputs"]["focus_atoms"]
         if not self.outputs.focus_bond_cutoffs:
             del result["outputs"]["focus_bond_cutoffs"]
+        if self.outputs.match_details:
+            del result["outputs"]["match_details"]
         _validate_json(result)
         return result
 
@@ -506,6 +511,9 @@ csv = true
 # still uses every atom and feature. "auto" selects the atoms whose bonds,
 # spin, or bond critical points change.
 # focus_atoms = [0, 2]
+# Leave each frame's feature list and the match edges out of analysis.json and
+# report.html; tracks, events, and summaries are unchanged.
+# match_details = false
 
 [plugins.critic2]
 enabled = true

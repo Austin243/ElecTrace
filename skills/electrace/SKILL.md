@@ -47,7 +47,10 @@ atom's `rules` and any warning about missing bond cutoffs or a missing spin thre
 Never present a focused run as the whole path. With a focus, compare charge,
 volume, and spin events with `noise_floor`, the percentiles of atoms outside the
 focus for each element, before describing a change as chemical; without a focus
-there is no floor. When every frame has an energy, events carry
+there is no floor. `[outputs] match_details = false` leaves each frame's feature
+list and the match edges out of `analysis.json` and the report; tracks, events, and
+summaries do not change. Rerun with the default before reviewing a surprising match.
+When every frame has an energy, events carry
 `barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
 frame is not a located transition state.
 

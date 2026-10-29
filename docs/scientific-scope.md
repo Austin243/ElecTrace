@@ -87,6 +87,10 @@ a few steps, so read them with `steps`. An event several times above the 99th
 percentile is unusual for a spectator but not proof of chemistry, and a change near
 the floor can still be real.
 
+`match_details = false` also changes only what is written. The per-pair match
+evidence it leaves out is what a review of a surprising mapping needs, so rerun with
+the default before reviewing one.
+
 Barrier labels compare each event's step with the highest-energy sampled frame. For an
 NEB this is the highest image, not the saddle point; for a static scan it is the scan
 maximum. A spanning event changes on a step that touches that frame, which the frame
