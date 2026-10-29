@@ -15,7 +15,7 @@
   distance. For the 33 images of three 288-atom acetonitrile bands, the inputs
   reproduce, line for line, the ones whose searches recovered 21 covalent bond
   critical points missed by `SEED PAIR` and gave Morse sums of zero in 27 images
-  (before: 6). The default plan is unchanged.
+  (before: 5). The default plan is unchanged.
 - Workflow steps for Bader analysis on the all-electron reference. A `volume` step
   runs ElecTrace on an earlier step's grids: `aeccar_sum` writes `CHGCAR_sum` and
   `split_spin` writes `CHGCAR_tot` and `CHGCAR_mag`. Bader's new `spin_populations`
@@ -30,6 +30,24 @@
   reads. It stops, writing nothing, when the two files differ in grid, lattice,
   species, or atom positions, as files from two images do. For a 288-atom
   acetonitrile image, its `CHGCAR_sum` is byte-identical to the one Bader used.
+- critic2 critical-point counts per frame. `critical_point_counts` in `analysis.json`
+  counts every cell critical point in the `CPREPORT` JSON by signature: n (nuclei and
+  non-nuclear attractors), b, r, and c, with the Morse sum n − b + r − c. A complete
+  search sums to 0 in a periodic cell and to 1 for a molecule
+  (`structure.is_molecule`). A warning names each frame whose sum differs: critical
+  points are missing there, missed by the search or removed by `DISCARD`, so
+  critical-point births, deaths, and connectivity changes at that frame may not be
+  chemistry. The counts use every critical point, before any density cutoff or focus,
+  and the critic2 document's metadata keeps them, so canonical JSON written from it
+  does too. A frame without a critic2 document, a canonical document without counts
+  (as earlier versions wrote), or a point without a signature gives a null sum with a
+  reason, and a warning names those frames. The report says so above the event
+  timeline and lists the counts in the frame inventory. Nothing is dropped or refused.
+  The HCN example sums to +1 in every frame, because its input discards the vacuum
+  points around the molecule. In three 288-atom acetonitrile NEB bands, the counts
+  and sums equal critic2's own in all 66 searches: the first search sums to 0 in 5 of
+  33 images (−5 to +7 elsewhere), and the minimum-image reseeding in 27 of 33. Without
+  critic2 data, outputs are unchanged apart from an empty `critical_point_counts`.
 - Opt-in `[events.critical_point_min_field]`, a density cutoff per critical-point
   kind (`bond_critical_point`, `ring_critical_point`, `cage_critical_point`). A birth,
   death, or connectivity change whose critical points all stay below their kind's

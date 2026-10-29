@@ -106,10 +106,10 @@ no interior maximum.
   zero only when every valence electron lies in an atomic basin; electride sites in
   BadELF, for example, hold electrons without a nucleus.
 - A bond critical point or bond path is a QTAIM feature, not a universal bond test.
-- critic2 finds critical points only from where its search starts. Periodic seeds made
-  the acetonitrile searches complete in most images, not in all; a crystal's set is
-  complete only if its Morse sum (nuclei − bonds + rings − cages) is zero, and a
-  critical point missing from one frame reads as a birth and a death.
+- critic2 finds critical points only from where its search starts, so a point missed
+  in one frame reads as a death and a birth. Periodic seeds closed the Morse sums of
+  most acetonitrile images, not all, and a sum tests completeness only in one
+  direction (see [Numerical limitations](#numerical-limitations)).
 - ELF topology depends on the wavefunction or density, grid, and analysis settings.
 - COHP/COBI depends on basis, projection, and integration choices; ICOHP is not a
   universal bond energy. A spin-resolved total is the sum of LOBSTER's two channels.
@@ -131,6 +131,12 @@ not whether the numerical change remains above its threshold in every later fram
 weak critical points from the report; it does not decide which of them are real. A
 cutoff that suits weak intermolecular contacts also hides the ring critical points of
 covalent rings.
+
+The critic2 Morse sum tests a search's completeness only in one direction. A sum that
+differs from 0 (1 for a molecule) shows that points are missing but not which ones,
+and `DISCARD` can remove them deliberately, as around a molecule in vacuum. A sum of
+0 does not show that none is missing: two missed points with opposite signs in the
+sum, such as a bond and a ring critical point, leave it unchanged.
 
 Fractional coordinates handle boundary crossings, and deformation-aware distances
 support related cells. Large reconstruction or atom permutation is not uniquely

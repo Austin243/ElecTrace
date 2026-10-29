@@ -85,6 +85,22 @@ have densities near 0.02 a.u., so set a ring cutoff only when ring formation is 
 under study. The value is in the units of the critical point's `field`: a.u. for
 critic2.
 
+Before reading a critical point's birth, death, or connectivity change as chemistry,
+check that the search found every point. For each frame's critic2 `CPREPORT` JSON,
+`critical_point_counts` in `analysis.json` counts every cell critical point by
+signature, n (nuclei and non-nuclear attractors), b, r, and c, and gives the Morse
+sum n − b + r − c. A complete search sums to 0 in a periodic cell and to 1 for a
+molecule (`structure.is_molecule`). Any other sum means points are missing from that
+frame: missed by the search, or removed by `DISCARD`, as the vacuum points around a
+molecule in a large cell are. A warning names those frames, the report says so above
+the event timeline, and its frame inventory lists the counts. The counts use every
+critical point, before any density cutoff or focus, and stay with
+`match_details = false`. The critic2 document's metadata in
+`provenance.descriptor_documents` holds the same counts, so canonical JSON written
+from it keeps them. A frame without a critic2 document, a canonical critic2 document
+without counts (earlier versions dropped the nuclei), or a point without a signature
+gives a null sum and a `reason`; reading the native `CPREPORT` JSON again counts it.
+
 When every frame has an energy, each event is labelled `before`, `spanning`, or
 `after` the highest-energy frame (`barrier_position` in `analysis.json` and
 `events.csv`). An event spans the barrier when its step starts or ends at that frame,
@@ -468,10 +484,11 @@ the atoms' in-cell positions without periodic images, so a bond across a cell fa
 no seeds; without seeds, `AUTO` subdivides the Wigner–Seitz cell. In 33 images of three
 288-atom acetonitrile NEB bands, `SEED PAIR DIST 6 NPTS 20` missed 21 covalent C–H and
 N–H bond critical points, all across a cell face, and left Morse sums of −5 to 7
-(zero in 6 images); `AUTO` alone gave 94 in the one image tried. The defaults above
+(zero in 5 images); `AUTO` alone gave 94 in the one image tried. The defaults above
 recovered all 21 and gave zero in 27 images and ±1 in the other 6. Six bohr (3.2 Å)
 spans covalent bonds and the shorter intermolecular contacts. Those inputs had
 74,000–86,000 seeds per image, and each image took 66–77 minutes on 32 OpenMP threads.
+Each frame's sum is in `critical_point_counts` in `analysis.json`.
 
 Pairs come from an exact image search. On each axis, an image within the distance is
 at most 1/2 + `seed_distance`/h lattice vectors from the component-rounded one, where h
