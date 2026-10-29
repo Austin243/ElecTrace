@@ -73,10 +73,11 @@ gives ZVAL, and this example ships neither.
 `T00005`, but they are different bonds and are never joined. Each row carries the
 interatomic distance and critic2's field and Laplacian for that frame.
 
-With `electrace[plot]` installed, draw the three bonds along the scan:
+With `electrace[plot]` installed, draw the three bonds and the moving hydrogen along
+the scan:
 
 ```bash
-electrace figure electrace-results --bond C0-H2 --bond N1-H2 --bond C0-N1 --output hcn-hnc
+electrace figure electrace-results --bond C0-H2 --bond N1-H2 --bond C0-N1 --atom H2 --output hcn-hnc
 ```
 
 The C–H density ends at frame 02 and the N–H density begins at frame 03, while both
