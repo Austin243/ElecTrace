@@ -166,6 +166,107 @@ def _descriptor_provenance(
     return records, warnings
 
 
+_COUNT_KEYS = ("n", "b", "r", "c", "unclassified")
+_NO_CRITIC2 = "no critic2 document"
+
+
+def _critic2_counts(document: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return a critic2 document's counts, or None when it records no valid counts.
+
+    Canonical JSON can carry any metadata, so the counts are checked and the sum is
+    recomputed rather than read.
+    """
+
+    metadata = document.get("metadata")
+    record = metadata.get("critical_point_counts") if isinstance(metadata, Mapping) else None
+    if not isinstance(record, Mapping):
+        return None
+    counts: dict[str, int] = {}
+    for key in _COUNT_KEYS:
+        value = record.get(key)
+        if type(value) is not int or value < 0:
+            return None
+        counts[key] = value
+    expected = record.get("expected_morse_sum")
+    if type(expected) is not int or expected not in (0, 1):
+        return None
+    morse_sum = (
+        None if counts["unclassified"] else counts["n"] - counts["b"] + counts["r"] - counts["c"]
+    )
+    return {**counts, "morse_sum": morse_sum, "expected_morse_sum": expected}
+
+
+def _critical_point_counts(sequence: Sequence) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return each frame's critic2 critical-point counts and warnings about them.
+
+    A complete search of a periodic cell has n - b + r - c = 0, and of a molecule 1.
+    Points that the search missed or that DISCARD removed, such as the vacuum points
+    around a molecule in a large cell, change the sum, so a different sum says points
+    are missing, not which. A missed pair of points can also leave it unchanged. The
+    counts cover every cell critical point, before any density cutoff or focus.
+    """
+
+    entries: list[dict[str, Any]] = []
+    for frame in sequence.frames:
+        raw_documents = frame.metadata.get("descriptor_documents", [])
+        documents = [
+            document
+            for document in (raw_documents if isinstance(raw_documents, list) else [])
+            if isinstance(document, Mapping)
+            and isinstance(document.get("producer"), Mapping)
+            and document["producer"].get("name") == "critic2"
+        ]
+        frame_key = {"frame": frame.index, "frame_label": frame.label}
+        blank = dict.fromkeys((*_COUNT_KEYS, "morse_sum", "expected_morse_sum"))
+        if not documents:
+            entries.append({**frame_key, **blank, "reason": _NO_CRITIC2})
+        for document in documents:
+            counts = _critic2_counts(document)
+            entry = {**frame_key, **(counts or blank)}
+            if counts is None:
+                entry["reason"] = "the critic2 document records no counts"
+            elif counts["morse_sum"] is None:
+                entry["reason"] = "critical points without an n, b, r, or c signature"
+            entries.append(entry)
+    if all(entry.get("reason") == _NO_CRITIC2 for entry in entries):
+        return [], []
+
+    off = [
+        f"{entry['frame_label']} ({entry['morse_sum']:+d}"
+        + (", molecule)" if entry["expected_morse_sum"] else ")")
+        for entry in entries
+        if entry["morse_sum"] is not None and entry["morse_sum"] != entry["expected_morse_sum"]
+    ]
+    unknown: dict[str, list[str]] = {}
+    for entry in entries:
+        if "reason" in entry:
+            unknown.setdefault(entry["reason"], []).append(entry["frame_label"])
+    warnings: list[str] = []
+    if off:
+        warnings.append(
+            "critic2 Morse sum n - b + r - c differs from a complete search's (0 for a periodic "
+            f"cell, 1 for a molecule) in frame(s) {', '.join(off)}: critical points are missing "
+            "there, missed by the search or removed by DISCARD (as a molecule's vacuum points "
+            "are), so critical-point births, deaths, and connectivity changes at those frames "
+            "may not be chemistry. The counts use every critical point, before any density "
+            "cutoff or focus."
+        )
+    missing = unknown.pop(_NO_CRITIC2, [])
+    if missing:
+        warnings.append(
+            "No critic2 critical points were loaded for frame(s): "
+            + ", ".join(missing)
+            + "; they are missing there, not absent, so critical-point births and deaths at "
+            "those frames are not chemistry."
+        )
+    warnings.extend(
+        f"critic2 Morse sum unknown for frame(s) {', '.join(labels)} ({reason}); those "
+        "searches cannot be checked for missing critical points."
+        for reason, labels in unknown.items()
+    )
+    return entries, warnings
+
+
 def _new_track(counter: list[int]) -> str:
     counter[0] += 1
     return f"T{counter[0]:05d}"
@@ -543,6 +644,7 @@ def analyze_sequence(
     )
     bonds, bond_warnings = bond_records(sequence, tracks)
     descriptor_documents, descriptor_warnings = _descriptor_provenance(sequence)
+    critical_point_counts, count_warnings = _critical_point_counts(sequence)
     selection = None
     if isinstance(configured_focus, str):
         selection = select_focus_atoms(
@@ -563,6 +665,7 @@ def analyze_sequence(
         warnings.append(
             "No electronic features were loaded for frame(s): " + ", ".join(missing_features)
         )
+    warnings.extend(count_warnings)
     spin_frames = {
         frame.label
         for frame in sequence.frames
@@ -689,6 +792,7 @@ def analyze_sequence(
         },
         "warnings": warnings,
         "frames": [_frame_record(frame) for frame in sequence.frames],
+        "critical_point_counts": critical_point_counts,
         "transitions": transitions,
         "events": events,
         "tracks": tracks,

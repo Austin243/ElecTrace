@@ -419,6 +419,17 @@ def _critic2_kind(item: Mapping[str, Any]) -> str:
     return "other"
 
 
+# critic2's topological classes by signature: nuclei and non-nuclear attractors (n),
+# then bond (b), ring (r), and cage (c) critical points.
+_CRITIC2_CLASSES: dict[float, str] = {-3: "n", -1: "b", 1: "r", 3: "c"}
+
+
+def _critic2_class(signature: Any) -> str:
+    if isinstance(signature, bool) or not isinstance(signature, (int, float)):
+        return "unclassified"
+    return _CRITIC2_CLASSES.get(signature, "unclassified")
+
+
 def _critic2_cpreport_records(
     payload: Mapping[str, Any],
 ) -> tuple[Sequence[Any], Mapping[int, Mapping[str, Any]], int | None]:
@@ -509,6 +520,9 @@ def _critic2_hessian_trace(value: Any) -> float | None:
 def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
     records, joined, atom_count = _critic2_cpreport_records(payload)
     features: list[Feature] = []
+    # Every cell critical point is counted, nuclei included, before any is skipped.
+    # critic2 writes number_of_cell_cps as the nonequivalent count, so it is not used.
+    counts = dict.fromkeys(("n", "b", "r", "c", "unclassified"), 0)
     for index, record in enumerate(records):
         if not isinstance(record, Mapping):
             raise DescriptorError(f"critic2 critical point {index} must be an object")
@@ -525,6 +539,7 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
         raw_position = record.get("fractional_coordinates", detail.get("fractional_coordinates"))
         if raw_position is None:
             raise DescriptorError(f"critic2 critical point {index} has no fractional coordinates")
+        counts[_critic2_class(combined.get("signature"))] += 1
         if combined.get("signature") == -3 and combined.get("is_nucleus") is True:
             continue
         neighbors = _critic2_attractor_atoms(record, atom_count)
@@ -568,9 +583,22 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
                 attributes=attributes,
             )
         )
+    # n - b + r - c is 0 for a complete search of a periodic cell and 1 for a molecule
+    # (critic2's Morse and Poincare-Hopf sums). It is unknown when a point has no class.
+    structure = payload.get("structure")
+    molecule = isinstance(structure, Mapping) and structure.get("is_molecule") is True
     metadata: dict[str, Any] = {
         "native_format": "cpreport.json",
         **({"units": payload["units"]} if isinstance(payload.get("units"), str) else {}),
+        "critical_point_counts": {
+            **counts,
+            "morse_sum": (
+                None
+                if counts["unclassified"]
+                else counts["n"] - counts["b"] + counts["r"] - counts["c"]
+            ),
+            "expected_morse_sum": 1 if molecule else 0,
+        },
     }
     payload_metadata = payload.get("metadata")
     if isinstance(payload_metadata, Mapping):

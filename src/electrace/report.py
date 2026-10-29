@@ -213,7 +213,24 @@ _HTML = """<!doctype html>
       const scope = data.focus ? " The counts cover every atom, not only the focus." : "";
       return `<p class="muted">${esc(parts.length ? `Not listed: ${parts.join("; ")}, whose density stays below the cutoff (${cutoffs}).${scope}` : `No critical-point event fell below the density cutoff (${cutoffs}).`)}</p>`;
     })() : "";
-    document.getElementById("timeline").innerHTML = suppressedNote + (events.length ? events.map(e=>{
+    // critic2 counts cover every critical point, before the density cutoff and any focus.
+    const cpCounts = data.critical_point_counts || [];
+    const sumText = value => value == null ? "—" : `${value > 0 ? "+" : ""}${value}`;
+    const cpNote = cpCounts.length ? (() => {
+      const known = cpCounts.filter(c => c.morse_sum != null);
+      const off = known.filter(c => c.morse_sum !== c.expected_morse_sum);
+      const unknown = cpCounts.filter(c => c.morse_sum == null);
+      const plural = items => items.length === 1 ? "frame" : "frames";
+      const label = c => esc(c.frame_label ?? frameName(c.frame));
+      const morse = "n &minus; b + r &minus; c";
+      const parts = [];
+      if (off.length) parts.push(`critic2 searches look incomplete in ${plural(off)} ${off.map(c => `${label(c)} (${esc(sumText(c.morse_sum))})`).join(", ")}: a complete search has ${morse} = 0 in a periodic cell (1 for a molecule), so critical points were missed there or removed by DISCARD, and critical-point births, deaths, and connectivity changes at ${off.length === 1 ? "that frame" : "those frames"} may not be chemistry.`);
+      else if (known.length) parts.push(`Each critic2 search with counts has the Morse sum ${morse} of a complete search, although a missed pair of critical points would leave it unchanged.`);
+      if (unknown.length) parts.push(`The sum is unknown in ${plural(unknown)} ${unknown.map(c => `${label(c)} (${esc(c.reason)})`).join(", ")}.`);
+      parts.push("The counts use every critical point, before any density cutoff or focus.");
+      return `<p class="muted">${parts.join(" ")}</p>`;
+    })() : "";
+    document.getElementById("timeline").innerHTML = cpNote + suppressedNote + (events.length ? events.map(e=>{
       const type=String(e.type||"change").toLowerCase(), confidence=Math.max(0,Math.min(1,Number(e.confidence||0)));
       const confidenceLabel=String(e.confidence_label||"unclassified").toLowerCase();
       const frameLabel = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
@@ -290,7 +307,8 @@ _HTML = """<!doctype html>
     }
     const hasNet = Object.keys(netSums).length > 0;
     const netCell = f => hasNet ? `<td>${Object.entries(netSums[f.index] || {}).map(([p, v]) => `${esc(p)} ${Number(v) > 0 ? "+" : ""}${fmt(v, 6)}`).join(", ") || "—"}</td>` : "";
-    document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th>${hasNet ? "<th>Net charge sum</th>" : ""}</tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td>${netCell(f)}</tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
+    const cpCell = f => cpCounts.length ? `<td>${cpCounts.filter(c => c.frame === f.index).map(c => esc(c.n == null ? "—" : `${c.n}/${c.b}/${c.r}/${c.c}${c.unclassified ? ` + ${c.unclassified} unclassified` : ""} (${sumText(c.morse_sum)})`)).join(", ") || "—"}</td>` : "";
+    document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th>${hasNet ? "<th>Net charge sum</th>" : ""}${cpCounts.length ? "<th>critic2 n/b/r/c (sum)</th>" : ""}</tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td>${netCell(f)}${cpCell(f)}</tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
 
     const audit = {configuration:data.configuration||{}, provenance:data.provenance||{}, warnings:data.warnings||[]};
     document.getElementById("audit").innerHTML = `<details open><summary>Warnings (${audit.warnings.length})</summary>${audit.warnings.length?`<ul>${audit.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:'<p class="muted">No pipeline warnings.</p>'}</details><details><summary>Configuration</summary><pre>${esc(JSON.stringify(audit.configuration,null,2))}</pre></details><details><summary>Provenance</summary><pre>${esc(JSON.stringify(audit.provenance,null,2))}</pre></details><details><summary>Canonical analysis JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;

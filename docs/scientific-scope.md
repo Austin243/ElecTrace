@@ -128,6 +128,12 @@ weak critical points from the report; it does not decide which of them are real.
 cutoff that suits weak intermolecular contacts also hides the ring critical points of
 covalent rings.
 
+The critic2 Morse sum tests a search's completeness only in one direction. A sum that
+differs from 0 (1 for a molecule) shows that points are missing but not which ones,
+and `DISCARD` can remove them deliberately, as around a molecule in vacuum. A sum of
+0 does not show that none is missing: two missed points with opposite signs in the
+sum, such as a bond and a ring critical point, leave it unchanged.
+
 Fractional coordinates handle boundary crossings, and deformation-aware distances
 support related cells. Large reconstruction or atom permutation is not uniquely
 solvable. The matcher reports one deterministic best assignment and does not
