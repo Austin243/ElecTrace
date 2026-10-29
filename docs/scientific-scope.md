@@ -63,6 +63,21 @@ run before concluding that nothing changed elsewhere. The focus uses each frame'
 atom indices; with geometric identity, ElecTrace warns when a focus atom is matched to
 a different index.
 
+`focus_atoms = "auto"` selects atoms by distance cutoffs, adjacent-frame spin steps,
+and bond-critical-point reassignments in the sampled frames. A cutoff is a geometric
+criterion, not a bond order: a long or weak contact can cross it back and forth, and
+a pair without a cutoff is never compared. Read each atom's rules and the recorded
+cutoffs, and compare with an unfocused run, before concluding that an atom took no
+part.
+
+The noise floor, reported only with a focus, describes how much spectator values move
+between sampled frames. It is not a significance test or a calibrated uncertainty.
+It inherits the frame spacing, the partition, and the matching, and it is computed
+separately for each producer. With few spectator atoms the upper percentiles rest on
+a few steps, so read them with `steps`. An event several times above the 99th
+percentile is unusual for a spectator but not proof of chemistry, and a change near
+the floor can still be real.
+
 Barrier labels compare each event's step with the highest-energy sampled frame. For an
 NEB this is the highest image, not the saddle point; for a static scan it is the scan
 maximum. A spanning event changes on a step that touches that frame, which the frame

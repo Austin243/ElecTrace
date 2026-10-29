@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -24,6 +25,23 @@ _ROOT_KEYS = frozenset(
     {"project", "inputs", "matching", "events", "outputs", "plugins", "metadata"}
 )
 _PROJECT_KEYS = frozenset({"name", "series_kind"})
+_ELEMENT = re.compile(r"[A-Z][a-z]{0,2}")
+
+# Covalent bond cutoffs (angstrom) for focus_atoms = "auto", keyed by bond_pair().
+DEFAULT_BOND_CUTOFFS: dict[str, float] = {
+    "C-C": 1.75,
+    "C-N": 1.75,
+    "N-N": 1.65,
+    "C-H": 1.30,
+    "H-N": 1.25,
+    "H-H": 0.90,
+}
+
+
+def bond_pair(first: str, second: str) -> str:
+    """Return the order-independent key of an element pair, such as ``"H-N"``."""
+
+    return "-".join(sorted(element.strip().capitalize() for element in (first, second)))
 
 
 def _boolean(value: Any, name: str) -> bool:
@@ -290,20 +308,52 @@ class OutputConfig:
     html_report: bool = True
     json: bool = True
     csv: bool = True
-    # Zero-based POSCAR indices; an empty list reports every feature.
-    focus_atoms: list[int] = field(default_factory=list)
+    # Zero-based POSCAR indices, or "auto" to select the atoms whose bonds, spin, or
+    # bond critical points change; an empty list reports every feature.
+    focus_atoms: list[int] | str = field(default_factory=list)
+    # Element-pair cutoffs (angstrom) that replace DEFAULT_BOND_CUTOFFS entries for "auto".
+    focus_bond_cutoffs: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.directory = _string(self.directory, "outputs.directory")
         for name in ("html_report", "json", "csv"):
             setattr(self, name, _boolean(getattr(self, name), f"outputs.{name}"))
-        if not isinstance(self.focus_atoms, (list, tuple)):
-            raise TypeError("outputs.focus_atoms must be an array of atom indices")
-        for index in self.focus_atoms:
-            _integer(index, "each outputs.focus_atoms entry", minimum=0)
-        if len(set(self.focus_atoms)) != len(self.focus_atoms):
-            raise ValueError("outputs.focus_atoms must not repeat an atom index")
-        self.focus_atoms = sorted(self.focus_atoms)
+        if isinstance(self.focus_atoms, str):
+            if self.focus_atoms.strip().casefold() != "auto":
+                raise ValueError('outputs.focus_atoms must be "auto" or an array of atom indices')
+            self.focus_atoms = "auto"
+        else:
+            if not isinstance(self.focus_atoms, (list, tuple)):
+                raise TypeError("outputs.focus_atoms must be an array of atom indices")
+            for index in self.focus_atoms:
+                _integer(index, "each outputs.focus_atoms entry", minimum=0)
+            if len(set(self.focus_atoms)) != len(self.focus_atoms):
+                raise ValueError("outputs.focus_atoms must not repeat an atom index")
+            self.focus_atoms = sorted(self.focus_atoms)
+        if not isinstance(self.focus_bond_cutoffs, dict):
+            raise TypeError("outputs.focus_bond_cutoffs must be a table")
+        if self.focus_bond_cutoffs and self.focus_atoms != "auto":
+            raise ValueError('outputs.focus_bond_cutoffs applies only with focus_atoms = "auto"')
+        cutoffs: dict[str, float] = {}
+        for key, value in self.focus_bond_cutoffs.items():
+            parts = _string(key, "outputs.focus_bond_cutoffs key").split("-")
+            pair = bond_pair(*parts) if len(parts) == 2 else ""
+            if not all(_ELEMENT.fullmatch(element) for element in pair.split("-")):
+                raise ValueError(
+                    "outputs.focus_bond_cutoffs keys must name two elements, such as "
+                    f'"C-N"; got {key!r}'
+                )
+            if pair in cutoffs:
+                raise ValueError(f"outputs.focus_bond_cutoffs lists the {pair} pair twice")
+            cutoffs[pair] = _number(
+                value, f"outputs.focus_bond_cutoffs.{key}", minimum=0.0, minimum_inclusive=False
+            )
+        self.focus_bond_cutoffs = cutoffs
+
+    def bond_cutoffs(self) -> dict[str, float]:
+        """Return the cutoffs for focus_atoms = "auto": the defaults, then any overrides."""
+
+        return {**DEFAULT_BOND_CUTOFFS, **self.focus_bond_cutoffs}
 
 
 @dataclass(slots=True)
@@ -357,6 +407,8 @@ class ElecTraceConfig:
         if not self.outputs.focus_atoms:
             # Without a focus, record the configuration exactly as before the option existed.
             del result["outputs"]["focus_atoms"]
+        if not self.outputs.focus_bond_cutoffs:
+            del result["outputs"]["focus_bond_cutoffs"]
         _validate_json(result)
         return result
 
@@ -451,7 +503,8 @@ html_report = true
 json = true
 csv = true
 # Report only features tied to these 0-based POSCAR atom indices; matching
-# still uses every atom and feature.
+# still uses every atom and feature. "auto" selects the atoms whose bonds,
+# spin, or bond critical points change.
 # focus_atoms = [0, 2]
 
 [plugins.critic2]

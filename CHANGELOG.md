@@ -4,6 +4,19 @@
 
 ### Added
 
+- `[outputs] focus_atoms = "auto"` selects the atoms whose covalent bonds change
+  (element-pair distance cutoffs under minimum image, with defaults for C, N, and H
+  pairs and overrides under `[outputs.focus_bond_cutoffs]`), whose spin changes
+  between adjacent frames by at least the `spin` event threshold, or that take part
+  in a bond-critical-point connectivity change. `focus` records the rules that
+  selected each atom; with no atom selected, a warning says so and every feature is
+  reported, as without a focus. Explicit lists are unchanged.
+- A spectator noise floor when a focus holds atoms: the median, 95th, and 99th
+  percentiles of adjacent-frame |Δ| of atom charge, volume, and spin for each
+  producer and element, over atoms outside the focus, in `analysis.json`
+  (`noise_floor`) and the report. Each reported property change of an atom gives its
+  flagged changes as multiples of the floor. Without a focus, there is no floor and
+  outputs are unchanged. This is reporting only.
 - Per-atom spin populations for collinear `ISPIN = 2` VASP runs.
   `electrace volume CHGCAR --split-spin` writes `spin/CHGCAR_tot` and
   `spin/CHGCAR_mag` unchanged in value and sign; it refuses one-grid, truncated,
