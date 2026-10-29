@@ -46,6 +46,12 @@ bond_order = 0.1
 elf = 0.1
 # spin = 0.1 # per-atom spin population from spin/ACF.dat (ISPIN = 2 runs)
 
+# Leave births, deaths, and connectivity changes of weak critical points out of the
+# reported events (critic2 field, a.u.). Weak intermolecular contacts are near
+# 0.01-0.03; ring critical points of covalent rings are also near 0.02.
+# [events.critical_point_min_field]
+# bond_critical_point = 0.05
+
 [outputs]
 directory = "electrace-results"
 html_report = true

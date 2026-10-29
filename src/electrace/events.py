@@ -9,6 +9,7 @@ with a compact consecutive-lineage persistence classification.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Mapping
 from collections.abc import Sequence as TypingSequence
 from dataclasses import dataclass, field, replace
 from itertools import pairwise
@@ -203,6 +204,66 @@ def _as_finite_float(value: Any) -> float | None:
         return None
     result = float(value)
     return result if math.isfinite(result) else None
+
+
+# The critical-point kinds that [events.critical_point_min_field] can name.
+CRITICAL_POINT_KINDS = (
+    FeatureKind.BOND_CRITICAL_POINT.value,
+    FeatureKind.RING_CRITICAL_POINT.value,
+    FeatureKind.CAGE_CRITICAL_POINT.value,
+)
+_TOPOLOGY_EVENTS = frozenset(
+    {EventType.BIRTH.value, EventType.DEATH.value, EventType.CONNECTIVITY_CHANGE.value}
+)
+
+
+def critical_point_fields(sequence: Sequence) -> dict[tuple[int, str], tuple[str, float | None]]:
+    """Map (frame index, feature ID) to the kind and density of each critical point."""
+
+    return {
+        (frame.index, str(feature.id)): (
+            str(feature.kind),
+            _as_finite_float(feature.attributes.get("field")),
+        )
+        for frame in sequence.frames
+        for feature in frame.features
+        if str(feature.kind) in CRITICAL_POINT_KINDS
+    }
+
+
+def weak_critical_point_kind(
+    event_type: str,
+    frame_before: int,
+    frame_after: int,
+    source_ids: Iterable[object],
+    target_ids: Iterable[object],
+    fields: Mapping[tuple[int, str], tuple[str, float | None]],
+    cutoffs: Mapping[str, float],
+) -> str | None:
+    """Return the kind when a birth, death, or connectivity change stays below its cutoff.
+
+    Each critical point of the event is read in the frame where it exists: a birth's
+    in the later frame, a death's in the earlier one, and a connectivity change's in
+    both. All must be below the cutoff for their kind. Any other event, a feature that
+    is not a critical point, a missing density, or a kind without a cutoff gives None,
+    so the event is kept.
+    """
+
+    if str(event_type) not in _TOPOLOGY_EVENTS or not cutoffs:
+        return None
+    keys = [(frame_before, str(item)) for item in source_ids]
+    keys += [(frame_after, str(item)) for item in target_ids]
+    kinds: list[str] = []
+    for key in keys:
+        record = fields.get(key)
+        if record is None:
+            return None
+        kind, value = record
+        cutoff = cutoffs.get(kind)
+        if cutoff is None or value is None or value >= cutoff:
+            return None
+        kinds.append(kind)
+    return kinds[0] if kinds else None
 
 
 def _connectivity_change_event(

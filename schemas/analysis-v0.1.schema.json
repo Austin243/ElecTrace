@@ -223,6 +223,28 @@
         "additionalProperties": false
       }
     },
+    "suppressed_events": {
+      "type": "object",
+      "description": "Present only with events.critical_point_min_field: the cutoffs, and how many births, deaths, and connectivity changes of weaker critical points were left out of events, per kind and event type, over every atom before any focus. Reporting only.",
+      "required": ["critical_point_min_field", "counts"],
+      "properties": {
+        "critical_point_min_field": {
+          "type": "object",
+          "propertyNames": {"enum": ["bond_critical_point", "ring_critical_point", "cage_critical_point"]},
+          "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "counts": {
+          "type": "object",
+          "propertyNames": {"enum": ["bond_critical_point", "ring_critical_point", "cage_critical_point"]},
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {"enum": ["birth", "death", "connectivity_change"]},
+            "additionalProperties": {"type": "integer", "minimum": 1}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "barrier": {
       "type": "object",
       "description": "Highest-energy frame(s) used to place events. Reporting only: no tolerance or thresholds.",
@@ -312,6 +334,16 @@
               "properties": {
                 "applied": {"type": "boolean"},
                 "connectivity_changes": {"type": "integer", "minimum": 0},
+                "min_field": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "The events.critical_point_min_field cutoff for bond critical points, when set."
+                },
+                "weak_changes_ignored": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Connectivity changes left out because the critical point stays below min_field in both frames."
+                },
                 "reason": {"type": "string"}
               },
               "additionalProperties": false

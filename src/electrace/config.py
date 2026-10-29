@@ -21,6 +21,8 @@ from electrace._files import atomic_write_text
 _DESCRIPTOR_SOURCES = frozenset({"auto", "local", "external", "merge"})
 _SERIES_KINDS = frozenset({"auto", "neb", "static", "ordered", "pressure"})
 _ATOM_IDENTITIES = frozenset({"geometric", "index"})
+# Critical-point kinds that [events.critical_point_min_field] can name.
+_CRITICAL_POINT_KINDS = ("bond_critical_point", "ring_critical_point", "cage_critical_point")
 _ROOT_KEYS = frozenset(
     {"project", "inputs", "matching", "events", "outputs", "plugins", "metadata"}
 )
@@ -247,8 +249,29 @@ class EventSettings:
     )
     high_confidence_threshold: float = 0.80
     medium_confidence_threshold: float = 0.55
+    # Births, deaths, and connectivity changes of critical points of these kinds are
+    # left out of the reported events while their density stays below the value; an
+    # empty table reports them all.
+    critical_point_min_field: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.critical_point_min_field, dict):
+            raise TypeError("events.critical_point_min_field must be a table")
+        cutoffs: dict[str, float] = {}
+        for key, value in self.critical_point_min_field.items():
+            kind = _string(key, "events.critical_point_min_field key")
+            if kind not in _CRITICAL_POINT_KINDS:
+                raise ValueError(
+                    "events.critical_point_min_field keys must be "
+                    f"{', '.join(_CRITICAL_POINT_KINDS)}; got {key!r}"
+                )
+            cutoffs[kind] = _number(
+                value,
+                f"events.critical_point_min_field.{kind}",
+                minimum=0.0,
+                minimum_inclusive=False,
+            )
+        self.critical_point_min_field = cutoffs
         self.minimum_persistence = _integer(
             self.minimum_persistence, "events.minimum_persistence", minimum=1
         )
@@ -414,6 +437,8 @@ class ElecTraceConfig:
             del result["outputs"]["focus_bond_cutoffs"]
         if self.outputs.match_details:
             del result["outputs"]["match_details"]
+        if not self.events.critical_point_min_field:
+            del result["events"]["critical_point_min_field"]
         _validate_json(result)
         return result
 
@@ -501,6 +526,12 @@ bond_order = 0.1
 elf = 0.1
 oxidation_state = 0.5
 # spin = 0.1 # per-atom spin population from spin/ACF.dat (ISPIN = 2 runs)
+
+# Leave births, deaths, and connectivity changes of weak critical points out of the
+# reported events (critic2 field, a.u.). Weak intermolecular contacts are near
+# 0.01-0.03; ring critical points of covalent rings are also near 0.02.
+# [events.critical_point_min_field]
+# bond_critical_point = 0.05
 
 [outputs]
 directory = "electrace-results"

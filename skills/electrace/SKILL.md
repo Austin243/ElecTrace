@@ -37,7 +37,9 @@ per atom pair, periodic image, and frame with the distance, critic2 `field` and
 pair, so do not join a pair's rows to another pair's through a shared feature track.
 Bader charges are electron populations; `net_charge` (ZVAL − population) exists only
 where the frame's `POTCAR` or `OUTCAR` gave ZVAL, and a warning names the frames
-without it.
+without it. In molecular crystals, set `[events.critical_point_min_field]`, for
+example `bond_critical_point = 0.05`, so weak-contact critical points do not swamp the
+events; report `suppressed_events`, and leave ring cutoffs off when rings may form.
 
 For a large cell, set `[outputs] focus_atoms` to the reacting atoms (0-based POSCAR
 indices), or to `"auto"` to select the atoms whose bonds, spin, or bond-critical-point

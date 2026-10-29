@@ -204,7 +204,16 @@ _HTML = """<!doctype html>
       const anchorRows=anchors.map(a=>`<li>Relative to ${esc(a.element)}[${esc(a.source_atom_index)}] → [${esc(a.target_atom_index)}]: displacement ${fmt(a.relative_displacement_angstrom)} Å; separations ${fmt(a.distance_before_angstrom)} → ${fmt(a.distance_after_angstrom)} Å</li>`).join('');
       return `<details open><summary>Match evidence</summary><p>Critical-point displacement ${fmt(details.distance)} Å; match similarity ${fmt(feature.confidence)}.</p><ul>${atomRows}</ul><p>Critical-point motion relative to shared matched neighbors:</p>${anchorRows?`<ul>${anchorRows}</ul>`:'<p class="muted">No shared matched neighbor available.</p>'}<p class="muted">Similarities are heuristic, not probabilities. Relative motion uses a strain-factored, minimum-image metric and is correlated with the selected atom match; it does not establish continuity between frames.</p></details>`;
     }
-    document.getElementById("timeline").innerHTML = events.length ? events.map(e=>{
+    // Critical points below events.critical_point_min_field: say what was left out.
+    const suppressed = data.suppressed_events;
+    const readable = name => String(name).replace(/_/g, " ");
+    const suppressedNote = suppressed ? (() => {
+      const cutoffs = Object.entries(suppressed.critical_point_min_field || {}).map(([kind, value]) => `${fmt(value)} for ${readable(kind)}s`).join(", ");
+      const parts = Object.entries(suppressed.counts || {}).map(([kind, counts]) => `${Object.entries(counts).map(([type, n]) => `${n} ${readable(type)}${n === 1 ? "" : "s"}`).join(", ")} of ${readable(kind)}s`);
+      const scope = data.focus ? " The counts cover every atom, not only the focus." : "";
+      return `<p class="muted">${esc(parts.length ? `Not listed: ${parts.join("; ")}, whose density stays below the cutoff (${cutoffs}).${scope}` : `No critical-point event fell below the density cutoff (${cutoffs}).`)}</p>`;
+    })() : "";
+    document.getElementById("timeline").innerHTML = suppressedNote + (events.length ? events.map(e=>{
       const type=String(e.type||"change").toLowerCase(), confidence=Math.max(0,Math.min(1,Number(e.confidence||0)));
       const confidenceLabel=String(e.confidence_label||"unclassified").toLowerCase();
       const frameLabel = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
@@ -214,7 +223,7 @@ _HTML = """<!doctype html>
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
       const place=placeLabels[e.barrier_position] ? `<br><small>${esc(placeLabels[e.barrier_position])}</small>` : "";
       return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
-    }).join('') : '<div class="empty">No persistent electronic events were detected.</div>';
+    }).join('') : '<div class="empty">No persistent electronic events were detected.</div>');
 
     function noiseNote(e) {
       const n = e.noise_floor;

@@ -123,6 +123,11 @@ resolution. Consecutive-frame persistence filters isolated labels but cannot rep
 a convergence study. For property changes, persistence tracks the matched lineage,
 not whether the numerical change remains above its threshold in every later frame.
 
+`[events.critical_point_min_field]` hides births, deaths, and connectivity changes of
+weak critical points from the report; it does not decide which of them are real. A
+cutoff that suits weak intermolecular contacts also hides the ring critical points of
+covalent rings.
+
 Fractional coordinates handle boundary crossings, and deformation-aware distances
 support related cells. Large reconstruction or atom permutation is not uniquely
 solvable. The matcher reports one deterministic best assignment and does not
