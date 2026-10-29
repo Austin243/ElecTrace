@@ -23,6 +23,13 @@ from electrace.export import (
     write_track_summary_csv,
     write_tracks_csv,
 )
+from electrace.focus import (
+    annotate_events,
+    auto_focus_record,
+    check_atom_order,
+    noise_floor,
+    select_focus_atoms,
+)
 from electrace.io import load_sequence
 from electrace.matching import AtomMatchConfig, FeatureMatchConfig
 from electrace.models import Feature, Frame, MatchRelation, MatchResult, Sequence
@@ -493,8 +500,11 @@ def analyze_sequence(
 
     if len(sequence.frames) < 2:
         raise ValueError("ElecTrace requires at least two ordered frames")
-    focus_atoms = config.outputs.focus_atoms
-    _check_focus_atoms(sequence, focus_atoms)
+    configured_focus = config.outputs.focus_atoms
+    if isinstance(configured_focus, str):
+        check_atom_order(sequence)
+    else:
+        _check_focus_atoms(sequence, configured_focus)
     atom_config, feature_config = _matching_configs(config)
     event_config = _event_config(config)
     tracking = track_sequence(sequence, atom_config, feature_config, event_config)
@@ -505,6 +515,19 @@ def analyze_sequence(
     )
     track_summary = _summarize_tracks(sequence, tracks, ("charge", "volume", *descriptors))
     descriptor_documents, descriptor_warnings = _descriptor_provenance(sequence)
+    selection = None
+    if isinstance(configured_focus, str):
+        selection = select_focus_atoms(
+            sequence,
+            tracks,
+            tracking.events,
+            bond_cutoffs=config.outputs.bond_cutoffs(),
+            spin_threshold=config.events.descriptor_thresholds.get("spin"),
+        )
+        focus_atoms = list(selection.rules)
+    else:
+        focus_atoms = configured_focus
+    floor = noise_floor(sequence, tracks, focus_atoms)
 
     warnings = [*track_warnings, *descriptor_warnings]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
@@ -535,6 +558,8 @@ def analyze_sequence(
         warnings.append(
             "VASP 4 element symbols were inferred for frame(s): " + ", ".join(inferred_symbols)
         )
+    if selection is not None:
+        warnings.extend(selection.warnings)
     if focus_atoms:
         warnings.extend(_focus_identity_warnings(sequence, tracking.atom_matches, focus_atoms))
 
@@ -562,6 +587,7 @@ def analyze_sequence(
     barrier = _locate_barrier(sequence, series_kind)
     for event in events:
         event["barrier_position"] = _barrier_position(event, barrier["frames"])
+    annotate_events(events, sequence, tracks, floor)
     analysis: dict[str, Any] = {
         "schema_version": "0.1",
         "software_version": __version__,
@@ -595,10 +621,13 @@ def analyze_sequence(
         "tracks": tracks,
         "track_summary": track_summary,
         "barrier": barrier,
+        "noise_floor": floor,
         "diagnostics": tracking.diagnostics,
     }
     if focus_atoms:
         analysis.update(_focus_view(sequence, focus_atoms, analysis))
+    if selection is not None:
+        analysis["focus"] = auto_focus_record(selection, analysis.get("focus"), analysis)
     return analysis
 
 
