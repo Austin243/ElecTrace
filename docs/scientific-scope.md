@@ -70,8 +70,8 @@ a pair without a cutoff is never compared. Read each atom's rules and the record
 cutoffs, and compare with an unfocused run, before concluding that an atom took no
 part.
 
-The noise floor describes how much spectator values move between sampled frames. It
-is not a significance test or a calibrated uncertainty. It inherits the frame
+The noise floor, reported only with a focus, describes how much spectator values move
+between sampled frames. It is not a significance test or a calibrated uncertainty. It inherits the frame
 spacing, the partition, and the matching, and it is computed separately for each
 producer. With few spectator atoms the upper percentiles rest on a few steps, so read
 them with `steps`. An event several times above the 99th percentile is unusual for a

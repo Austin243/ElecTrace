@@ -183,23 +183,22 @@ def select_focus_atoms(
         for observations in lineages.values()
         for item in observations
     )
-    if spin_threshold is None:
-        selection.records["spin"] = {
-            "applied": False,
-            "threshold": None,
-            "reason": "No spin threshold under [events.descriptor_thresholds].",
-        }
-        if has_spin:
-            selection.warnings.append(
-                'focus_atoms = "auto" did not apply the spin rule: spin populations are '
-                "present, but [events.descriptor_thresholds] sets no spin threshold."
-            )
-    elif not has_spin:
+    if not has_spin:
         selection.records["spin"] = {
             "applied": False,
             "threshold": spin_threshold,
             "reason": "No spin populations in any frame.",
         }
+    elif spin_threshold is None:
+        selection.records["spin"] = {
+            "applied": False,
+            "threshold": None,
+            "reason": "No spin threshold under [events.descriptor_thresholds].",
+        }
+        selection.warnings.append(
+            'focus_atoms = "auto" did not apply the spin rule: spin populations are '
+            "present, but [events.descriptor_thresholds] sets no spin threshold."
+        )
     else:
         selection.records["spin"] = {"applied": True, "threshold": spin_threshold}
         chosen["spin"] = set()
@@ -267,12 +266,12 @@ def auto_focus_record(
 
 def noise_floor(
     sequence: Sequence, tracks: Iterable[Observation], focus_atoms: Iterable[int]
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """Percentiles of adjacent-frame |Δ| of spectator atom charges, volumes, and spins.
 
     A spectator is an atom-charge track that never touches a focus atom, the test the
-    focus filter uses; without a focus, every atom is one. Producers stay apart
-    because their partitions differ, and missing values give no step.
+    focus filter uses. Producers stay apart because their partitions differ, and
+    missing values give no step.
     """
 
     focus = set(focus_atoms)
@@ -310,14 +309,14 @@ def noise_floor(
                 },
             }
         )
-    return {"spectators": "outside_focus" if focus else "all_atoms", "entries": entries}
+    return entries
 
 
 def annotate_events(
     events: Iterable[dict[str, Any]],
     sequence: Sequence,
     tracks: Iterable[Observation],
-    floor: Mapping[str, Any],
+    floor: Iterable[Mapping[str, Any]],
 ) -> None:
     """Give each atom event's flagged changes as multiples of the spectator floor.
 
@@ -326,9 +325,7 @@ def annotate_events(
     absolute change is compared.
     """
 
-    entries = {
-        (item["producer"], item["element"], item["quantity"]): item for item in floor["entries"]
-    }
+    entries = {(item["producer"], item["element"], item["quantity"]): item for item in floor}
     if not entries:
         return
     observations = {(item["frame"], item["feature_id"]): item for item in tracks}

@@ -103,7 +103,7 @@ _HTML = """<!doctype html>
       <section><h2>Event composition</h2><div id="composition"></div></section>
     </div>
     <section><h2>Electronic event timeline</h2><div class="timeline" id="timeline"></div></section>
-    <section><h2>Spectator noise floor</h2><div id="noise"></div></section>
+    <div id="noise"></div>
     <section><h2>Whole-path track changes</h2><div id="summary"></div></section>
     <section><h2>Frame inventory</h2><div id="frames"></div></section>
     <section><h2>Provenance and audit trail</h2><div id="audit"></div></section>
@@ -221,16 +221,13 @@ _HTML = """<!doctype html>
       });
       return `<small class="muted">${esc(parts.join("; "))}</small>`;
     }
-    function noiseFloor() {
-      const floor = data.noise_floor;
-      if (!floor) return '<div class="empty">No noise floor in this analysis.</div>';
-      const entries = floor.entries || [];
+    function noiseFloor(entries) {
       if (!entries.length) return '<div class="empty">No spectator atom charges, volumes, or spins to compare.</div>';
-      const who = floor.spectators === "outside_focus" ? "atom-charge tracks that never touch a focus atom" : "every atom, including any reacting atoms, because there is no focus";
       const rows = entries.map(e => `<tr><td>${esc(e.element)}</td><td>${esc(e.quantity)}</td><td>${esc(e.producer ?? "—")}</td><td>${esc(e.atoms)}</td><td>${esc(e.steps)}</td><td>${fmt(e.median, 4)}</td><td>${fmt(e.p95, 4)}</td><td>${fmt(e.p99, 4)}</td></tr>`).join('');
-      return `<p class="muted">Adjacent-frame |Δ| over ${esc(who)}, in each source tool's units. Reporting only: event thresholds are unchanged. Each atom event above gives its change as a multiple of the 99th percentile for its element.</p><div class="scroll"><table><thead><tr><th>Element</th><th>Quantity</th><th>Source</th><th>Atoms</th><th>Steps</th><th>Median</th><th>95th</th><th>99th</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      return `<p class="muted">Adjacent-frame |Δ| over atom-charge tracks that never touch a focus atom, in each source tool's units. Reporting only: event thresholds are unchanged. Each atom event above gives its change as a multiple of the 99th percentile for its element.</p><div class="scroll"><table><thead><tr><th>Element</th><th>Quantity</th><th>Source</th><th>Atoms</th><th>Steps</th><th>Median</th><th>95th</th><th>99th</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
-    document.getElementById("noise").innerHTML = noiseFloor();
+    // Spectators exist only outside a focus, so an analysis without one has no floor.
+    if (Array.isArray(data.noise_floor)) document.getElementById("noise").innerHTML = `<section><h2>Spectator noise floor</h2>${noiseFloor(data.noise_floor)}</section>`;
 
     const summary = data.track_summary || [];
     const signed = value => value == null || Number.isNaN(Number(value)) ? "—" : `${Number(value) > 0 ? "+" : ""}${fmt(value)}`;

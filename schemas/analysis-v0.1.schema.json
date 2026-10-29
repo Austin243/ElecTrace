@@ -62,7 +62,7 @@
           },
           "noise_floor": {
             "type": "object",
-            "description": "Present on a property change of an atom-charge feature when the analysis noise_floor has an entry for its producer, element, and a flagged quantity. Reporting only.",
+            "description": "Present only when a focus holds atoms, on a reported property change of an atom-charge feature whose producer, element, and a flagged quantity have a noise_floor entry. Reporting only.",
             "required": ["element", "producer", "changes"],
             "properties": {
               "element": {"type": "string"},
@@ -263,34 +263,23 @@
       "additionalProperties": false
     },
     "noise_floor": {
-      "type": "object",
-      "description": "Percentiles of the adjacent-frame absolute change of spectator atom-charge features, per producer, element, and quantity. Reporting only: no thresholds or events.",
-      "required": ["spectators", "entries"],
-      "properties": {
-        "spectators": {
-          "enum": ["outside_focus", "all_atoms"],
-          "description": "outside_focus: tracks that never touch a focus atom; all_atoms: no focus, so any reacting atoms are included."
+      "type": "array",
+      "description": "Present only when a focus holds atoms: percentiles of the adjacent-frame absolute change of spectator atom-charge features (tracks that never touch a focus atom), per producer, element, and quantity. Reporting only: no thresholds or events.",
+      "items": {
+        "type": "object",
+        "required": ["producer", "element", "quantity", "atoms", "steps", "median", "p95", "p99"],
+        "properties": {
+          "producer": {"type": ["string", "null"]},
+          "element": {"type": "string"},
+          "quantity": {"enum": ["charge", "volume", "spin"]},
+          "atoms": {"type": "integer", "minimum": 1},
+          "steps": {"type": "integer", "minimum": 1},
+          "median": {"type": "number", "minimum": 0},
+          "p95": {"type": "number", "minimum": 0},
+          "p99": {"type": "number", "minimum": 0}
         },
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["producer", "element", "quantity", "atoms", "steps", "median", "p95", "p99"],
-            "properties": {
-              "producer": {"type": ["string", "null"]},
-              "element": {"type": "string"},
-              "quantity": {"enum": ["charge", "volume", "spin"]},
-              "atoms": {"type": "integer", "minimum": 1},
-              "steps": {"type": "integer", "minimum": 1},
-              "median": {"type": "number", "minimum": 0},
-              "p95": {"type": "number", "minimum": 0},
-              "p99": {"type": "number", "minimum": 0}
-            },
-            "additionalProperties": false
-          }
-        }
-      },
-      "additionalProperties": false
+        "additionalProperties": false
+      }
     }
   },
   "$defs": {

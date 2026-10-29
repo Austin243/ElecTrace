@@ -527,7 +527,6 @@ def analyze_sequence(
         focus_atoms = list(selection.rules)
     else:
         focus_atoms = configured_focus
-    floor = noise_floor(sequence, tracks, focus_atoms)
 
     warnings = [*track_warnings, *descriptor_warnings]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
@@ -587,7 +586,6 @@ def analyze_sequence(
     barrier = _locate_barrier(sequence, series_kind)
     for event in events:
         event["barrier_position"] = _barrier_position(event, barrier["frames"])
-    annotate_events(events, sequence, tracks, floor)
     analysis: dict[str, Any] = {
         "schema_version": "0.1",
         "software_version": __version__,
@@ -621,11 +619,14 @@ def analyze_sequence(
         "tracks": tracks,
         "track_summary": track_summary,
         "barrier": barrier,
-        "noise_floor": floor,
         "diagnostics": tracking.diagnostics,
     }
     if focus_atoms:
         analysis.update(_focus_view(sequence, focus_atoms, analysis))
+        # Spectators exist only outside a focus. The floor uses every track, while
+        # only the reported events are annotated.
+        analysis["noise_floor"] = noise_floor(sequence, tracks, focus_atoms)
+        annotate_events(analysis["events"], sequence, tracks, analysis["noise_floor"])
     if selection is not None:
         analysis["focus"] = auto_focus_record(selection, analysis.get("focus"), analysis)
     return analysis
