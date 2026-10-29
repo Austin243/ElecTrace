@@ -34,7 +34,9 @@ into that feature. `lattice_translation_atom` names the atom the translation mov
 Analysis writes `bonds.csv`: one row per atom pair, periodic image, and frame for
 features tied to exactly two atoms. Bader and BaderKit atom populations gain
 `net_charge` (ZVAL − population) only when the frame directory's `POTCAR` or `OUTCAR`
-gives a ZVAL for each `POSCAR` species block in order.
+gives a ZVAL for each `POSCAR` species block in order. `workflow analyze` collects
+the `POTCAR` the VASP step used; a VASP 4 `POSCAR` without species names gets no net
+charges.
 
 Current boundaries: external programs and pseudopotentials are user-supplied;
 critic2 integration reports critical-point topology rather than integrated ELF basin

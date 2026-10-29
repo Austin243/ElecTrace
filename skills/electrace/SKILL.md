@@ -78,7 +78,8 @@ electrace workflow analyze electrace-workflow.yaml --json
 - Treat missing evidence as missing and surface external-tool failures.
 - Never assume an `ISPIN` value. Spin populations follow the Bader partition and
   VASP's sign; a frame without them has no spin value, not zero.
-- Never assume a ZVAL or compute net charges by hand from populations. Ask the user
-  for the frames' `POTCAR` or `OUTCAR` instead.
+- Never assume a ZVAL or compute net charges by hand from populations.
+  `workflow analyze` collects the `POTCAR` the VASP step used. For existing outputs,
+  ask the user to place the frames' `POTCAR` or `OUTCAR` in each frame directory.
 - Filesystem completion does not establish electronic, grid, projection, or
   scientific convergence.

@@ -50,7 +50,10 @@ source in that frame is empty, never zero. Features on one pair and image are jo
 so a critical point and LOBSTER's ICOHP for the same bond share a row; two features
 that give the same quantity keep separate rows, and a warning names them. The distance
 uses the feature's `lattice_translation` when it has one (LOBSTER's eight-column
-rows) and the nearest image otherwise.
+rows) and the nearest image otherwise. A two-atom feature whose translation does not
+say which atom it moves (`lattice_translation_atom`), as in LOBSTER features saved as
+canonical JSON by earlier versions, has no bond row; a warning counts such features
+and names their frames, and reading the native LOBSTER list again restores the rows.
 
 Rows are keyed by atoms and image, never by feature track. A bond that forms or
 breaks, or a critical point that moves to another pair, ends one bond's rows and
@@ -159,18 +162,23 @@ Bader `ACF.dat` charges and BaderKit `atom_charges` are electron populations, ke
 that order), ElecTrace reads each entry's `TITEL` and `ZVAL`, from an `OUTCAR` only
 its copy of the `POTCAR` headers, and adds `net_charge` = ZVAL − population to each
 Bader and BaderKit atom feature. VASP pairs `POTCAR` entries with `POSCAR` species
-blocks by position, so ZVAL is taken per block and the element orders must agree;
-labels are compared by element symbol, so `C_h` or `H1.25` matches `C` or `H`. When
-the file is missing, a species has no ZVAL, or the orders differ, the frame keeps
-populations only and a warning names the frames and the reason. ZVAL is never
-assumed. In an NEB, whose endpoint directories usually have no `OUTCAR`, place the
-band's `POTCAR`, or a link to it, in each frame directory.
+blocks by position, so ZVAL is taken per block of the species line and counts, and
+the element orders must agree. Adjacent blocks of one element stay apart, as in
+`Fe Fe O` for two magnetic sublattices or `Ga As H H` for two pseudo-hydrogens.
+Labels are compared by element symbol, so `C_h` or `H1.25` matches `C` or `H`. When
+the file is missing, a species has no ZVAL, the orders differ, or a VASP 4 `POSCAR`
+names no species, the frame keeps populations only. A warning then names the frames
+and the reason, which is also `net_charge_unavailable` in each frame's `metadata` in
+`analysis.json`. ZVAL is never assumed. In an NEB, whose endpoint directories usually
+have no `OUTCAR`, place the band's `POTCAR`, or a link to it, in each frame directory;
+`electrace workflow analyze` collects the `POTCAR` its VASP step used.
 
 DDEC charges are already net charges and are unchanged. BaderKit basins and
 oxidation states get no net charge. `net_charge` is tracked with its feature: it is a
 column of `feature_tracks.csv` and a quantity in the whole-path summary. Each frame's
 sum of net charges, `net_charge_sum`, is recorded with the ZVAL values under
-`provenance.descriptor_documents` and shown in the report's frame inventory. The sum
+`provenance.descriptor_documents`, whose producer `vasp` is then listed in
+`provenance.descriptor_producers`, and shown in the report's frame inventory. The sum
 is zero only when the populations place every valence electron on an atom.
 
 ## Spin-polarized runs
@@ -311,6 +319,10 @@ electrace workflow analyze electrace-workflow.yaml --json
 
 Analysis collects supported outputs, normalizes them, matches atoms and electronic
 features across frames, and writes the same result bundle used for existing evidence.
+For [net charges](#net-atomic-charges), each frame's collection also holds the
+`POTCAR` its VASP step used or, when that step has none, the source frame's own
+`POTCAR` or `OUTCAR`. A VASP step's `OUTCAR` is not collected, because its energy
+would replace the source frame's.
 
 ## Scientific boundaries
 

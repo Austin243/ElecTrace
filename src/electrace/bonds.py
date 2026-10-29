@@ -27,6 +27,10 @@ BondKey = tuple[int, int, Translation]
 FloatArray = npt.NDArray[np.float64]
 
 
+class _UnplacedImageError(ValueError):
+    """A feature names a lattice translation that cannot be placed; it gets no row."""
+
+
 def _explicit_translation(feature: Feature) -> Translation | None:
     """Return the image of the feature's higher-index atom, when the feature names one.
 
@@ -43,7 +47,7 @@ def _explicit_translation(feature: Feature) -> Translation | None:
         or len(raw) != 3
         or any(isinstance(item, bool) or not isinstance(item, int) for item in raw)
     ):
-        raise ValueError(f"feature {feature.id!r} lattice_translation must be three integers")
+        raise _UnplacedImageError("give a lattice_translation that is not three integers")
     translation = (raw[0], raw[1], raw[2])
     atoms = feature.neighbor_atom_indices
     if len(atoms) == 1 or not any(translation):
@@ -53,9 +57,10 @@ def _explicit_translation(feature: Feature) -> Translation | None:
         return translation
     if translated == atoms[0]:
         return (-translation[0], -translation[1], -translation[2])
-    raise ValueError(
-        f"feature {feature.id!r} has a lattice_translation without a "
-        f"lattice_translation_atom naming atom {atoms[0]} or {atoms[1]}"
+    raise _UnplacedImageError(
+        "give a lattice_translation without a lattice_translation_atom naming one of "
+        "their two atoms (LOBSTER features saved as canonical JSON by earlier ElecTrace "
+        "versions lack it; reading the native LOBSTER list again restores the rows)"
     )
 
 
@@ -116,7 +121,8 @@ def bond_records(
     point and LOBSTER's ICOHP and ICOBI for that bond, are joined into one row.
     Features that would give one row two values of the same quantity keep separate
     rows instead. ``bond_id`` follows a pair and image along the path, through atoms
-    that wrap across the cell. Missing values stay ``None``.
+    that wrap across the cell. Missing values stay ``None``. A feature whose lattice
+    translation cannot be placed gets no row, and a warning counts such features.
     """
 
     track_of = {(item["frame"], item["feature_id"]): item["track_id"] for item in tracks}
@@ -124,6 +130,7 @@ def bond_records(
     numbers: dict[BondKey, int] = {}
     rows: list[tuple[int, int, dict[str, Any]]] = []
     warnings: list[str] = []
+    unplaced: dict[str, list[tuple[str, str]]] = {}
     for position, frame in enumerate(sequence.frames):
         cell = np.asarray(frame.cell, dtype=float)
         atoms = {atom.index: atom for atom in frame.atoms}
@@ -139,7 +146,11 @@ def bond_records(
             if pair is None:
                 continue
             first, second = pair
-            explicit = _explicit_translation(feature)
+            try:
+                explicit = _explicit_translation(feature)
+            except _UnplacedImageError as exc:
+                unplaced.setdefault(str(exc), []).append((frame.label, feature.id))
+                continue
             image = (
                 explicit
                 if explicit is not None
@@ -171,9 +182,9 @@ def bond_records(
             parts = [members]
             if len(given) != len(set(given)):
                 warnings.append(
-                    f"Frame {frame.label}: {len(members)} features tie atoms {first} and "
-                    f"{second} through one periodic image and give the same quantity; "
-                    "each keeps its own bond row."
+                    f"Frame {frame.label}: features {', '.join(item.id for item in members)} "
+                    f"tie atoms {first} and {second} through one periodic image and give "
+                    "the same quantity; each keeps its own bond row."
                 )
                 parts = [[feature] for feature in members]
             image = images[key]
@@ -202,5 +213,11 @@ def bond_records(
                     }
                 )
                 rows.append((number, position, record))
+    for reason, skipped in unplaced.items():
+        labels = ", ".join(dict.fromkeys(label for label, _ in skipped))
+        warnings.append(
+            f"{len(skipped)} feature(s) in frame(s) {labels}, such as {skipped[0][1]}, "
+            f"{reason}, so they have no bond rows."
+        )
     rows.sort(key=lambda row: (row[0], row[1]))
     return [record for _, _, record in rows], warnings

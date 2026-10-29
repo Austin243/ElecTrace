@@ -31,6 +31,7 @@ class PoscarData:
     coordinate_mode: str
     symbols_inferred: bool = False
     species: tuple[str, ...] = ()  # species-line labels, in file order
+    counts: tuple[int, ...] = ()  # atoms per species-line label
 
     def __post_init__(self) -> None:
         if not self.elements:
@@ -240,6 +241,7 @@ def parse_poscar(path: str | Path) -> PoscarData:
         coordinate_mode=coordinate_mode,
         symbols_inferred=symbols_inferred,
         species=tuple(symbols),
+        counts=tuple(counts),
     )
 
 
@@ -260,6 +262,10 @@ def read_poscar(
         "comment": data.comment,
         "coordinate_mode": data.coordinate_mode,
         "symbols_inferred": data.symbols_inferred,
+        # Species blocks as VASP pairs them with POTCAR entries; adjacent blocks of one
+        # element (Fe Fe O) stay apart.
+        "species": list(data.species),
+        "species_counts": list(data.counts),
     }
     if metadata:
         frame_metadata.update(metadata)

@@ -14,15 +14,22 @@
   and image, never by feature track, so a bond that forms or breaks, or a critical
   point that moves to another pair (HCN `E00004`, C–H → N–H), begins or ends rows.
   `bond_id` follows a pair and image through atoms that wrap across the cell between
-  frames. With `focus_atoms`, only pairs that include a focus atom are reported.
+  frames. With `focus_atoms`, only pairs that include a focus atom are reported. A
+  translated feature that does not say which atom it moves, as LOBSTER features saved
+  as canonical JSON by earlier versions do, gets no row, and a warning counts them.
 - `net_charge` (ZVAL minus population) on Bader and BaderKit atom populations when
-  the frame directory's `POTCAR` or `OUTCAR` gives a ZVAL for every POSCAR species
-  block in order. Populations stay in `charge`. Otherwise the charges stay
-  populations and a warning names the frames and the reason; ZVAL is never assumed.
-  DDEC charges, already net charges, are unchanged. Net charges are carried into
-  feature tracks (a `net_charge` column in `feature_tracks.csv`), the whole-path
-  summary, and the report, and each frame's sum is recorded under
-  `provenance.descriptor_documents`.
+  the frame directory's `POTCAR` or `OUTCAR` gives a ZVAL for every block of the
+  POSCAR species line, in order. Blocks follow the species line and counts, so
+  `Fe Fe O` keeps its two Fe blocks. Populations stay in `charge`. Otherwise,
+  including for a VASP 4 POSCAR without species names, the charges stay populations,
+  and a warning and the frame's `net_charge_unavailable` metadata give the reason;
+  ZVAL is never assumed. DDEC charges, already net charges, are unchanged. Net
+  charges are carried into feature tracks (a `net_charge` column in
+  `feature_tracks.csv`), the whole-path summary, and the report, and each frame's sum
+  is recorded under `provenance.descriptor_documents` with producer `vasp`.
+  `electrace workflow analyze` collects each frame's `POTCAR` from its VASP step, or,
+  when that step has none, the source frame's `POTCAR` or `OUTCAR`, so collected Bader
+  charges get net charges too. Frame metadata records the POSCAR `species` line and `species_counts`.
 - Per-atom spin populations for collinear `ISPIN = 2` VASP runs.
   `electrace volume CHGCAR --split-spin` writes `spin/CHGCAR_tot` and
   `spin/CHGCAR_mag` unchanged in value and sign; it refuses one-grid, truncated,
