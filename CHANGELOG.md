@@ -4,6 +4,21 @@
 
 ### Added
 
+- Opt-in `[outputs] atom_groups` (named lists of 0-based atom indices) and
+  `molecule_groups` (each molecule of the first frame, under the bond cutoffs of
+  `focus_atoms = "auto"`). `atom_groups` in `analysis.json`, `atom_groups.csv`, and the
+  report give each group's summed charge, net charge, and spin in every frame, null
+  where any atom lacks a value, with whole-path changes. Molecules that keep every
+  bond and hold no focus atom give a noise floor of adjacent-frame changes, and each
+  group's largest step is also given as a multiple of it; `cut_bonds` lists the bonds
+  a group cuts. In three 288-atom acetonitrile NEB bands, the 99th percentile of
+  spectator-molecule steps was 0.005 and 0.014 e in the two molecular bands (44 and
+  46 molecules), against 0.05–0.10 e for single spectator atoms in the same runs. In
+  E10dir501 p35 the donor fragment went from −0.19 to −0.57 e at the barrier and back
+  to −0.01 e, and the transferred proton from +0.19 to +0.57 e, ending at +0.36 e on
+  N; their largest steps were 26 and 12 times the floor. Group sums equal the sums of
+  the atoms' `ACF.dat` values in every frame. Without either setting, outputs are
+  unchanged.
 - `electrace figure` draws one `analysis.json` as a path figure: the energy profile,
   the density at the critical points of chosen bonds over their distances, and the net
   charges over the spins of chosen atoms, on one frame axis. A dashed line marks the

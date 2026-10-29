@@ -53,7 +53,10 @@ atom's `rules` and any warning about missing bond cutoffs or a missing spin thre
 Never present a focused run as the whole path. With a focus, compare charge,
 volume, and spin events with `noise_floor`, the percentiles of atoms outside the
 focus for each element, before describing a change as chemical; without a focus
-there is no floor. `[outputs] match_details = false` leaves each frame's feature
+there is no floor. Single-atom Bader steps are noisy; for charge moving between
+fragments, set `[outputs] molecule_groups = true` or name groups under
+`[outputs.atom_groups]`, read `atom_groups`, compare each group's largest step with
+its spectator-molecule `noise_floor`, and note a group's `cut_bonds`. `[outputs] match_details = false` leaves each frame's feature
 list and the match edges out of `analysis.json` and the report; tracks, events, and
 summaries do not change. Rerun with the default before reviewing a surprising match.
 When every frame has an energy, events carry

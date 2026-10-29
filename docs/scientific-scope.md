@@ -87,6 +87,17 @@ a few steps, so read them with `steps`. An event several times above the 99th
 percentile is unusual for a spectator but not proof of chemistry, and a change near
 the floor can still be real.
 
+A group sum removes the partition surfaces inside the group, not those around it.
+Whole molecules in a molecular crystal are bounded by low density, so their sums move
+far less than their atoms do; a group that cuts a covalent bond keeps a surface
+through dense density and is not protected the same way, even though its largest
+step is still compared with the molecular floor. Molecules are read from the first
+frame's geometry with bond cutoffs and keep their atoms along the path: a transferred
+proton stays in its donor's molecule, so name fragments as groups to follow charge
+between them. A polymerized cell can be one large molecule, which leaves few or no
+spectators; read `molecules` and `steps` before trusting the floor's upper
+percentiles.
+
 A path figure draws only what `analysis.json` holds for the chosen bonds and atoms.
 Its dashed line marks the highest-energy sampled frame, not a located saddle point,
 and a dot places an event within one step of the sampled frames. A gap in a bond's

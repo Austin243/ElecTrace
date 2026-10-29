@@ -64,6 +64,11 @@ csv = true
 # Leave each frame's feature list and the match edges out of analysis.json and
 # report.html; tracks, events, and summaries are unchanged.
 # match_details = false
+# Sum atom charges and spins over each molecule of the first frame, with a noise
+# floor from the molecules whose bonds never change, and over named atom groups.
+# molecule_groups = true
+# [outputs.atom_groups]
+# donor = [12, 40]
 
 # Plugins are inspected and planned by ElecTrace, but never executed implicitly.
 [plugins.baderkit]

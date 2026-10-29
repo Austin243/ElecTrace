@@ -24,6 +24,8 @@ workflow.
   split/merge candidates, and descriptor changes.
 - Lists each bond's distance, critical-point density and Laplacian, and ICOHP/ICOBI
   frame by frame, with rows that begin or end as bonds form or break.
+- Sums charges and spins over named atom groups and the molecules of the first frame,
+  with a noise floor from molecules that take no part.
 - Draws chosen bonds and atoms along the path as a figure: the energy profile, the
   bond-critical-point densities and distances, and the net charges and spins.
 - Stages VASP, Bader/BaderKit, critic2, and LOBSTER steps from a YAML workflow,

@@ -202,6 +202,49 @@ flagged by relative change, but the ratio uses the absolute change, like the flo
 The report's timeline shows the ratio to the 99th percentile. This is reporting only:
 thresholds, events, and confidences do not change.
 
+## Atom groups and molecules
+
+A single atom's Bader charge moves between frames even when nothing happens to it,
+because the zero-flux surfaces between bonded atoms run through dense density and
+shift with the geometry. A sum over a group of atoms does not depend on the surfaces
+inside the group, only on those around it. Name groups of 0-based POSCAR indices, ask
+for the molecules of the first frame, or both:
+
+```toml
+[outputs]
+molecule_groups = true
+
+[outputs.atom_groups]
+donor = [41, 89, 218, 224, 285]  # a molecule without its leaving proton
+H227 = [227]
+```
+
+`atom_groups` in `analysis.json` then holds, for each group and charge producer, the
+summed `charge`, `net_charge`, and `spin` of every frame, with the group's atoms, Hill
+`formula`, and whole-path `changes` (net change, max − min, and largest step, as in
+the track summary). A frame where any atom of the group lacks a value gets `null`,
+never a partial sum, and a warning names it. `atom_groups.csv` has one row per group,
+producer, and frame, and the report adds an "Atom groups" section. Every frame must
+list the same atoms in the same order.
+
+Molecules are the connected atoms of the first frame under the element-pair bond
+cutoffs of `focus_atoms = "auto"`, with the same overrides under
+`[outputs.focus_bond_cutoffs]`; they get the IDs `M001`, `M002`, ... in order of their
+lowest atom index, so configured names cannot look like that. With a focus, only the
+molecules that hold a focus atom are reported. Molecules that keep every bond through
+every frame and hold no focus atom are spectators. Whenever groups are requested,
+`noise_floor` under `atom_groups` gives, for each producer, the median and the 95th and
+99th percentiles of their adjacent-frame |Δ| of summed charge and spin, and each
+group's largest step carries `ratio_to_floor`. A fixed group's net charge and
+population change by the same amount, so the charge floor serves both.
+
+`cut_bonds` lists the first-frame bonds with one atom inside a group. Such a group
+keeps a surface through dense density, so its noise is closer to single atoms' than
+to the molecular floor. Without a cutoff for every element pair present, molecules
+are not defined: configured groups are still summed, but there is no floor and
+`cut_bonds` is `null`. This is reporting only: thresholds, events, and confidences do
+not change, and without either setting the outputs are unchanged.
+
 ## Smaller outputs for large cells
 
 By default, `analysis.json` and `report.html` also hold every frame's feature list

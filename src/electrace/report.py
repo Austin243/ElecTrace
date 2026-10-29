@@ -290,7 +290,7 @@ _HTML = """<!doctype html>
       const m = g.molecules || {};
       const counts = items => Object.entries(items || {}).map(([f, n]) => `${n} ${f}`).join(", ") || "none";
       const molecules = m.count != null
-        ? `<p class="muted">${esc(`Frame ${frameName(m.frame)} has ${m.count} molecule${m.count === 1 ? "" : "s"} (${counts(m.formulas)}) under the bond cutoffs of the focus rule; ${m.spectators} keep every bond and hold no focus atom (${counts(m.spectator_formulas)}).${m.reason ? ` ${m.reason}` : ""}`)}</p>`
+        ? `<p class="muted">${esc(`Frame ${frameName(m.frame)} has ${m.count} molecule${m.count === 1 ? "" : "s"} (${counts(m.formulas)}) under the bond cutoffs of the focus rule; ${m.spectators} ${m.spectators === 1 ? "keeps" : "keep"} every bond and ${m.spectators === 1 ? "holds" : "hold"} no focus atom (${counts(m.spectator_formulas)}).${m.reason ? ` ${m.reason}` : ""}`)}</p>`
         : `<p class="muted">${esc(m.reason || "No molecules were found.")}</p>`;
       const floor = g.noise_floor || [];
       const floorTable = floor.length ? `<div class="scroll"><table><thead><tr><th>Quantity</th><th>Source</th><th>Molecules</th><th>Steps</th><th>Median</th><th>95th</th><th>99th</th></tr></thead><tbody>${floor.map(e => `<tr><td>${esc(readable(e.quantity))}</td><td>${esc(e.producer ?? "—")}</td><td>${esc(e.molecules)}</td><td>${esc(e.steps)}</td><td>${fmt(e.median, 4)}</td><td>${fmt(e.p95, 4)}</td><td>${fmt(e.p99, 4)}</td></tr>`).join("")}</tbody></table></div>` : "";
