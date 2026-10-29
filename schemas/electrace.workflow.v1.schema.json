@@ -51,7 +51,7 @@
       "required": ["id", "kind", "executable"],
       "properties": {
         "id": {"$ref": "#/$defs/identifier"},
-        "kind": {"enum": ["bader", "baderkit", "critic2", "lobster", "vasp"]},
+        "kind": {"enum": ["bader", "baderkit", "critic2", "lobster", "vasp", "volume"]},
         "executable": {"$ref": "#/$defs/identifier"},
         "capability": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"},
         "template_dir": {"$ref": "#/$defs/nonempty"},
