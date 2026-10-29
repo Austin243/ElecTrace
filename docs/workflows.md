@@ -85,6 +85,22 @@ have densities near 0.02 a.u., so set a ring cutoff only when ring formation is 
 under study. The value is in the units of the critical point's `field`: a.u. for
 critic2.
 
+Before reading a critical point's birth, death, or connectivity change as chemistry,
+check that the search found every point. For each frame's critic2 `CPREPORT` JSON,
+`critical_point_counts` in `analysis.json` counts every cell critical point by
+signature, n (nuclei and non-nuclear attractors), b, r, and c, and gives the Morse
+sum n − b + r − c. A complete search sums to 0 in a periodic cell and to 1 for a
+molecule (`structure.is_molecule`). Any other sum means points are missing from that
+frame: missed by the search, or removed by `DISCARD`, as the vacuum points around a
+molecule in a large cell are. A warning names those frames, the report says so above
+the event timeline, and its frame inventory lists the counts. The counts use every
+critical point, before any density cutoff or focus, and stay with
+`match_details = false`. The critic2 document's metadata in
+`provenance.descriptor_documents` holds the same counts, so canonical JSON written
+from it keeps them. A frame without a critic2 document, a canonical critic2 document
+without counts (earlier versions dropped the nuclei), or a point without a signature
+gives a null sum and a `reason`; reading the native `CPREPORT` JSON again counts it.
+
 When every frame has an energy, each event is labelled `before`, `spanning`, or
 `after` the highest-energy frame (`barrier_position` in `analysis.json` and
 `events.csv`). An event spans the barrier when its step starts or ends at that frame,

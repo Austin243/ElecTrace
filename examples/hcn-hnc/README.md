@@ -23,8 +23,12 @@ electrace inspect electrace-results
 For an agent or script, append `--json` to either command. With ElecTrace
 0.1.0a5, a successful run of the checked configuration reports:
 
-- 7 ordered frames and one warning: the frames have no `POTCAR` or `OUTCAR`, so
-  the Bader charges stay electron populations;
+- 7 ordered frames and two warnings:
+  - critic2's Morse sum n − b + r − c is +1 in every frame, not the 0 of a complete
+    periodic search, because `generation/critic2.in` discards points where the
+    density is below 1e-5 a.u., which removes the vacuum points around the molecule;
+  - the frames have no `POTCAR` or `OUTCAR`, so the Bader charges stay electron
+    populations;
 - 35 feature observations belonging to 5 tracks;
 - 20 events: 19 descriptor changes (17 confirmed, 2 right-censored) and one
   confirmed candidate connectivity change;
