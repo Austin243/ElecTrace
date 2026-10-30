@@ -34,16 +34,18 @@ class AutoFocus:
     warnings: list[str] = field(default_factory=list)
 
 
-def check_atom_order(sequence: Sequence) -> None:
-    """Require one atom order, which the index-based bond comparison needs."""
+def check_atom_order(
+    sequence: Sequence, setting: str = 'outputs.focus_atoms = "auto" needs'
+) -> None:
+    """Require one atom order, which index-based bond comparisons and sums need."""
 
     first = sequence.frames[0]
     reference = [(atom.index, atom.element) for atom in first.atoms]
     for frame in sequence.frames[1:]:
         if [(atom.index, atom.element) for atom in frame.atoms] != reference:
             raise ValueError(
-                'outputs.focus_atoms = "auto" needs every frame to list the same elements '
-                f"in the same atom order; frame {frame.label} differs from frame {first.label}"
+                f"{setting} every frame to list the same elements in the same atom order; "
+                f"frame {frame.label} differs from frame {first.label}"
             )
 
 
@@ -90,7 +92,9 @@ def _atom_steps(
     ]
 
 
-def _bonds(frame: Frame, cutoffs: Mapping[str, float]) -> tuple[set[tuple[int, int]], set[str]]:
+def _bonds(
+    frame: Frame, cutoffs: Mapping[str, float], setting: str = 'outputs.focus_atoms = "auto"'
+) -> tuple[set[tuple[int, int]], set[str]]:
     """Return the atom pairs within their element-pair cutoff, and the pairs without one.
 
     Rounding fractional differences finds the minimum image exactly here: with every
@@ -120,7 +124,7 @@ def _bonds(frame: Frame, cutoffs: Mapping[str, float]) -> tuple[set[tuple[int, i
     longest = float(limits.max(initial=0.0))
     if 2.0 * longest > spacing.min():
         raise ValueError(
-            f'outputs.focus_atoms = "auto": frame {frame.label} has a lattice-plane spacing '
+            f"{setting}: frame {frame.label} has a lattice-plane spacing "
             f"of {spacing.min():.3f} angstrom, less than twice its {longest:.3f} angstrom "
             "bond cutoff, so an atom could bond to more than one periodic image"
         )

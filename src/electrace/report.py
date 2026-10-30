@@ -105,6 +105,7 @@ _HTML = """<!doctype html>
     <section><h2>Electronic event timeline</h2><div class="timeline" id="timeline"></div></section>
     <div id="noise"></div>
     <section><h2>Whole-path track changes</h2><div id="summary"></div></section>
+    <div id="groups"></div>
     <section><h2>Per-bond view</h2><div id="bonds"></div></section>
     <section><h2>Frame inventory</h2><div id="frames"></div></section>
     <section><h2>Provenance and audit trail</h2><div id="audit"></div></section>
@@ -282,6 +283,35 @@ _HTML = """<!doctype html>
       return `<p class="muted">Reporting only, in each source tool's units; no thresholds apply. Net change compares a track's first and last frames; max &minus; min and the largest single step use the frames where the value exists. A change spread over many frames can appear here without any event. Each quantity lists its tracks by max &minus; min, largest first; quantities are not ranked against each other because their units differ.</p>${tables}${note}`;
     }
     document.getElementById("summary").innerHTML = trackSummary();
+
+    // Atom groups sum charges and spins over sets of atoms, against a floor from
+    // spectator molecules; without atom_groups or molecule_groups there is no section.
+    function groupSection(g) {
+      const m = g.molecules || {};
+      const counts = items => Object.entries(items || {}).map(([f, n]) => `${n} ${f}`).join(", ") || "none";
+      const molecules = m.count != null
+        ? `<p class="muted">${esc(`Frame ${frameName(m.frame)} has ${m.count} molecule${m.count === 1 ? "" : "s"} (${counts(m.formulas)}) under the bond cutoffs of the focus rule; ${m.spectators} ${m.spectators === 1 ? "keeps" : "keep"} every bond and ${m.spectators === 1 ? "holds" : "hold"} no focus atom (${counts(m.spectator_formulas)}).${m.reason ? ` ${m.reason}` : ""}`)}</p>`
+        : `<p class="muted">${esc(m.reason || "No molecules were found.")}</p>`;
+      const floor = g.noise_floor || [];
+      const floorTable = floor.length ? `<div class="scroll"><table><thead><tr><th>Quantity</th><th>Source</th><th>Molecules</th><th>Steps</th><th>Median</th><th>95th</th><th>99th</th></tr></thead><tbody>${floor.map(e => `<tr><td>${esc(readable(e.quantity))}</td><td>${esc(e.producer ?? "—")}</td><td>${esc(e.molecules)}</td><td>${esc(e.steps)}</td><td>${fmt(e.median, 4)}</td><td>${fmt(e.p95, 4)}</td><td>${fmt(e.p99, 4)}</td></tr>`).join("")}</tbody></table></div>` : "";
+      const groups = g.groups || [];
+      if (!groups.length) return `${molecules}${floorTable}<div class="empty">No atom group was reported.</div>`;
+      const quantity = groups.some(x => observed((x.changes || {}).net_charge)) ? "net_charge" : "charge";
+      const ends = x => x.values.filter(v => v[quantity] != null);
+      const rows = groups.map(x => {
+        const c = (x.changes || {})[quantity];
+        const s = c?.largest_step;
+        const ratio = s?.ratio_to_floor?.p99;
+        const step = s ? `${signed(s.delta)} <small class="muted">${esc(frameName(s.frame_before))}→${esc(frameName(s.frame_after))}${ratio != null ? `, ${fmt(ratio, 1)} times the spectator 99th percentile` : ""}</small>` : "—";
+        const spin = (x.changes || {}).spin;
+        const cut = x.cut_bonds?.length ? `<br><small class="muted">cuts ${x.cut_bonds.length} bond${x.cut_bonds.length === 1 ? "" : "s"}</small>` : "";
+        const values = ends(x);
+        return `<tr><td>${esc(x.group_id)}${cut}</td><td>${esc(x.formula)}</td><td>${esc(x.producer ?? "—")}</td><td>${fmt(values[0]?.[quantity])} → ${fmt(values.at(-1)?.[quantity])}</td><td>${signed(c?.net_change)}</td><td>${fmt(c?.range)}</td><td>${step}</td><td>${spin ? `${signed(spin.net_change)} <small class="muted">max &minus; min ${fmt(spin.range)}</small>` : "—"}</td></tr>`;
+      }).join("");
+      const label = quantity === "net_charge" ? "Net charge" : "Charge";
+      return `<p class="muted">Sums of atom charges and spins over each group, in each source tool's units. A sum does not depend on the partition surfaces inside the group, only on those around it, so whole molecules move far less between frames than single atoms. Each group's largest step is compared with the 99th percentile of the spectator molecules' steps; a group that cuts a covalent bond keeps that bond's surface, whose noise is closer to single atoms'. Reporting only.</p>${molecules}${floorTable}<div class="scroll"><table><thead><tr><th>Group</th><th>Formula</th><th>Source</th><th>${label}, first → last</th><th>Net change</th><th>Max &minus; min</th><th>Largest step</th><th>Spin net change</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    if (data.atom_groups) document.getElementById("groups").innerHTML = `<section><h2>Atom groups</h2>${groupSection(data.atom_groups)}</section>`;
 
     const bonds = data.bonds || [];
     function bondTable() {

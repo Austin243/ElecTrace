@@ -25,6 +25,7 @@ from electrace.events import (
     weak_critical_point_kind,
 )
 from electrace.export import (
+    write_atom_groups_csv,
     write_bonds_csv,
     write_events_csv,
     write_json,
@@ -38,6 +39,7 @@ from electrace.focus import (
     noise_floor,
     select_focus_atoms,
 )
+from electrace.groups import GROUP_QUANTITIES, atom_groups, ratio_to_floor
 from electrace.io import load_sequence
 from electrace.matching import AtomMatchConfig, FeatureMatchConfig
 from electrace.models import Feature, Frame, MatchRelation, MatchResult, Sequence
@@ -443,6 +445,29 @@ def _summarize_tracks(
     return summary
 
 
+def _summarize_groups(report: Mapping[str, Any]) -> None:
+    """Add each group's whole-path changes, with its largest step against the floor.
+
+    Spin steps are compared with the spin floor; charge and net-charge steps, which
+    are equal for a fixed group, with the charge floor.
+    """
+
+    floor = {(item["producer"], item["quantity"]): item for item in report["noise_floor"]}
+    for group in report["groups"]:
+        changes: dict[str, Any] = {}
+        for quantity in GROUP_QUANTITIES:
+            values = [(int(item["frame"]), item[quantity]) for item in group["values"]]
+            if all(value is None for _, value in values):
+                continue
+            summary = _change_summary(values)
+            largest = summary["largest_step"]
+            entry = floor.get((group["producer"], "spin" if quantity == "spin" else "charge"))
+            if largest is not None and entry is not None:
+                largest["ratio_to_floor"] = ratio_to_floor(largest["delta"], entry)
+            changes[quantity] = summary
+        group["changes"] = changes
+
+
 def _locate_barrier(sequence: Sequence, series_kind: str) -> dict[str, Any]:
     """Find the highest-energy frame(s) for placing events; reporting only.
 
@@ -658,6 +683,17 @@ def analyze_sequence(
         focus_atoms = list(selection.rules)
     else:
         focus_atoms = configured_focus
+    groups: dict[str, Any] | None = None
+    group_warnings: list[str] = []
+    if config.outputs.atom_groups or config.outputs.molecule_groups:
+        groups, group_warnings = atom_groups(
+            sequence,
+            configured=config.outputs.atom_groups,
+            molecule_groups=config.outputs.molecule_groups,
+            bond_cutoffs=config.outputs.bond_cutoffs(),
+            focus_atoms=focus_atoms,
+        )
+        _summarize_groups(groups)
 
     warnings = [*track_warnings, *descriptor_warnings, *bond_warnings]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
@@ -716,6 +752,17 @@ def analyze_sequence(
             "bond rows use",
         )
     )
+    if groups is not None:
+        warnings.extend(group_warnings)
+        warnings.extend(
+            _identity_warnings(
+                sequence,
+                tracking.atom_matches,
+                (atom for item in groups["groups"] for atom in item["atoms"]),
+                "group",
+                "group sums use",
+            )
+        )
 
     path = Path(config_path).resolve() if config_path is not None else None
     sources = fingerprint_files(_source_files(sequence, path))
@@ -801,6 +848,8 @@ def analyze_sequence(
         "barrier": barrier,
         "diagnostics": tracking.diagnostics,
     }
+    if groups is not None:
+        analysis["atom_groups"] = groups
     if min_field:
         analysis["suppressed_events"] = {
             "critical_point_min_field": dict(min_field),
@@ -885,6 +934,7 @@ def _without_match_details(analysis: Mapping[str, Any]) -> dict[str, Any]:
 _KNOWN_BUNDLE_ARTIFACTS = frozenset(
     {
         "analysis.json",
+        "atom_groups.csv",
         "bonds.csv",
         "events.csv",
         "feature_tracks.csv",
@@ -922,6 +972,12 @@ def write_analysis_bundle(
             )
         )
         written.append(write_bonds_csv(analysis.get("bonds", []), directory / "bonds.csv"))
+        if "atom_groups" in analysis:
+            written.append(
+                write_atom_groups_csv(
+                    analysis["atom_groups"]["groups"], directory / "atom_groups.csv"
+                )
+            )
     if config.outputs.html_report:
         written.append(render_html_report(document, directory / "report.html"))
 
