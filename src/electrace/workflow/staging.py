@@ -33,6 +33,7 @@ WORKSPACE_SCHEMA_VERSION = "electrace.workspace.v1"
 WORKSPACE_RECORD = ".electrace-workspace.json"
 _INCAR_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 # A quoted value, a comment, a line continuation, a statement's end, or anything else.
+_INCAR_QUOTED = re.compile(r'"[^"]*"')
 _INCAR_TOKEN = re.compile(r'"[^"]*"|[#!][^\n]*|\\[ \t]*\n|[;\n]|[^"#!;\\\n]+|["\\]')
 _SAFE_LABEL = re.compile(r"[^A-Za-z0-9_.-]+")
 _LOBSTER_BOND_REQUEST = re.compile(r"(?im)^\s*(?:cohpgenerator|cohpbetween)\b")
@@ -167,18 +168,24 @@ def _rewrite_incar(text: str, overrides: Mapping[str, str]) -> tuple[str, set[st
 
     Follows the INCAR syntax in the VASP wiki: a semicolon separates statements on a line,
     ``#`` and ``!`` start a comment, a backslash continues a statement on the next line,
-    and double quotes hold a value across lines. A value with a brace is a nested tag
-    block's and is left alone. A line holding only an overridden statement becomes
+    and double quotes hold a value across lines. A tag inside a nested ``{ }`` block is a
+    different tag and stays. A line holding only an overridden statement becomes
     ``TAG = value``, without its comment, which may describe the old value. Returns the
     text and the tags it set.
     """
 
     applied: set[str] = set()
+    depth = 0
 
     def replacement(statement: str) -> str | None:
-        tag, equals, value = statement.partition("=")
+        nonlocal depth
+        tag, equals, value = _INCAR_QUOTED.sub("", statement).partition("=")
+        top_level = depth == 0
+        # Before the equals sign a brace opens a block; after it, one only closes a block.
+        closed = max(0, value.count("}") - value.count("{"))
+        depth = max(0, depth + tag.count("{") - tag.count("}") - closed)
         key = tag.strip().upper()
-        if not equals or key not in overrides or "{" in value or "}" in value:
+        if not top_level or not equals or key not in overrides:
             return None
         applied.add(key)
         return f"{key} = {overrides[key]}"

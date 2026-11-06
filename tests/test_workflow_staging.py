@@ -119,7 +119,43 @@ def test_numeric_workflow_frames_get_no_order_warning(workflow_manifest):
             "PLUGINS { STRUCTURE = T ; NEIGHBOR_CUTOFF = 5.0 }\n",
             {"NEIGHBOR_CUTOFF": 6},
             "PLUGINS { STRUCTURE = T ; NEIGHBOR_CUTOFF = 5.0 }\nNEIGHBOR_CUTOFF = 6\n",
-            id="closing-brace-is-not-part-of-a-value",
+            id="tag-inside-a-one-line-block-stays",
+        ),
+        pytest.param(
+            "ISMEAR = 0\nELPH {\n  ISMEAR = -15\n  NBANDS = 200\n}\n",
+            {"ISMEAR": 1},
+            "ISMEAR = 1\nELPH {\n  ISMEAR = -15\n  NBANDS = 200\n}\n",
+            id="nested-tag-of-the-same-name-stays",
+        ),
+        pytest.param(
+            "ENCUT = 500\nELPH {\n  ISMEAR = -15\n}\n",
+            {"ISMEAR": 1},
+            "ENCUT = 500\nELPH {\n  ISMEAR = -15\n}\nISMEAR = 1\n",
+            id="nested-tag-is-not-the-top-level-tag",
+        ),
+        pytest.param(
+            "PLUGINS { STRUCTURE = T ; NEIGHBOR_CUTOFF = 5.0 } ; ENCUT = 520\n",
+            {"ENCUT": 400},
+            "PLUGINS { STRUCTURE = T ; NEIGHBOR_CUTOFF = 5.0 } ; ENCUT = 400\n",
+            id="statement-after-a-closed-block-is-set",
+        ),
+        pytest.param(
+            "OUTER {\n  NOTE = a{b}\n  ENCUT = 1\n}\nENCUT = 520\n",
+            {"ENCUT": 400},
+            "OUTER {\n  NOTE = a{b}\n  ENCUT = 1\n}\nENCUT = 400\n",
+            id="braces-in-a-nested-value-do-not-end-the-block",
+        ),
+        pytest.param(
+            "SYSTEM = Ti{001 slab\nENCUT = 520\n",
+            {"ENCUT": 400},
+            "SYSTEM = Ti{001 slab\nENCUT = 400\n",
+            id="brace-in-a-value-opens-no-block",
+        ),
+        pytest.param(
+            'SYSTEM = "{"\nENCUT = 520\n',
+            {"ENCUT": 400},
+            'SYSTEM = "{"\nENCUT = 400\n',
+            id="quoted-brace-opens-no-block",
         ),
         pytest.param(
             'SYSTEM = my "run\nENCUT = 520\n',
@@ -160,6 +196,7 @@ def test_incar_override_sets_only_the_statement_it_names(tmp_path, template, ove
         ("", {"NSW": 0}, "NSW = 0\n"),
         ("MAGMOM = 1 1 \\\n  2 2\n", {"NSW": 0}, "MAGMOM = 1 1 \\\n  2 2\nNSW = 0\n"),
         ("ISPIN = 2\n", {"ISPIN": True}, "ISPIN = .TRUE.\n"),
+        ("SYSTEM = Ti{001} slab\nENCUT = 500\n", {"SYSTEM": "new"}, "SYSTEM = new\nENCUT = 500\n"),
     ],
 )
 def test_incar_override_of_a_plain_template_is_unchanged(tmp_path, template, overrides, expected):
