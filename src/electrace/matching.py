@@ -81,7 +81,9 @@ class FeatureMatchConfig:
     pbc: tuple[bool, bool, bool] = (True, True, True)
 
 
-def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]:
+def _hungarian_fallback(
+    cost_matrix: npt.ArrayLike, pair_shape: tuple[int, int] | None = None
+) -> tuple[IntArray, IntArray]:
     """O(n^2 m) Hungarian solver, for n <= m, used when SciPy is unavailable.
 
     The implementation is the shortest-augmenting-path form of the Hungarian
@@ -89,6 +91,14 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
     replacing them with a provably dominant finite sentinel.  Each column scan is
     vectorized with the scalar algorithm's element-wise arithmetic and its choice of
     the first minimal column, so the assignment does not depend on the vectorization.
+
+    ``pair_shape`` declares the layout _assign_with_unmatched builds around a pair
+    block of that shape.  The layout has a complete finite assignment, so a forbidden
+    column is never the nearest and is not scanned.  Below the pair block each row has
+    one finite pair column and shares a zero block.  That block cannot improve on an
+    earlier scan in the same search if potentials only fell since and this row's is no
+    higher.  A run of columns tied at zero whose rows add nothing at or below zero is
+    visited in one go: their turns change no potential and no order of visit.
     """
 
     matrix = np.asarray(cost_matrix, dtype=float)
@@ -98,6 +108,14 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
     sentinel = max(1.0, float(matrix[finite].max())) * (max(matrix.shape) + 1) * 1.0e6
     cost = np.where(finite, matrix, sentinel)
     rows, columns = cost.shape
+    # An overflowed sentinel can overflow the potentials too, so nothing is skipped then.
+    layout = pair_shape is not None and math.isfinite(sentinel)
+    pair_rows, pair_columns = pair_shape if layout and pair_shape else (0, 0)
+    block = np.arange(pair_columns + 1, columns + 1)
+    scan = [
+        np.flatnonzero(finite[row, : pair_columns if row >= pair_rows else columns]) + 1
+        for row in range(rows)
+    ]
 
     potential_rows = np.zeros(rows + 1, dtype=float)
     potential_columns = np.zeros(columns + 1, dtype=float)
@@ -108,23 +126,55 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
         column_match[0] = row
         minimum = np.full(columns + 1, np.inf, dtype=float)
         used = np.zeros(columns + 1, dtype=bool)
+        block_scanned = -np.inf
         column0 = 0
         while column_match[column0] != 0:
-            used[column0] = True
             row0 = int(column_match[column0])
-            # Unused columns in increasing order; column 0 is always used.
-            free = np.flatnonzero(~used)
-            reduced = cost[row0 - 1, free - 1] - potential_rows[row0] - potential_columns[free]
-            improved = reduced < minimum[free]
-            minimum[free[improved]] = reduced[improved]
-            predecessor[free[improved]] = column0
-            nearest = int(np.argmin(minimum[free]))
-            delta = minimum[free[nearest]]
-            column1 = int(free[nearest])
-            # Used columns hold distinct rows: matched ones plus the row being inserted.
-            potential_rows[column_match[used]] += delta
-            potential_columns[used] -= delta
-            minimum[~used] -= delta
+            block_done = layout and row0 > pair_rows and potential_rows[row0] <= block_scanned
+            ties = np.empty(0, dtype=np.int64)
+            if block_done:
+                ties = np.flatnonzero(minimum == 0.0)
+                holders = column_match[ties]
+                stops = np.flatnonzero(
+                    (holders <= pair_rows) | (potential_rows[holders] > block_scanned)
+                )
+                if stops.size:
+                    ties, holders = ties[: stops[0]], holders[: stops[0]]
+                own = holders - pair_rows
+                reduced = (
+                    cost[holders - 1, own - 1] - potential_rows[holders] - potential_columns[own]
+                )
+                if (reduced <= 0).any():
+                    ties = ties[:0]
+            if ties.size:
+                used[ties] = True
+                minimum[ties] = np.inf
+                improved = ~used[own] & (reduced < minimum[own])
+                minimum[own[improved]] = reduced[improved]
+                predecessor[own[improved]] = ties[improved]
+            else:
+                used[column0] = True
+                minimum[column0] = np.inf
+                free = scan[row0 - 1]
+                if row0 > pair_rows and not block_done:
+                    free = np.concatenate((free, block))
+                    if layout:
+                        block_scanned = potential_rows[row0]
+                free = free[~used[free]]
+                reduced = cost[row0 - 1, free - 1] - potential_rows[row0] - potential_columns[free]
+                improved = reduced < minimum[free]
+                minimum[free[improved]] = reduced[improved]
+                predecessor[free[improved]] = column0
+            # Used and untouched columns hold infinity; if all do, take the first free column.
+            column1 = int(minimum.argmin()) or int(used.argmin())
+            delta = minimum[column1]
+            if delta != 0:
+                if delta < 0:
+                    block_scanned = -np.inf
+                # Used columns hold distinct rows: matched ones plus the row being inserted.
+                potential_rows[column_match[used]] += delta
+                potential_columns[used] -= delta
+                minimum[~used] -= delta
             column0 = column1
         while column0 != 0:
             column1 = int(predecessor[column0])
@@ -158,7 +208,7 @@ def _assign_with_unmatched(
     try:
         from scipy.optimize import linear_sum_assignment
     except ImportError:
-        assigned_rows, assigned_columns = _hungarian_fallback(augmented)
+        assigned_rows, assigned_columns = _hungarian_fallback(augmented, (rows, columns))
     else:
         assigned_rows, assigned_columns = linear_sum_assignment(augmented)
     matched = [
