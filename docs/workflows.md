@@ -54,6 +54,14 @@ Each event in `events.csv` and `analysis.json` gives its step as `frame_before` 
 `frame_after`, and `end_frame` is the last frame its lineage reaches, shown in the
 timeline as "holds through".
 
+Critic2 densities and Laplacians (`field`, `laplacian`) are tracked and listed in
+`bonds.csv` but raise events only with a threshold under
+`[events.descriptor_thresholds]`, and a warning says when they have none. The starter
+configuration leaves them commented out, with the values in `examples/hcn-hnc`. On that
+example they take the events from 10 to 20: all ten new ones cross the Laplacian
+threshold, two also cross the density threshold, and five are on the C–N bond, whose
+length the scan holds fixed. Check what they flag before relying on them.
+
 Events compare adjacent frames only. `track_summary.csv`, `track_summary` in
 `analysis.json`, and the report's whole-path table give one row per feature track:
 its first and last frames, whether it spans the path, and the net change, max − min,

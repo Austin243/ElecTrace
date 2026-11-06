@@ -259,6 +259,29 @@ def _missing_descriptor_warnings(gaps: Iterable[Mapping[str, Any]]) -> list[str]
     return warnings
 
 
+def _untracked_density_warnings(sequence: Sequence, thresholds: Mapping[str, float]) -> list[str]:
+    """Say when critic2 density or Laplacian values exist but no threshold can flag them."""
+
+    examples = {"field": "field = 0.05", "laplacian": "laplacian = 0.25"}
+    unset = [
+        name
+        for name in examples
+        if name not in thresholds
+        and any(
+            _as_finite_float(item.attributes.get(name)) is not None
+            for frame in sequence.frames
+            for item in frame.features
+        )
+    ]
+    if not unset:
+        return []
+    return [
+        f"{' and '.join(unset)} values are in bonds.csv and the tracks but raise no events, "
+        "because [events.descriptor_thresholds] sets no threshold for them. To flag their "
+        f"changes, add a threshold there, for example {' and '.join(examples[n] for n in unset)}."
+    ]
+
+
 def _observation(
     track_id: str,
     frame: Frame,
@@ -643,6 +666,7 @@ def analyze_sequence(
         )
     warnings.extend(_missing_descriptor_warnings(tracking.descriptor_gaps))
     warnings.extend(count_warnings)
+    warnings.extend(_untracked_density_warnings(sequence, config.events.descriptor_thresholds))
     spin_frames = {
         frame.label
         for frame in sequence.frames

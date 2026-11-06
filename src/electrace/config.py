@@ -496,6 +496,10 @@ bond_order = 0.1
 elf = 0.1
 oxidation_state = 0.5
 # spin = 0.1 # per-atom spin population from spin/ACF.dat (ISPIN = 2 runs)
+# critic2 values at critical points (a.u.) raise events only with a threshold here, and
+# a warning says when they have none. These are the values in examples/hcn-hnc:
+# field = 0.05
+# laplacian = 0.25
 
 # Leave births, deaths, and connectivity changes of weak critical points out of the
 # reported events (critic2 field, a.u.). Weak intermolecular contacts are near

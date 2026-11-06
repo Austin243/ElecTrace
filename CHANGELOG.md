@@ -294,3 +294,8 @@ These change results on inputs that used to run without complaint.
   `frame_after` to the end of the event's lineage, so a change on step 04→05 read
   "frame 5→6" while the same report's track table said 04→05, and it mixed frame
   indices with labels. Property-change and rearrangement badges now have a color.
+- A warning says when critic2 `field` or `laplacian` values exist but
+  `[events.descriptor_thresholds]` has no threshold for them, so that their changes raise
+  no events, and the starter configuration shows the two lines, commented out. No
+  thresholds or events change: the HCN frames under a starter configuration still give
+  10 events, and 20 with the two lines added.
