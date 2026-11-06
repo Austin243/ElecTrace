@@ -239,36 +239,40 @@
 
 These change results on inputs that used to run without complaint.
 
-- Frame order no longer changes silently. Frames keep the natural order of their
-  directory names unless `series_kind = "pressure"` asks for pressure order or every
-  name states a pressure. Before, a series with an `external pressure` line in every
-  `OUTCAR` was sorted by that residual stress and called a pressure series, which also
-  removed its barrier labels. This happened under `auto` for non-numeric names, under
-  `static` and `ordered` for any names, and in `workflow analyze` whenever an `OUTCAR`
-  was collected as the ZVAL source, whatever the manifest said. On the HCN example's
-  frames named `image_0` to `image_6`, with stresses added, the order was 1, 6, 5, 0,
-  4, 2, 3, with 19 events and no barrier; it is now 0 to 6, with 10 events and the
-  barrier at frame 3, as with numeric names. `analyze` and `workflow analyze` print
-  the frame order and the text of every warning, and a warning says when the order
-  differs from the names' order or when numbers in the names do not set it (`IS`,
-  `TS`, `FS` still come out as `FS`, `IS`, `TS`; number such directories to set the
-  order). `workflow validate` and `workflow stage` give the same warning. A series
-  whose pressures appear only in `OUTCAR` now needs `series_kind = "pressure"`, and a
-  series named by pressure stays one under `auto` and `ordered`. Numeric directories
-  under `auto` or `neb` are unaffected. `discover_static_series` takes `mode` in place
-  of `require_pressure`.
+- Frame order no longer changes silently. Frames keep the natural order of their directory
+  names unless `series_kind = "pressure"` asks for pressure order or every name states a
+  pressure. Before, a series with an `external pressure` line in every `OUTCAR` was
+  sorted by that residual stress and called a pressure series, which also removed its
+  barrier labels. This happened under `auto` for non-numeric names, under `static` and
+  `ordered` for any names, and in `workflow analyze` whenever an `OUTCAR` was collected
+  as the ZVAL source, whatever the manifest said. On the HCN example's frames named
+  `image_0` to `image_6`, with stresses added, the order was 1, 6, 5, 0, 4, 2, 3, with
+  19 events and no barrier; it is now 0 to 6, with 10 events and the barrier at frame 3,
+  as with numeric names. `analyze` and `workflow analyze` print the frame order and the
+  text of every warning, and a warning says when the order differs from the names' order
+  or when numbers in the names do not set it (`IS`, `TS`, `FS` still come out as `FS`,
+  `IS`, `TS`; number such directories to set the order). `workflow validate` and
+  `workflow stage` give the same warning, and `workflow analyze` repeats it in its
+  results. A series whose pressures appear only in `OUTCAR` now needs `series_kind =
+  "pressure"`, and a series named by pressure stays one under `auto` and `ordered`,
+  where repeated pressures still stop it. A workflow with `series_kind: pressure` stays
+  a pressure series when its names or a collected `OUTCAR` show the pressures. Numeric
+  directories under `auto` or `neb` are unaffected. `discover_static_series` takes
+  `mode` in place of `require_pressure`.
 - A descriptor file missing from some frames no longer gives false births and deaths.
   Removing `03/ACF.dat` from the HCN example gave 3 deaths and 3 births at confidence
-  0.75, confirmed, and no warning named the file; a charge change on the step before
-  the gap also lost half its confidence and was marked transient, as if it had
-  reverted. Those births and deaths are now left out of events and counted in
-  `missing_descriptors` in `analysis.json`, a warning names the producer, the file,
-  and the frames, the report says so above its timeline and stops marking bonds as
-  beginning or ending beside the gap, and an event whose persistence the gap cuts
-  short is `right_censored`. The features are unknown in those frames, not absent, so
-  the tracks still stop and restart there and a change across the gap is not reported.
-  A producer present in both frames of a step still reports its births and deaths, and
-  a run with no gap is unchanged. A frame's critic2 warning is replaced by the general
+  0.75, confirmed, and no warning named the file; a charge change on the step before the
+  gap also lost half its confidence and was marked transient, as if it had reverted.
+  Those births and deaths are now left out of events and counted in
+  `missing_descriptors` in `analysis.json`, a warning names the producer, the file, and
+  the frames, the report says so above its timeline and stops marking bonds as beginning
+  or ending beside the gap, and an event whose persistence the gap cuts short, including
+  a real death just before the gap, is `right_censored`. An output is a producer,
+  whatever its files are called, with LOBSTER's two lists apart, so changing file layout
+  along a path is not a gap. The features are unknown in those frames, not absent, so
+  the tracks still stop and restart there and a change across the gap is not reported. A
+  producer present in both frames of a step still reports its births and deaths, and a
+  run with no gap is unchanged. A frame's critic2 warning is replaced by the general
   one. `missing_descriptors` is a new optional key under the same schema version.
 - `incar_overrides` no longer damages an `INCAR`. An override replaced the whole line
   whose first statement it named, so `ENCUT = 520; ISPIN = 2` with an `ENCUT` override
@@ -276,28 +280,30 @@ These change results on inputs that used to run without complaint.
   on a line (`ISPIN = 2; ENCUT = 520` kept 520 and added a second `ENCUT` at the end),
   left repeats of a tag unchanged, and left the continuation lines of a replaced
   `MAGMOM` behind. Each statement is now set in place, with every repeat, and other
-  tags, continuation lines, quoted values, and comments stay as written. Lines holding
-  one statement come out as before. Workflows staged earlier from templates with
+  tags, continuation lines, quoted values, and comments stay as written. A tag inside a
+  nested `{ }` block is a different tag and stays, so an override of a tag found only
+  there is now added at the top level rather than rewriting the block. Other lines
+  holding one statement come out as before. Workflows staged earlier from templates with
   semicolons or repeated tags should have their staged `INCAR` files checked.
 - A stray numeric directory such as `20261105123000` under a NEB root now stops with the
   usual "not contiguous" error instead of an uncaught `MemoryError` or `OverflowError`.
   Gaps of more than 100 images are given as ranges.
 - `workflow stage --force` no longer deletes results by itself. It stops when the
-  workspace holds files a fresh stage would not write, such as `OUTCAR`, `WAVECAR`, logs,
-  run and Slurm submission records, and collected analyses, and it names them; before,
-  it deleted them all and printed the normal "Staged" message, even under queued or
-  running jobs. `--force --discard-results` deletes them, and `--force` alone still
-  replaces a workspace where nothing ran. Removing a step or frame from the manifest
-  of an unrun workflow also asks for `--discard-results`, because its staged files
-  cannot be told from results.
+  workspace holds files a fresh stage would not write, such as `OUTCAR`, `WAVECAR`,
+  logs, run and Slurm submission records, and collected analyses, and it names them;
+  before, it deleted them all and printed the normal "Staged" message, even under queued
+  or running jobs. `--force --discard-results` deletes them, and `--force` alone still
+  replaces a workspace where nothing ran. Removing a step or frame from the manifest of
+  an unrun workflow also asks for `--discard-results`, because its staged files cannot
+  be told from results.
 - The report's timeline labels each event with the step it happened on. It showed
-  `frame_after` to the end of the event's lineage, so a change on step 04→05 read
-  "frame 5→6" while the same report's track table said 04→05, and it mixed frame
-  indices with labels. Property-change and rearrangement badges now have a color, and
-  the badge column fits them.
+  `frame_after` to the end of the event's lineage, so a change on step 04→05 read "frame
+  5→6" while the same report's track table said 04→05, and it mixed frame indices with
+  labels. Property-change and rearrangement badges now have a color, and the badge
+  column fits them.
 - A warning says when critic2 `field` or `laplacian` values exist but
-  `[events.descriptor_thresholds]` has no threshold for them, so that their changes raise
-  no events, and the starter configuration shows the two lines, commented out. No
+  `[events.descriptor_thresholds]` has no threshold for them, so that their changes
+  raise no events, and the starter configuration shows the two lines, commented out. No
   thresholds or events change: the HCN frames under a starter configuration still give
   10 events, and 20 with the two lines added.
 - `electrace inspect` prints warnings literally. It read square brackets as console

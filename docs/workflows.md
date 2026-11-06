@@ -42,6 +42,11 @@ names do not set it: `IS`, `TS`, and `FS` come out as `FS`, `IS`, `TS`, and no r
 tell. Name or link such directories `00`, `01`, ... to set the order. A pressure series
 places no event on a barrier.
 
+`workflow analyze` keeps the staged order and repeats any warning about it in its
+results. A workflow with `series_kind: pressure` stays a pressure series there only if
+the frames' names state their pressures or an `OUTCAR` is collected as their ZVAL source;
+otherwise its results say `static`.
+
 By default, atoms are re-matched at every step by element and minimum-image distance
 (`[matching] atom_identity = "geometric"`), with `max_atom_displacement` as the
 motion cutoff. For NEB images and other paths that keep one atom order, set
@@ -348,7 +353,9 @@ that only the missing output explains are left out of events and counted there. 
 features' tracks stop and restart at those frames, so a change across them is not
 reported, and an event whose persistence the gap cuts short is `right_censored`, as at
 the end of a path. A document with an empty feature list is not missing: it says the
-tool looked and found nothing.
+tool looked and found nothing. An output is a producer, whatever its files are called,
+and LOBSTER's two lists count separately. Two documents from one producer in a frame
+therefore count as one output, and losing one of them is not noticed.
 
 A LOBSTER list gives one bond feature per atom-pair row. Orbital-resolved rows,
 whose labels name an orbital (`Na1_3s`, `Fe1_3d_z^2`), split the atom-pair row above
@@ -544,7 +551,7 @@ workspace holds files a fresh stage would not write, such as job outputs, logs, 
 Slurm records, and collected analyses, and names them. `--force --discard-results`
 deletes them, including under queued or running jobs. Removing a step or frame from the
 manifest also asks for `--discard-results`, because its staged files cannot be told
-from results.
+from results. Hand edits to staged inputs are not kept.
 
 ## Supported calculation steps
 
@@ -568,11 +575,12 @@ earlier steps; see [All-electron density analysis](#all-electron-density-analysi
 Each step points to an executable entry and may declare a template directory,
 dependencies, expected outputs, environment variables, and plugin options. VASP
 templates normally provide `INCAR`, `KPOINTS`, and `POTCAR`; ElecTrace places the
-selected structure at `POSCAR`. A VASP step's `incar_overrides` sets a tag wherever the
-template states it, including on a line it shares with other tags (`ENCUT = 520;
-ISPIN = 2`) and in every repeat of the tag, and adds it at the end otherwise; all other
-tags and comments stay as written. Descriptor steps can consume files from dependency
-steps with `options.input_links`.
+selected structure at `POSCAR`. A VASP step's `incar_overrides` sets a tag wherever
+the template states it, including on a line it shares with other tags (`ENCUT = 520;
+ISPIN = 2`) and in every repeat of the tag, and adds it at the end otherwise; all
+other tags and comments stay as written. A tag inside a nested `{ }` block is a
+different tag and stays. Descriptor steps can consume files from dependency steps with
+`options.input_links`.
 
 VASP pairs `POSCAR` species with `POTCAR` entries by position, so validation and
 staging stop when a frame's species order differs from the template `POTCAR`'s

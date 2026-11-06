@@ -12,6 +12,7 @@ from typing import Any
 from electrace._files import publish_directory
 from electrace.config import EventSettings, MatchingSettings, OutputConfig, load_config
 from electrace.io.descriptors import NET_CHARGE_SOURCES, SPIN_DESCRIPTOR, load_descriptor
+from electrace.io.discovery import pressure_from_label, pressure_from_outcar
 from electrace.io.vasp import read_poscar
 from electrace.pipeline import AnalysisArtifacts, run_project
 
@@ -51,9 +52,25 @@ def _numeric_settings(settings: MatchingSettings | EventSettings) -> list[str]:
     ]
 
 
-def _render_config(staged: StagedWorkflow, final_root: Path) -> str:
+def _series_kind(staged: StagedWorkflow, collected_input: Path) -> str:
+    """Return the series kind for collected frames, whose labels number the staged order.
+
+    ``ordered`` keeps that order. A pressure workflow stays a pressure series, which no
+    barrier applies to, when its collected frames still show their pressures.
+    """
+
+    if staged.manifest.project.series_kind == "pressure" and all(
+        pressure_from_label(frame.analysis_label) is not None
+        or pressure_from_outcar(collected_input / frame.analysis_label / "OUTCAR") is not None
+        for frame in staged.frames
+    ):
+        return "pressure"
+    return "ordered"
+
+
+def _render_config(staged: StagedWorkflow, final_root: Path, series_kind: str) -> str:
     events, output = EventSettings(), OutputConfig()
-    metadata = {
+    metadata: dict[str, object] = {
         "collection_schema_version": COLLECTION_SCHEMA_VERSION,
         "collection_record": str(final_root / COLLECTION_RECORD),
         "workflow_manifest": str(staged.manifest_path),
@@ -64,10 +81,13 @@ def _render_config(staged: StagedWorkflow, final_root: Path) -> str:
         "workflow_frame_labels": [frame.label for frame in staged.frames],
         "workflow_analysis_labels": [frame.analysis_label for frame in staged.frames],
     }
+    if staged.warnings:
+        # Collected labels always number the order, so analysis cannot see the source names.
+        metadata["workflow_order_warnings"] = list(staged.warnings)
     lines = [
         "[project]",
         'name = "Collected ElecTrace workflow"',
-        'series_kind = "ordered"',
+        f"series_kind = {_toml_value(series_kind)}",
         "",
         "[inputs]",
         'root = "input"',
@@ -231,7 +251,10 @@ def collect_workflow_outputs(
                 written.append(destination)
 
         config_path = temporary / "electrace.toml"
-        config_path.write_text(_render_config(staged, final_root), encoding="utf-8", newline="\n")
+        series_kind = _series_kind(staged, temporary / "input")
+        config_path.write_text(
+            _render_config(staged, final_root, series_kind), encoding="utf-8", newline="\n"
+        )
         load_config(config_path)
         written.append(Path("electrace.toml"))
         marker = {

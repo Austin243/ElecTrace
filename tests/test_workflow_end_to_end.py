@@ -1,8 +1,10 @@
 import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
+from electrace.io.discovery import DiscoveryError
 from electrace.workflow.collection import analyze_collected_workflow, collect_workflow_outputs
 from electrace.workflow.operations import run_staged_workflow
 from electrace.workflow.staging import stage_workflow
@@ -128,3 +130,79 @@ def test_workflow_named_by_pressure_stays_a_pressure_series(tmp_path, workflow_m
     assert [frame["label"] for frame in analysis["frames"]] == ["000000-5GPa", "000001-10GPa"]
     assert analysis["project"]["series_kind"] == "pressure"
     assert analysis["barrier"]["frames"] == []
+
+
+_BADER_STEP = {
+    "id": "charges",
+    "kind": "bader",
+    "executable": "bader",
+    "options": {"input_links": {"CHGCAR": "source:structure"}},
+}
+
+
+def _bader_workflow(tmp_path, workflow_manifest, series_kind):
+    bader = _executable(
+        tmp_path / "bader.py",
+        "from pathlib import Path\n"
+        "Path('ACF.dat').write_text('# X Y Z CHARGE MIN DIST ATOMIC VOL\\n1 0 0 0 1.0 0 10\\n')\n",
+    )
+    manifest = workflow_manifest(executables={"bader": str(bader)}, steps=[_BADER_STEP])
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payload["project"]["series_kind"] = series_kind
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return manifest
+
+
+def test_pressure_workflow_read_from_outcar_stays_a_pressure_series(tmp_path, workflow_manifest):
+    manifest = _bader_workflow(tmp_path, workflow_manifest, "pressure")
+    for label, stress in (("00", 50.0), ("01", -50.0)):
+        (tmp_path / "images" / label / "OUTCAR").write_text(
+            f"  external pressure = {stress} kB  Pullay stress = 0.00 kB\n", encoding="utf-8"
+        )
+
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    analysis = analyze_collected_workflow(manifest).analysis
+
+    assert analysis["project"]["series_kind"] == "pressure"
+    assert [frame["label"] for frame in analysis["frames"]] == ["000000-01", "000001-00"]
+    assert analysis["barrier"]["frames"] == []
+
+
+def test_signed_pressure_names_that_collapse_in_labels_still_stop(tmp_path, workflow_manifest):
+    # A staged label loses the sign, so -5GPa and 5GPa both read as 5 GPa once collected.
+    manifest = _bader_workflow(tmp_path, workflow_manifest, "auto")
+    shutil.move(tmp_path / "images/00", tmp_path / "images/-5GPa")
+    shutil.move(tmp_path / "images/01", tmp_path / "images/5GPa")
+
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    with pytest.raises(DiscoveryError, match="duplicate pressure"):
+        analyze_collected_workflow(manifest)
+
+
+def test_order_warning_reaches_the_workflow_analysis(tmp_path, workflow_manifest):
+    manifest = _bader_workflow(tmp_path, workflow_manifest, "ordered")
+    shutil.move(tmp_path / "images/00", tmp_path / "images/IS")
+    shutil.move(tmp_path / "images/01", tmp_path / "images/FS")
+
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    artifacts = analyze_collected_workflow(manifest)
+
+    expected = "natural order of their names (FS, IS)"
+    assert any(expected in warning for warning in artifacts.analysis["warnings"])
+
+
+def test_numbered_workflow_collects_the_same_configuration(tmp_path, workflow_manifest):
+    """The counterexample: without an order warning the generated configuration gains nothing."""
+
+    manifest = _bader_workflow(tmp_path, workflow_manifest, "neb")
+
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    collected = collect_workflow_outputs(manifest)
+
+    text = collected.config_path.read_text(encoding="utf-8")
+    assert 'series_kind = "ordered"' in text
+    assert "order_warnings" not in text

@@ -247,6 +247,24 @@ def test_numbered_names_need_no_order_warning(tmp_path: Path, labels: list[str])
     assert found.warnings == ()
 
 
+@pytest.mark.parametrize("mode", ["auto", "ordered", "pressure"])
+def test_duplicate_pressures_stop_a_pressure_series(tmp_path: Path, mode: str) -> None:
+    for label in ("5GPa_a", "5GPa_b"):
+        _write_frame(tmp_path / label)
+
+    with pytest.raises(DiscoveryError, match="duplicate pressure"):
+        discover_path(tmp_path, mode=mode)
+
+
+def test_static_series_may_repeat_a_pressure_in_its_names(tmp_path: Path) -> None:
+    for label in ("5GPa_a", "5GPa_b"):
+        _write_frame(tmp_path / label)
+
+    found = discover_path(tmp_path, mode="static")
+
+    assert (_labels(found), found.kind) == (["5GPa_a", "5GPa_b"], "static")
+
+
 def test_neb_refuses_other_names_and_points_to_ordered(tmp_path: Path) -> None:
     for label in ("image_0", "image_1"):
         _write_frame(tmp_path / label)

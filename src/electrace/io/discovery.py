@@ -302,11 +302,12 @@ def discover_static_series(
     found.sort(key=lambda item: (_natural_key(item[0].name), item[0].name))
     names = [directory.name for directory, _, _ in found]
     warnings: list[str] = []
-    if mode == "pressure" or (mode == "auto" and names_state_pressure):
+    is_pressure = mode == "pressure" or (names_state_pressure and mode != "static")
+    pressures = [pressure for _, _, pressure in found]
+    if is_pressure and len(pressures) != len(set(pressures)):
+        raise DiscoveryError("pressure series contains duplicate pressure values")
+    if is_pressure and mode != "ordered":
         found.sort(key=lambda item: (item[2], _natural_key(item[0].name)))
-        pressures = [pressure for _, _, pressure in found]
-        if len(pressures) != len(set(pressures)):
-            raise DiscoveryError("pressure series contains duplicate pressure values")
         order = [directory.name for directory, _, _ in found]
         if order != names:
             warnings.append(
@@ -325,7 +326,6 @@ def discover_static_series(
         _frame_source(index, directory, structure, pressure)
         for index, (directory, structure, pressure) in enumerate(found)
     )
-    is_pressure = mode == "pressure" or (names_state_pressure and mode != "static")
     return DiscoveredPath(
         root=base,
         kind="pressure" if is_pressure else "static",
