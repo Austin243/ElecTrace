@@ -8,15 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from electrace.models import Atom, Frame
+from electrace.models import Atom, Frame, Matrix3, Vec3
 
 
 class VaspParseError(ValueError):
     """Raised when a VASP structure or scalar output is malformed."""
-
-
-Vector3 = tuple[float, float, float]
-Matrix3 = tuple[Vector3, Vector3, Vector3]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,38 +22,20 @@ class PoscarData:
     comment: str
     cell: Matrix3
     elements: tuple[str, ...]
-    fractional_positions: tuple[Vector3, ...]
+    fractional_positions: tuple[Vec3, ...]
     selective_dynamics: tuple[tuple[bool, bool, bool] | None, ...]
     coordinate_mode: str
-    symbols_inferred: bool = False
-    species: tuple[str, ...] = ()  # species-line labels, in file order
-    counts: tuple[int, ...] = ()  # atoms per species-line label
-
-    def __post_init__(self) -> None:
-        if not self.elements:
-            raise ValueError("POSCAR must contain at least one atom")
-        if len(self.elements) != len(self.fractional_positions):
-            raise ValueError("element and position counts do not match")
-        if len(self.selective_dynamics) != len(self.elements):
-            raise ValueError("selective-dynamics and atom counts do not match")
+    symbols_inferred: bool
+    species: tuple[str, ...]  # species-line labels, in file order
+    counts: tuple[int, ...]  # atoms per species-line label
 
 
-_TOTEN = re.compile(
-    r"free\s+energy\s+TOTEN\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)",
-    re.IGNORECASE,
-)
-_OSZICAR_E0 = re.compile(
-    r"\bE0=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)",
-    re.IGNORECASE,
-)
-_OSZICAR_F = re.compile(
-    r"(?:^|\s)F=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)",
-    re.IGNORECASE,
-)
+_NUMBER = r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)"
+_TOTEN = re.compile(rf"free\s+energy\s+TOTEN\s*=\s*{_NUMBER}", re.IGNORECASE)
+_OSZICAR_E0 = re.compile(rf"\bE0=\s*{_NUMBER}", re.IGNORECASE)
+_OSZICAR_F = re.compile(rf"(?:^|\s)F=\s*{_NUMBER}", re.IGNORECASE)
 _TITEL = re.compile(r"^\s*TITEL\s*=\s*\S+\s+(\S+)")
-_ZVAL = re.compile(
-    r"\bPOMASS\s*=[^;]*;\s*ZVAL\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?)"
-)
+_ZVAL = re.compile(rf"\bPOMASS\s*=[^;]*;\s*ZVAL\s*=\s*{_NUMBER}")
 _ELEMENT_SYMBOL = re.compile(r"[A-Z][a-z]?")
 
 
@@ -71,20 +49,25 @@ def _float(token: str, *, context: str) -> float:
     return value
 
 
-def _three_floats(line: str, *, context: str) -> Vector3:
+def _three_floats(line: str, *, context: str) -> Vec3:
     fields = line.split()
     if len(fields) < 3:
         raise VaspParseError(f"expected three numbers in {context}, got {line!r}")
     return tuple(_float(field, context=context) for field in fields[:3])  # type: ignore[return-value]
 
 
+def _cross(u: Vec3, v: Vec3) -> Vec3:
+    return (
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    )
+
+
 def _determinant(matrix: Matrix3) -> float:
     a, b, c = matrix
-    return (
-        a[0] * (b[1] * c[2] - b[2] * c[1])
-        - a[1] * (b[0] * c[2] - b[2] * c[0])
-        + a[2] * (b[0] * c[1] - b[1] * c[0])
-    )
+    bc = _cross(b, c)
+    return a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2]
 
 
 def _inverse(matrix: Matrix3) -> Matrix3:
@@ -92,32 +75,18 @@ def _inverse(matrix: Matrix3) -> Matrix3:
     determinant = _determinant(matrix)
     if abs(determinant) < 1.0e-14:
         raise VaspParseError("POSCAR lattice is singular")
-    inverse = (
-        (
-            (b[1] * c[2] - b[2] * c[1]) / determinant,
-            (a[2] * c[1] - a[1] * c[2]) / determinant,
-            (a[1] * b[2] - a[2] * b[1]) / determinant,
-        ),
-        (
-            (b[2] * c[0] - b[0] * c[2]) / determinant,
-            (a[0] * c[2] - a[2] * c[0]) / determinant,
-            (a[2] * b[0] - a[0] * b[2]) / determinant,
-        ),
-        (
-            (b[0] * c[1] - b[1] * c[0]) / determinant,
-            (a[1] * c[0] - a[0] * c[1]) / determinant,
-            (a[0] * b[1] - a[1] * b[0]) / determinant,
-        ),
-    )
-    return inverse
-
-
-def _row_vector_times_matrix(vector: Vector3, matrix: Matrix3) -> Vector3:
+    # The columns of the inverse are the reciprocal lattice vectors.
+    u, v, w = _cross(b, c), _cross(c, a), _cross(a, b)
     return (
-        sum(vector[row] * matrix[row][0] for row in range(3)),
-        sum(vector[row] * matrix[row][1] for row in range(3)),
-        sum(vector[row] * matrix[row][2] for row in range(3)),
+        (u[0] / determinant, v[0] / determinant, w[0] / determinant),
+        (u[1] / determinant, v[1] / determinant, w[1] / determinant),
+        (u[2] / determinant, v[2] / determinant, w[2] / determinant),
     )
+
+
+def _row_vector_times_matrix(vector: Vec3, matrix: Matrix3) -> Vec3:
+    x, y, z = (sum(vector[row] * matrix[row][axis] for row in range(3)) for axis in range(3))
+    return x, y, z
 
 
 def parse_poscar(path: str | Path) -> PoscarData:
@@ -149,24 +118,18 @@ def parse_poscar(path: str | Path) -> PoscarData:
     if raw_volume < 1.0e-14:
         raise VaspParseError("POSCAR lattice is singular")
 
-    coordinate_scale: Vector3
     if len(scales) == 1:
         scale = scales[0]
         if scale == 0.0:
             raise VaspParseError("POSCAR scale factor cannot be zero")
         if scale < 0.0:
             scale = (-scale / raw_volume) ** (1.0 / 3.0)
-        cell: Matrix3 = tuple(
-            tuple(component * scale for component in vector) for vector in raw_cell
-        )  # type: ignore[assignment]
-        coordinate_scale = (scale, scale, scale)
-    else:
-        if any(scale <= 0.0 for scale in scales):
-            raise VaspParseError("three POSCAR scale factors must all be positive")
-        cell = tuple(
-            tuple(raw_cell[row][axis] * scales[axis] for axis in range(3)) for row in range(3)
-        )  # type: ignore[assignment]
-        coordinate_scale = scales  # type: ignore[assignment]
+        scales = (scale, scale, scale)
+    elif any(scale <= 0.0 for scale in scales):
+        raise VaspParseError("three POSCAR scale factors must all be positive")
+    cell: Matrix3 = tuple(
+        tuple(raw_cell[row][axis] * scales[axis] for axis in range(3)) for row in range(3)
+    )  # type: ignore[assignment]
 
     symbol_or_count = lines[5].split()
     if not symbol_or_count:
@@ -178,8 +141,6 @@ def parse_poscar(path: str | Path) -> PoscarData:
     else:
         counts_line_index = 6
         symbols = symbol_or_count
-    if counts_line_index >= len(lines):
-        raise VaspParseError("POSCAR is missing atom counts")
     count_tokens = lines[counts_line_index].split()
     if len(count_tokens) != len(symbols):
         raise VaspParseError("POSCAR element symbol and count lengths differ")
@@ -194,8 +155,6 @@ def parse_poscar(path: str | Path) -> PoscarData:
     )
 
     cursor = counts_line_index + 1
-    if cursor >= len(lines):
-        raise VaspParseError("POSCAR is missing coordinate mode")
     has_selective = lines[cursor].strip().lower().startswith("s")
     if has_selective:
         cursor += 1
@@ -214,7 +173,7 @@ def parse_poscar(path: str | Path) -> PoscarData:
             f"POSCAR declares {len(elements)} atoms but has only {max(0, len(lines) - cursor)} coordinate lines"
         )
 
-    fractional: list[Vector3] = []
+    fractional: list[Vec3] = []
     selective: list[tuple[bool, bool, bool] | None] = []
     inverse_cell = _inverse(cell)
     for atom_index in range(len(elements)):
@@ -222,7 +181,7 @@ def parse_poscar(path: str | Path) -> PoscarData:
         position = _three_floats(line, context=f"atom {atom_index + 1} coordinates")
         fields = line.split()
         if coordinate_mode == "cartesian":
-            cartesian = tuple(position[axis] * coordinate_scale[axis] for axis in range(3))
+            cartesian = tuple(position[axis] * scales[axis] for axis in range(3))
             position = _row_vector_times_matrix(cartesian, inverse_cell)  # type: ignore[arg-type]
         fractional.append(position)
         if has_selective:
@@ -246,7 +205,7 @@ def parse_poscar(path: str | Path) -> PoscarData:
 
 
 def read_poscar(
-    path: str | Path,
+    source: Path,
     *,
     index: int = 0,
     label: str | None = None,
@@ -255,7 +214,6 @@ def read_poscar(
 ) -> Frame:
     """Read a POSCAR/CONTCAR directly into an ElecTrace ``Frame``."""
 
-    source = Path(path)
     data = parse_poscar(source)
     frame_metadata: dict[str, Any] = {
         "structure_source": str(source),
@@ -297,7 +255,7 @@ def element_symbol(label: str) -> str:
     return match.group(0) if match else label
 
 
-def read_vasp_zval(path: str | Path) -> tuple[tuple[str, float], ...]:
+def read_vasp_zval(source: Path) -> tuple[tuple[str, float], ...]:
     """Return the element and ZVAL of each entry in a POTCAR or OUTCAR, in file order.
 
     Each entry's ``TITEL`` line precedes its ``POMASS = ...; ZVAL = ...`` line in both
@@ -305,7 +263,6 @@ def read_vasp_zval(path: str | Path) -> tuple[tuple[str, float], ...]:
     POTCAR headers.
     """
 
-    source = Path(path)
     entries: list[tuple[str, float]] = []
     label: str | None = None
     try:
@@ -335,7 +292,7 @@ def read_vasp_zval(path: str | Path) -> tuple[tuple[str, float], ...]:
     return tuple(entries)
 
 
-def read_vasp_energy(path: str | Path) -> float | None:
+def read_vasp_energy(source: Path) -> float | None:
     """Extract a final electronic energy in eV from OUTCAR or OSZICAR.
 
     For OUTCAR the last ``free energy TOTEN`` value is returned.  For OSZICAR
@@ -344,9 +301,6 @@ def read_vasp_energy(path: str | Path) -> float | None:
     otherwise usable path unreadable.
     """
 
-    source = Path(path)
-    if not source.is_file():
-        return None
     patterns = (_OSZICAR_E0, _OSZICAR_F) if source.name.upper() == "OSZICAR" else (_TOTEN,)
     values: list[float | None] = [None] * len(patterns)
     try:

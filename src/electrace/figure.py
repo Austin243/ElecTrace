@@ -24,8 +24,8 @@ import numpy as np
 from electrace import __version__
 from electrace._files import atomic_output_path
 from electrace.bonds import _unwrapping_shifts
-from electrace.events import _as_finite_float
 from electrace.geometry import minimum_image_displacement
+from electrace.matching import _as_finite_float
 from electrace.models import Frame, Sequence
 
 if TYPE_CHECKING:
@@ -49,6 +49,10 @@ WIDTH = 3.42  # inches: one PNAS column, 8.7 cm
 # Open markers and colors after Sun et al., PNAS 120, e2218405120 (2023).
 COLORS = ("#e8251f", "#2e8b57", "#f28e1c", "#2747c8", "#8e44ad", "#00a3b4", "#8c564b", "#7f7f7f")
 MARKERS = ("o", "s", "^", "D", "v", "p", "h", "<")
+Style = dict[str, Any]
+# The energy profile, and the dashed line at each highest-energy frame.
+ENERGY: Style = {"color": "black", "marker": "o", "markersize": 3.6, "markerfacecolor": "black"}
+PEAK: Style = {"color": "0.45", "linewidth": 0.7, "linestyle": (0, (4, 2.5)), "zorder": 0.5}
 STYLE = {
     "font.family": "sans-serif",
     "font.sans-serif": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
@@ -79,9 +83,6 @@ STYLE = {
     "svg.hashsalt": "electrace",
 }
 
-_ATOM = re.compile(r"([A-Z][a-z]?)?(\d+)")
-_BOND_ID = re.compile(r"B\d+")
-
 
 @dataclass(slots=True)
 class _Series:
@@ -107,7 +108,7 @@ def _common_elements(frames: list[Frame]) -> dict[int, str]:
 
 
 def _atom(token: str, elements: Mapping[int, str]) -> int:
-    match = _ATOM.fullmatch(token.strip())
+    match = re.fullmatch(r"([A-Z][a-z]?)?(\d+)", token.strip())
     if match is None:
         raise ValueError(f"cannot read atom {token!r}: give a 0-based index such as 41 or C41")
     symbol, index = match.group(1), int(match.group(2))
@@ -120,7 +121,7 @@ def _atom(token: str, elements: Mapping[int, str]) -> int:
 
 def _bond(token: str, elements: Mapping[int, str]) -> tuple[int, int] | str:
     text = token.strip()
-    if _BOND_ID.fullmatch(text):
+    if re.fullmatch(r"B\d+", text):
         return text
     parts = re.split(r"[-–—]", text)
     if len(parts) != 2:
@@ -269,13 +270,10 @@ def _bond_series(
                     f"{name}: the bond row of frame {row['frame_label']} gives distance "
                     f"{given} Å, but the frame geometry gives {computed:.6f} Å."
                 )
-        rho, extras = _per_frame(
-            (
-                (position.get(int(row["frame"])), _as_finite_float(row.get("field")))
-                for row in members
-            ),
-            len(frames),
-        )
+        densities = [
+            (position[int(row["frame"])], _as_finite_float(row.get("field"))) for row in members
+        ]
+        rho, extras = _per_frame(densities, len(frames))
         if extras:
             warnings.append(
                 f"{name} has several bond rows with a density in frame(s) "
@@ -287,14 +285,13 @@ def _bond_series(
                 f"The bond rows of {name} carry no critical-point density (`field`), so "
                 "only its distance is drawn."
             )
-        with_rows = sorted({position[int(row["frame"])] for row in members})
         series.append(
             _Series(
                 label=name,
                 record={
                     "bond_id": bond_id,
                     "atoms": [first, second],
-                    "frames_with_rows": [labels[at] for at in with_rows],
+                    "frames_with_rows": [labels[at] for at in sorted({at for at, _ in densities})],
                 },
                 values={"rho": rho, "distance": distances},
                 extras={"rho": extras},
@@ -433,9 +430,7 @@ def _marked_on(event: Mapping[str, Any], kind: str) -> list[str]:
     return marked + (["spin"] if "spin" in changed else [])
 
 
-def _attach_events(
-    series: Mapping[str, list[_Series]], events: Iterable[Mapping[str, Any]]
-) -> None:
+def _attach_events(series: dict[str, list[_Series]], events: Iterable[Mapping[str, Any]]) -> None:
     """Give each series the events whose source or target feature is one of its own."""
 
     owners: dict[tuple[int, str], list[tuple[str, _Series]]] = {}
@@ -474,10 +469,10 @@ def write_path_figure(
     analysis: Mapping[str, Any],
     output: str | Path,
     *,
-    bonds: Iterable[str] = (),
-    atoms: Iterable[str] = (),
-    limits: Mapping[str, tuple[float, float]] | None = None,
-    overwrite: bool = False,
+    bonds: Iterable[str],
+    atoms: Iterable[str],
+    limits: Mapping[str, tuple[float, float]],
+    overwrite: bool,
 ) -> dict[str, Any]:
     """Draw *analysis* as a path figure and write it as PDF, SVG, and a 600 dpi PNG.
 
@@ -555,18 +550,8 @@ def write_path_figure(
             "none of the chosen bonds or atoms has values in this analysis. " + " ".join(warnings)
         )
 
-    _render(
-        paths,
-        groups,
-        labels,
-        str((analysis.get("project") or {}).get("series_kind", "")),
-        energy,
-        peaks,
-        barrier,
-        series,
-        position,
-        dict(limits or {}),
-    )
+    series_kind = str((analysis.get("project") or {}).get("series_kind", ""))
+    _render(paths, groups, labels, series_kind, energy, peaks, barrier, series, position, limits)
 
     def record(item: _Series, quantities: Mapping[str, str]) -> dict[str, Any]:
         return {
@@ -640,7 +625,7 @@ def _render(
         return shown[number] if abs(value - number) < 1e-9 and 0 <= number < count else ""
 
     # Bonds and atoms never share a color; each group starts its own marker cycle.
-    styles: dict[str, list[dict[str, Any]]] = {
+    styles: dict[str, list[Style]] = {
         kind: [
             {
                 "color": COLORS[(start + number) % len(COLORS)],
@@ -665,15 +650,7 @@ def _render(
             axes[name] = figure.add_subplot(grid[row], sharex=axes[names[0]] if row else None)
         for name, ax in axes.items():
             if name == "energy" and energy is not None:
-                ax.plot(
-                    x,
-                    energy,
-                    color="black",
-                    marker="o",
-                    markersize=3.6,
-                    markerfacecolor="black",
-                    gid="energy",
-                )
+                ax.plot(x, energy, gid="energy", **ENERGY)
             kind = OWNER.get(name, "")
             for item, style in zip(series.get(kind, []), styles.get(kind, []), strict=True):
                 values = item.values[name]
@@ -711,14 +688,7 @@ def _render(
             if name == "spin":
                 ax.axhline(0.0, color="0.6", linewidth=0.5, linestyle=(0, (1, 1.5)), zorder=0.5)
             for peak in peaks:
-                ax.axvline(
-                    peak,
-                    color="0.45",
-                    linewidth=0.7,
-                    linestyle=(0, (4, 2.5)),
-                    zorder=0.5,
-                    gid="peak",
-                )
+                ax.axvline(peak, gid="peak", **PEAK)
             ax.set_ylabel(AXIS_LABELS[name])
             ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10]))
             ax.xaxis.set_major_locator(FixedLocator(list(range(0, count, step))))

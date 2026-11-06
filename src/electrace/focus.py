@@ -7,7 +7,7 @@ assignment, threshold, event, or confidence depends on them.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import combinations_with_replacement, pairwise
 from typing import Any
@@ -15,12 +15,12 @@ from typing import Any
 import numpy as np
 
 from electrace.config import bond_pair
-from electrace.events import _as_finite_float, critical_point_fields, weak_critical_point_kind
+from electrace.events import critical_point_fields, weak_critical_point_kind
+from electrace.matching import _as_finite_float
 from electrace.models import Event, EventType, FeatureKind, Frame, Sequence
 
-FOCUS_RULES = ("bond", "spin", "bcp")
 NOISE_QUANTITIES = ("charge", "volume", "spin")
-_PERCENTILES = (("median", 50.0), ("p95", 95.0), ("p99", 99.0))
+_PERCENTILES = {"median": 50.0, "p95": 95.0, "p99": 99.0}
 
 Observation = Mapping[str, Any]
 
@@ -49,7 +49,7 @@ def check_atom_order(
             )
 
 
-def _value(observation: Observation, quantity: str) -> float | None:
+def track_value(observation: Observation, quantity: str) -> float | None:
     if quantity in ("charge", "volume"):
         return _as_finite_float(observation[quantity])
     return _as_finite_float(observation["attributes"].get(quantity))
@@ -70,7 +70,7 @@ def _elements(sequence: Sequence) -> dict[tuple[int, int], str]:
     }
 
 
-def _lineages(tracks: Iterable[Observation]) -> dict[str, list[Observation]]:
+def track_lineages(tracks: Iterable[Observation]) -> dict[str, list[Observation]]:
     lineages: dict[str, list[Observation]] = {}
     # Tracks are emitted frame by frame, so each lineage is in path order.
     for observation in tracks:
@@ -78,17 +78,13 @@ def _lineages(tracks: Iterable[Observation]) -> dict[str, list[Observation]]:
     return lineages
 
 
-def _atom_steps(
-    observations: list[Observation], position: Mapping[int, int]
-) -> list[tuple[Observation, Observation]]:
-    """Consecutive atom-charge observations of one lineage in adjacent frames."""
+def _atom_steps(observations: list[Observation]) -> list[tuple[Observation, Observation]]:
+    """Consecutive atom-charge observations of one lineage, which never skips a frame."""
 
     return [
         (before, after)
         for before, after in pairwise(observations)
-        if position[after["frame"]] == position[before["frame"]] + 1
-        and _is_atom(before)
-        and _is_atom(after)
+        if _is_atom(before) and _is_atom(after)
     ]
 
 
@@ -142,12 +138,12 @@ def _bonds(
 
 def select_focus_atoms(
     sequence: Sequence,
-    tracks: Iterable[Observation],
+    tracks: Collection[Observation],
     events: Iterable[Event],
     *,
     bond_cutoffs: Mapping[str, float],
     spin_threshold: float | None,
-    critical_point_min_field: Mapping[str, float] | None = None,
+    critical_point_min_field: Mapping[str, float],
 ) -> AutoFocus:
     """Select the atoms whose bonds, spin, or bond-critical-point neighbors change.
 
@@ -161,17 +157,12 @@ def select_focus_atoms(
       below it in both frames, a weak contact, is ignored.
     """
 
-    position = {frame.index: number for number, frame in enumerate(sequence.frames)}
-    lineages = _lineages(tracks)
     selection = AutoFocus()
     chosen: dict[str, set[int]] = {}
 
-    graphs: list[set[tuple[int, int]]] = []
-    missing: set[str] = set()
-    for frame in sequence.frames:
-        bonds, absent = _bonds(frame, bond_cutoffs)
-        graphs.append(bonds)
-        missing |= absent
+    found = [_bonds(frame, bond_cutoffs) for frame in sequence.frames]
+    graphs = [bonds for bonds, _ in found]
+    missing = set().union(*(absent for _, absent in found))
     changed = graphs[0].union(*graphs[1:]) - graphs[0].intersection(*graphs[1:])
     chosen["bond"] = {atom for pair in changed for atom in pair}
     selection.records["bond"] = {
@@ -185,8 +176,9 @@ def select_focus_atoms(
             "those bonds were not compared; set them under [outputs.focus_bond_cutoffs]."
         )
 
+    lineages = track_lineages(tracks)
     has_spin = any(
-        _is_atom(item) and _value(item, "spin") is not None
+        _is_atom(item) and track_value(item, "spin") is not None
         for observations in lineages.values()
         for item in observations
     )
@@ -210,22 +202,18 @@ def select_focus_atoms(
         selection.records["spin"] = {"applied": True, "threshold": spin_threshold}
         chosen["spin"] = set()
         for observations in lineages.values():
-            for before, after in _atom_steps(observations, position):
-                left, right = _value(before, "spin"), _value(after, "spin")
+            for before, after in _atom_steps(observations):
+                left, right = track_value(before, "spin"), track_value(after, "spin")
                 if left is not None and right is not None and abs(right - left) >= spin_threshold:
                     chosen["spin"].update(
                         before["neighbor_atom_indices"], after["neighbor_atom_indices"]
                     )
 
-    if any(
-        feature.kind == FeatureKind.BOND_CRITICAL_POINT
-        for frame in sequence.frames
-        for feature in frame.features
-    ):
+    kinds = {feature.kind for frame in sequence.frames for feature in frame.features}
+    if FeatureKind.BOND_CRITICAL_POINT in kinds:
         changes = [item for item in events if item.event_type is EventType.CONNECTIVITY_CHANGE]
-        cutoffs = dict(critical_point_min_field or {})
-        ignored = 0
-        if FeatureKind.BOND_CRITICAL_POINT.value in cutoffs:
+        weak: dict[str, Any] = {}
+        if FeatureKind.BOND_CRITICAL_POINT.value in critical_point_min_field:
             fields = critical_point_fields(sequence)
             strong = [
                 item
@@ -237,21 +225,21 @@ def select_focus_atoms(
                     item.source_ids,
                     item.target_ids,
                     fields,
-                    cutoffs,
+                    critical_point_min_field,
                 )
                 is None
             ]
-            ignored = len(changes) - len(strong)
+            weak = {
+                "min_field": critical_point_min_field[FeatureKind.BOND_CRITICAL_POINT.value],
+                "weak_changes_ignored": len(changes) - len(strong),
+            }
             changes = strong
         chosen["bcp"] = {
             int(atom["index"])
             for item in changes
             for atom in (*item.evidence["neighbors_before"], *item.evidence["neighbors_after"])
         }
-        selection.records["bcp"] = {"applied": True, "connectivity_changes": len(changes)}
-        if FeatureKind.BOND_CRITICAL_POINT.value in cutoffs:
-            selection.records["bcp"]["min_field"] = cutoffs[FeatureKind.BOND_CRITICAL_POINT.value]
-            selection.records["bcp"]["weak_changes_ignored"] = ignored
+        selection.records["bcp"] = {"applied": True, "connectivity_changes": len(changes), **weak}
     else:
         selection.records["bcp"] = {
             "applied": False,
@@ -259,8 +247,8 @@ def select_focus_atoms(
             "reason": "No bond critical points in any frame.",
         }
 
-    for rule in FOCUS_RULES:
-        for atom in chosen.get(rule, ()):
+    for rule, atoms in chosen.items():
+        for atom in atoms:
             selection.rules.setdefault(atom, []).append(rule)
     selection.rules = dict(sorted(selection.rules.items()))
     if not selection.rules:
@@ -294,6 +282,13 @@ def auto_focus_record(
     }
 
 
+def ratio_to_floor(delta: float, entry: Mapping[str, Any]) -> dict[str, float | None]:
+    """Give |delta| as multiples of each floor percentile."""
+
+    # A zero percentile (a closed-shell spin floor) has no finite ratio.
+    return {name: abs(delta) / entry[name] if entry[name] > 0 else None for name in _PERCENTILES}
+
+
 def noise_floor(
     sequence: Sequence, tracks: Iterable[Observation], focus_atoms: Iterable[int]
 ) -> list[dict[str, Any]]:
@@ -305,18 +300,17 @@ def noise_floor(
     """
 
     focus = set(focus_atoms)
-    position = {frame.index: number for number, frame in enumerate(sequence.frames)}
     elements = _elements(sequence)
     steps: dict[tuple[str | None, str, str], list[float]] = {}
     atoms: dict[tuple[str | None, str, str], set[int]] = {}
-    for observations in _lineages(tracks).values():
+    for observations in track_lineages(tracks).values():
         if any(focus.intersection(item["neighbor_atom_indices"]) for item in observations):
             continue
-        for before, after in _atom_steps(observations, position):
+        for before, after in _atom_steps(observations):
             atom = after["neighbor_atom_indices"][0]
             producer = after["attributes"].get("descriptor_producer")
             for quantity in NOISE_QUANTITIES:
-                left, right = _value(before, quantity), _value(after, quantity)
+                left, right = track_value(before, quantity), track_value(after, quantity)
                 if left is None or right is None:
                     continue
                 key = (producer, elements[after["frame"], atom], quantity)
@@ -325,7 +319,7 @@ def noise_floor(
     entries = []
     for key in sorted(steps, key=lambda k: (k[0] or "", k[1], NOISE_QUANTITIES.index(k[2]))):
         producer, element, quantity = key
-        values = np.percentile(steps[key], [percentile for _, percentile in _PERCENTILES])
+        values = np.percentile(steps[key], list(_PERCENTILES.values()))
         entries.append(
             {
                 "producer": producer,
@@ -333,10 +327,7 @@ def noise_floor(
                 "quantity": quantity,
                 "atoms": len(atoms[key]),
                 "steps": len(steps[key]),
-                **{
-                    name: float(value)
-                    for (name, _), value in zip(_PERCENTILES, values, strict=True)
-                },
+                **dict(zip(_PERCENTILES, values.tolist(), strict=True)),
             }
         )
     return entries
@@ -378,17 +369,10 @@ def annotate_events(
         changes: dict[str, Any] = {}
         for quantity in NOISE_QUANTITIES:
             entry = entries.get((producer, element, quantity))
-            left, right = _value(before, quantity), _value(after, quantity)
+            left, right = track_value(before, quantity), track_value(after, quantity)
             if not flagged[quantity] or entry is None or left is None or right is None:
                 continue
             delta = right - left
-            changes[quantity] = {
-                "delta": delta,
-                # A zero percentile (a closed-shell spin floor) has no finite ratio.
-                "ratio_to_floor": {
-                    name: abs(delta) / entry[name] if entry[name] > 0 else None
-                    for name, _ in _PERCENTILES
-                },
-            }
+            changes[quantity] = {"delta": delta, "ratio_to_floor": ratio_to_floor(delta, entry)}
         if changes:
             event["noise_floor"] = {"element": element, "producer": producer, "changes": changes}

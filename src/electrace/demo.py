@@ -28,9 +28,9 @@ def _feature(
     kind: str,
     x: float,
     *,
-    charge: float | None,
-    volume: float | None,
     neighbors: list[int],
+    charge: float | None = None,
+    volume: float | None = None,
     **attributes: Any,
 ) -> dict[str, Any]:
     return {
@@ -44,7 +44,7 @@ def _feature(
     }
 
 
-def generate_demo(root: str | Path, *, overwrite: bool = False) -> Path:
+def generate_demo(destination: Path, *, overwrite: bool = False) -> Path:
     """Generate a six-frame synthetic path with known electronic events.
 
     The data are a software integration fixture, not a physical DFT result. Two
@@ -53,7 +53,6 @@ def generate_demo(root: str | Path, *, overwrite: bool = False) -> Path:
     deliberately changed so successful tracking cannot rely on string identity.
     """
 
-    destination = Path(root)
     if destination.exists() and any(destination.iterdir()) and not overwrite:
         raise FileExistsError(f"Demo destination is not empty: {destination}")
     destination.mkdir(parents=True, exist_ok=True)
@@ -123,8 +122,6 @@ def generate_demo(root: str | Path, *, overwrite: bool = False) -> Path:
                     f"bcp-local-{index}",
                     "bond_critical_point",
                     (c_x + n_x) / 2,
-                    charge=None,
-                    volume=None,
                     neighbors=[0, 1],
                     rho=0.06 + 0.025 * (index - 2),
                     laplacian=0.18 - 0.07 * (index - 2),

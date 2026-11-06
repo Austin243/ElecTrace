@@ -9,6 +9,7 @@ with a compact consecutive-lineage persistence classification.
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from collections.abc import Sequence as TypingSequence
 from dataclasses import dataclass, field, replace
@@ -20,6 +21,7 @@ import numpy as np
 from .matching import (
     AtomMatchConfig,
     FeatureMatchConfig,
+    _as_finite_float,
     match_atoms,
     match_features,
 )
@@ -34,7 +36,6 @@ from .models import (
     MatchResult,
     Sequence,
     TrackingResult,
-    ensure_sequence,
 )
 
 
@@ -54,37 +55,6 @@ class EventDetectionConfig:
     )
     min_event_confidence: float = 0.1
     min_persistence: int = 2
-    include_transient: bool = True
-
-    def __post_init__(self) -> None:
-        for name in (
-            "charge_change_threshold",
-            "volume_relative_threshold",
-        ):
-            value = float(getattr(self, name))
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive")
-            setattr(self, name, value)
-        self.min_event_confidence = float(self.min_event_confidence)
-        if (
-            not math.isfinite(self.min_event_confidence)
-            or not 0.0 <= self.min_event_confidence <= 1.0
-        ):
-            raise ValueError("min_event_confidence must lie in [0, 1]")
-        self.min_persistence = int(self.min_persistence)
-        if self.min_persistence < 1:
-            raise ValueError("min_persistence must be at least one")
-        self.descriptor_thresholds = {
-            str(key): _positive(value, f"descriptor threshold {key!r}")
-            for key, value in self.descriptor_thresholds.items()
-        }
-
-
-def _positive(value: float, name: str) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0:
-        raise ValueError(f"{name} must be finite and positive")
-    return result
 
 
 def _feature_quality(features: TypingSequence[Feature]) -> tuple[float, list[str]]:
@@ -94,40 +64,19 @@ def _feature_quality(features: TypingSequence[Feature]) -> tuple[float, list[str
         if feature.attributes.get("grid_converged") is False:
             factor *= 0.7
             notes.append(f"{feature.id}: grid_refinement_failed")
-        uncertainty = feature.attributes.get("uncertainty")
-        uncertainty_value = _as_finite_float(uncertainty)
+        uncertainty_value = _as_finite_float(feature.attributes.get("uncertainty"))
         if uncertainty_value is not None:
             factor *= 1.0 - min(1.0, max(0.0, uncertainty_value))
             notes.append(f"{feature.id}: uncertainty={uncertainty_value:g}")
     return float(max(0.0, min(1.0, factor))), notes
 
 
-def _event_description(
-    event_type: EventType,
-    source_ids: TypingSequence[str],
-    target_ids: TypingSequence[str],
-) -> str:
-    if event_type is EventType.BIRTH:
-        return f"Feature {target_ids[0]} appears."
-    if event_type is EventType.DEATH:
-        return f"Feature {source_ids[0]} disappears."
-    if event_type is EventType.SPLIT:
-        return f"Feature {source_ids[0]} splits into {', '.join(target_ids)}."
-    if event_type is EventType.MERGE:
-        return f"Features {', '.join(source_ids)} merge into {target_ids[0]}."
-    if event_type is EventType.REARRANGEMENT:
-        return f"Features {', '.join(source_ids)} rearrange into {', '.join(target_ids)}."
-    return f"Feature {source_ids[0]} changes electronic descriptors."
-
-
-def _edge_event_type(edge: MatchEdge) -> EventType | None:
-    if edge.relation is MatchRelation.SPLIT:
-        return EventType.SPLIT
-    if edge.relation is MatchRelation.MERGE:
-        return EventType.MERGE
-    if edge.relation is MatchRelation.MANY_TO_MANY:
-        return EventType.REARRANGEMENT
-    return None
+# The event type and description of each match relation other than one-to-one.
+_HYPEREDGE_EVENTS = {
+    MatchRelation.SPLIT: (EventType.SPLIT, "Feature {} splits into {}."),
+    MatchRelation.MERGE: (EventType.MERGE, "Features {} merge into {}."),
+    MatchRelation.MANY_TO_MANY: (EventType.REARRANGEMENT, "Features {} rearrange into {}."),
+}
 
 
 def _property_change_event(
@@ -156,10 +105,8 @@ def _property_change_event(
             severities.append(relative / config.volume_relative_threshold)
     descriptor_changes: dict[str, dict[str, float]] = {}
     for key, threshold in config.descriptor_thresholds.items():
-        left = source.attributes.get(key)
-        right = target.attributes.get(key)
-        left_value = _as_finite_float(left)
-        right_value = _as_finite_float(right)
+        left_value = _as_finite_float(source.attributes.get(key))
+        right_value = _as_finite_float(target.attributes.get(key))
         if left_value is None or right_value is None:
             continue
         delta = right_value - left_value
@@ -195,15 +142,8 @@ def _property_change_event(
         target_ids=(target.id,),
         confidence=confidence,
         evidence=evidence,
-        description=_event_description(EventType.PROPERTY_CHANGE, (source.id,), (target.id,)),
+        description=f"Feature {source.id} changes electronic descriptors.",
     )
-
-
-def _as_finite_float(value: Any) -> float | None:
-    if not isinstance(value, (int, float, np.integer, np.floating)):
-        return None
-    result = float(value)
-    return result if math.isfinite(result) else None
 
 
 # The critical-point kinds that [events.critical_point_min_field] can name.
@@ -221,13 +161,10 @@ def critical_point_fields(sequence: Sequence) -> dict[tuple[int, str], tuple[str
     """Map (frame index, feature ID) to the kind and density of each critical point."""
 
     return {
-        (frame.index, str(feature.id)): (
-            str(feature.kind),
-            _as_finite_float(feature.attributes.get("field")),
-        )
+        (frame.index, feature.id): (feature.kind, _as_finite_float(feature.attributes.get("field")))
         for frame in sequence.frames
         for feature in frame.features
-        if str(feature.kind) in CRITICAL_POINT_KINDS
+        if feature.kind in CRITICAL_POINT_KINDS
     }
 
 
@@ -249,11 +186,10 @@ def weak_critical_point_kind(
     so the event is kept.
     """
 
-    if str(event_type) not in _TOPOLOGY_EVENTS or not cutoffs:
+    if str(event_type) not in _TOPOLOGY_EVENTS:
         return None
     keys = [(frame_before, str(item)) for item in source_ids]
     keys += [(frame_after, str(item)) for item in target_ids]
-    kinds: list[str] = []
     for key in keys:
         record = fields.get(key)
         if record is None:
@@ -262,8 +198,8 @@ def weak_critical_point_kind(
         cutoff = cutoffs.get(kind)
         if cutoff is None or value is None or value >= cutoff:
             return None
-        kinds.append(kind)
-    return kinds[0] if kinds else None
+    # Every birth, death, and connectivity change names at least one feature.
+    return fields[keys[0]][0]
 
 
 def _connectivity_change_event(
@@ -288,11 +224,6 @@ def _connectivity_change_event(
         or len(target.neighbor_atom_indices) != 2
     ):
         return None
-    if (atom_matches.previous_frame_index, atom_matches.current_frame_index) != (
-        previous.index,
-        current.index,
-    ):
-        raise ValueError("atom match result does not correspond to the supplied frames")
     mapping = atom_matches.mapping
     reverse = {target_id: source_id for source_id, target_id in mapping.items()}
     before = set(source.neighbor_atom_indices)
@@ -303,35 +234,24 @@ def _connectivity_change_event(
         return None
 
     relevant = before | {reverse[index] for index in after}
-    atom_edges = [
-        item
-        for item in atom_matches.edges
-        if item.relation is MatchRelation.ONE_TO_ONE and item.source_id in relevant
-    ]
-    if len(atom_edges) != len(relevant):
-        return None
+    atom_edges = [item for item in atom_matches.edges if item.source_ids[0] in relevant]
     confidence = min(edge.confidence, *(item.confidence for item in atom_edges))
     if confidence < config.min_event_confidence:
         return None
-    previous_atoms = {atom.index: atom for atom in previous.atoms}
-    current_atoms = {atom.index: atom for atom in current.atoms}
+    elements_before = Counter(atom.element.casefold() for atom in previous.atoms)
+    elements_after = Counter(atom.element.casefold() for atom in current.atoms)
     atom_identity = []
     for atom_edge in atom_edges:
-        old_atom = previous_atoms[int(atom_edge.source_id)]
-        new_atom = current_atoms[int(atom_edge.target_id)]
+        old_atom = previous.atom_by_index(int(atom_edge.source_ids[0]))
+        new_atom = current.atom_by_index(int(atom_edge.target_ids[0]))
         atom_identity.append(
             {
                 "source_atom_index": old_atom.index,
                 "target_atom_index": new_atom.index,
                 "element": old_atom.element,
                 "target_element": new_atom.element,
-                "same_element_count_before": sum(
-                    atom.element.casefold() == old_atom.element.casefold()
-                    for atom in previous.atoms
-                ),
-                "same_element_count_after": sum(
-                    atom.element.casefold() == new_atom.element.casefold() for atom in current.atoms
-                ),
+                "same_element_count_before": elements_before[old_atom.element.casefold()],
+                "same_element_count_after": elements_after[new_atom.element.casefold()],
                 "displacement_angstrom": atom_edge.evidence.get("distance"),
                 # Index identity does not score motion, so no similarity exists.
                 "motion_similarity": (
@@ -340,10 +260,11 @@ def _connectivity_change_event(
             }
         )
     neighbors_before = [
-        {"index": index, "element": previous_atoms[index].element} for index in sorted(before)
+        {"index": index, "element": previous.atom_by_index(index).element}
+        for index in sorted(before)
     ]
     neighbors_after = [
-        {"index": index, "element": current_atoms[index].element} for index in sorted(after)
+        {"index": index, "element": current.atom_by_index(index).element} for index in sorted(after)
     ]
 
     def label(neighbors: list[dict[str, Any]]) -> str:
@@ -381,55 +302,13 @@ def detect_transition_events(
     """Detect births, deaths, split/merge, and descriptor changes for one step."""
 
     settings = config or EventDetectionConfig()
-    if (
-        feature_matches.previous_frame_index != previous.index
-        or feature_matches.current_frame_index != current.index
-    ):
-        raise ValueError("feature match result does not correspond to the supplied frames")
-
-    previous_features = (
-        {feature.id: feature for feature in previous.features}
-        if feature_matches.edges or feature_matches.unmatched_previous
-        else {}
-    )
-    current_features = (
-        {feature.id: feature for feature in current.features}
-        if feature_matches.edges or feature_matches.unmatched_current
-        else {}
-    )
+    previous_features = {feature.id: feature for feature in previous.features}
+    current_features = {feature.id: feature for feature in current.features}
     events: list[Event] = []
     for edge in feature_matches.edges:
-        topology_type = _edge_event_type(edge)
-        if topology_type is not None:
-            sources = tuple(previous_features[str(item)] for item in edge.source_ids)
-            targets = tuple(current_features[str(item)] for item in edge.target_ids)
-            _quality, notes = _feature_quality((*sources, *targets))
-            confidence = edge.confidence
-            if confidence >= settings.min_event_confidence:
-                events.append(
-                    Event(
-                        type=topology_type,
-                        frame_before=previous.index,
-                        frame_after=current.index,
-                        source_ids=edge.source_ids,
-                        target_ids=edge.target_ids,
-                        confidence=confidence,
-                        evidence={
-                            "match": edge.evidence,
-                            "match_cost": edge.cost,
-                            "relation": edge.relation.value,
-                            "quality_notes": notes,
-                        },
-                        description=_event_description(
-                            topology_type,
-                            tuple(str(item) for item in edge.source_ids),
-                            tuple(str(item) for item in edge.target_ids),
-                        ),
-                    )
-                )
-        elif edge.relation is MatchRelation.ONE_TO_ONE:
-            source = previous_features[str(edge.source_id)]
-            target = current_features[str(edge.target_id)]
+        if edge.relation is MatchRelation.ONE_TO_ONE:
+            source = previous_features[str(edge.source_ids[0])]
+            target = current_features[str(edge.target_ids[0])]
             changed = _property_change_event(source, target, edge, previous, current, settings)
             if changed is not None:
                 events.append(changed)
@@ -438,45 +317,58 @@ def detect_transition_events(
             )
             if connectivity is not None:
                 events.append(connectivity)
-
-    for source_id in feature_matches.unmatched_previous:
-        source = previous_features[str(source_id)]
-        quality, notes = _feature_quality((source,))
-        confidence = 0.75 * quality
-        if confidence >= settings.min_event_confidence:
+        elif edge.confidence >= settings.min_event_confidence:
+            sources = [previous_features[str(item)] for item in edge.source_ids]
+            targets = [current_features[str(item)] for item in edge.target_ids]
+            _quality, notes = _feature_quality((*sources, *targets))
+            event_type, description = _HYPEREDGE_EVENTS[edge.relation]
             events.append(
                 Event(
-                    type=EventType.DEATH,
+                    type=event_type,
                     frame_before=previous.index,
                     frame_after=current.index,
-                    source_ids=(source.id,),
-                    confidence=confidence,
+                    source_ids=edge.source_ids,
+                    target_ids=edge.target_ids,
+                    confidence=edge.confidence,
                     evidence={
-                        "unmatched": True,
-                        "feature_kind": source.kind,
+                        "match": edge.evidence,
+                        "match_cost": edge.cost,
+                        "relation": edge.relation.value,
                         "quality_notes": notes,
                     },
-                    description=_event_description(EventType.DEATH, (source.id,), ()),
+                    description=description.format(
+                        ", ".join(str(item) for item in edge.source_ids),
+                        ", ".join(str(item) for item in edge.target_ids),
+                    ),
                 )
             )
-    for target_id in feature_matches.unmatched_current:
-        target = current_features[str(target_id)]
-        quality, notes = _feature_quality((target,))
+
+    deaths = [
+        (EventType.DEATH, previous_features[str(item)])
+        for item in feature_matches.unmatched_previous
+    ]
+    births = [
+        (EventType.BIRTH, current_features[str(item)]) for item in feature_matches.unmatched_current
+    ]
+    for event_type, feature in (*deaths, *births):
+        quality, notes = _feature_quality((feature,))
         confidence = 0.75 * quality
         if confidence >= settings.min_event_confidence:
+            death = event_type is EventType.DEATH
             events.append(
                 Event(
-                    type=EventType.BIRTH,
+                    type=event_type,
                     frame_before=previous.index,
                     frame_after=current.index,
-                    target_ids=(target.id,),
+                    source_ids=(feature.id,) if death else (),
+                    target_ids=() if death else (feature.id,),
                     confidence=confidence,
                     evidence={
                         "unmatched": True,
-                        "feature_kind": target.kind,
+                        "feature_kind": feature.kind,
                         "quality_notes": notes,
                     },
-                    description=_event_description(EventType.BIRTH, (), (target.id,)),
+                    description=f"Feature {feature.id} {'disappears' if death else 'appears'}.",
                 )
             )
     return sorted(
@@ -561,34 +453,33 @@ def _annotate_persistence(
             confidence = event.confidence * persistence / config.min_persistence
         metadata["persistence_status"] = status
         metadata["persistence_end_frame"] = frames[end_position].index
-        revised = replace(
-            event,
-            persistence=persistence,
-            confidence=max(0.0, min(1.0, confidence)),
-            evidence=evidence,
-            metadata=metadata,
+        annotated.append(
+            replace(
+                event,
+                persistence=persistence,
+                confidence=max(0.0, min(1.0, confidence)),
+                evidence=evidence,
+                metadata=metadata,
+            )
         )
-        if config.include_transient or status != "transient":
-            annotated.append(revised)
     return annotated
 
 
 def track_sequence(
-    sequence: Sequence | TypingSequence[Frame],
+    sequence: Sequence,
     atom_config: AtomMatchConfig | None = None,
     feature_config: FeatureMatchConfig | None = None,
     event_config: EventDetectionConfig | None = None,
 ) -> TrackingResult:
     """Match all adjacent frames and return persistence-aware event history."""
 
-    ordered = ensure_sequence(sequence)
     atom_settings = atom_config or AtomMatchConfig()
     feature_settings = feature_config or FeatureMatchConfig()
     settings = event_config or EventDetectionConfig()
     atom_results: list[MatchResult] = []
     feature_results: list[MatchResult] = []
     raw_events: list[Event] = []
-    for previous, current in pairwise(ordered.frames):
+    for previous, current in pairwise(sequence.frames):
         atoms = match_atoms(previous, current, atom_settings)
         features = match_features(previous, current, atoms, feature_settings)
         atom_results.append(atoms)
@@ -596,18 +487,14 @@ def track_sequence(
         raw_events.extend(
             detect_transition_events(previous, current, features, settings, atom_matches=atoms)
         )
-    events = (
-        _annotate_persistence(raw_events, ordered.frames, feature_results, settings)
-        if raw_events
-        else []
-    )
+    events = _annotate_persistence(raw_events, sequence.frames, feature_results, settings)
     return TrackingResult(
         atom_matches=tuple(atom_results),
         feature_matches=tuple(feature_results),
         events=tuple(events),
         diagnostics={
-            "frames": len(ordered.frames),
-            "transitions": max(0, len(ordered.frames) - 1),
+            "frames": len(sequence.frames),
+            "transitions": max(0, len(sequence.frames) - 1),
             "raw_events": len(raw_events),
             "reported_events": len(events),
             "minimum_persistence": settings.min_persistence,
@@ -616,7 +503,7 @@ def track_sequence(
 
 
 def detect_sequence_events(
-    sequence: Sequence | TypingSequence[Frame],
+    sequence: Sequence,
     atom_config: AtomMatchConfig | None = None,
     feature_config: FeatureMatchConfig | None = None,
     event_config: EventDetectionConfig | None = None,

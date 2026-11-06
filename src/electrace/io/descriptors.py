@@ -35,8 +35,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -53,13 +53,6 @@ class DescriptorError(ValueError):
     """Raised when a plugin descriptor is malformed or ambiguous."""
 
 
-def _descriptor_size_error(path: Path) -> DescriptorError:
-    return DescriptorError(
-        f"descriptor file exceeds the {MAX_DESCRIPTOR_BYTES // (1024 * 1024)} MiB "
-        f"safety limit: {path}"
-    )
-
-
 def _read_descriptor_text(path: Path) -> str:
     """Read one UTF-8 descriptor while enforcing the byte limit during I/O."""
 
@@ -69,7 +62,10 @@ def _read_descriptor_text(path: Path) -> str:
     except OSError as exc:
         raise DescriptorError(f"cannot read descriptor file {path}: {exc}") from exc
     if len(payload) > MAX_DESCRIPTOR_BYTES:
-        raise _descriptor_size_error(path)
+        raise DescriptorError(
+            f"descriptor file exceeds the {MAX_DESCRIPTOR_BYTES // (1024 * 1024)} MiB "
+            f"safety limit: {path}"
+        )
     try:
         return payload.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -84,19 +80,12 @@ class DescriptorDocument:
 
     producer: str
     features: tuple[Feature, ...]
+    metadata: dict[str, Any]
     producer_version: str | None = None
     frame_index: int | None = None
     frame_label: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != SCHEMA_VERSION:
-            raise DescriptorError(
-                f"unsupported descriptor schema {self.schema_version!r}; expected {SCHEMA_VERSION!r}"
-            )
-        if not self.producer or not self.producer.strip():
-            raise DescriptorError("descriptor producer name must not be empty")
         identifiers = [feature.id for feature in self.features]
         if len(identifiers) != len(set(identifiers)):
             raise DescriptorError("feature ids must be unique within a descriptor document")
@@ -120,7 +109,7 @@ class DescriptorDocument:
         if self.frame_label is not None:
             frame["label"] = self.frame_label
         result: dict[str, Any] = {
-            "schema_version": self.schema_version,
+            "schema_version": SCHEMA_VERSION,
             "producer": producer,
             "features": [feature.to_dict() for feature in self.features],
             "metadata": self.metadata,
@@ -142,45 +131,31 @@ def _finite(value: Any, context: str) -> float:
     return parsed
 
 
+def _optional_finite(value: Any, context: str) -> float | None:
+    return None if value is None else _finite(value, context)
+
+
 def _position(value: Any, context: str) -> tuple[float, float, float]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != 3:
+    if not isinstance(value, list) or len(value) != 3:
         raise DescriptorError(f"{context} must be an array of three numbers")
     return tuple(_finite(item, context) for item in value)  # type: ignore[return-value]
-
-
-def _neighbors(value: Any, context: str) -> tuple[int, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise DescriptorError(f"{context} must be an array of zero-based integers")
-    result: list[int] = []
-    for item in value:
-        if isinstance(item, bool) or not isinstance(item, int) or item < 0:
-            raise DescriptorError(f"{context} must contain non-negative integers")
-        result.append(item)
-    if len(result) != len(set(result)):
-        raise DescriptorError(f"{context} must not contain duplicates")
-    return tuple(result)
 
 
 def _feature_from_mapping(item: Any, index: int) -> Feature:
     if not isinstance(item, Mapping):
         raise DescriptorError(f"features[{index}] must be an object")
-    if not isinstance(item.get("id"), str) or not str(item["id"]).strip():
-        raise DescriptorError(f"features[{index}].id must be a non-empty string")
-    if not isinstance(item.get("kind"), str) or not str(item["kind"]).strip():
-        raise DescriptorError(f"features[{index}].kind must be a non-empty string")
+    for key in ("id", "kind"):
+        if not isinstance(item.get(key), str) or not item[key].strip():
+            raise DescriptorError(f"features[{index}].{key} must be a non-empty string")
     try:
         return Feature.from_dict(item)
     except (KeyError, TypeError, ValueError) as exc:
         raise DescriptorError(f"invalid features[{index}]: {exc}") from exc
 
 
-def descriptor_from_dict(payload: Any) -> DescriptorDocument:
+def descriptor_from_dict(payload: Mapping[str, Any]) -> DescriptorDocument:
     """Validate and construct a canonical ``electrace.features.v1`` document."""
 
-    if not isinstance(payload, Mapping):
-        raise DescriptorError("descriptor root must be a JSON object")
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise DescriptorError(f"schema_version must be exactly {SCHEMA_VERSION!r}")
     producer = payload.get("producer")
@@ -200,9 +175,7 @@ def descriptor_from_dict(payload: Any) -> DescriptorDocument:
     if not isinstance(frame, Mapping):
         raise DescriptorError("frame must be an object when present")
     frame_index = frame.get("index")
-    if frame_index is not None and (
-        isinstance(frame_index, bool) or not isinstance(frame_index, int)
-    ):
+    if frame_index is not None and type(frame_index) is not int:
         raise DescriptorError("frame.index must be a non-negative integer")
     frame_label = frame.get("label")
     if frame_label is not None and not isinstance(frame_label, str):
@@ -223,54 +196,35 @@ def descriptor_from_dict(payload: Any) -> DescriptorDocument:
     )
 
 
-def _frame_position(
-    frame: Frame | None, atom_index: int, context: str
-) -> tuple[float, float, float]:
-    if frame is None:
-        raise DescriptorError(f"{context} requires a Frame to supply periodic atom positions")
+def _frame_position(frame: Frame, atom_index: int, context: str) -> tuple[float, float, float]:
     try:
-        atom = frame.atom_by_index(atom_index)
+        return frame.atom_by_index(atom_index).fractional_position
     except KeyError as exc:
         raise DescriptorError(f"{context} refers to unknown frame atom index {atom_index}") from exc
-    return tuple(atom.fractional_position)  # type: ignore[return-value]
 
 
 def _series_item(values: Any, index: int) -> Any:
-    if (
-        isinstance(values, Sequence)
-        and not isinstance(values, (str, bytes))
-        and index < len(values)
-    ):
-        return values[index]
-    return None
+    return values[index] if isinstance(values, list) and index < len(values) else None
 
 
-def _baderkit_structure_positions(payload: Mapping[str, Any]) -> Sequence[Any] | None:
+def _baderkit_structure_positions(payload: Mapping[str, Any]) -> list[Any]:
     """Return fractional sites from BaderKit's serialized pymatgen structure."""
 
     nna_results = payload.get("nna_results")
-    if not isinstance(nna_results, Mapping):
-        return None
-    structure = nna_results.get("nna_structure")
-    if not isinstance(structure, Mapping):
-        return None
-    sites = structure.get("sites")
-    if not isinstance(sites, Sequence) or isinstance(sites, (str, bytes)):
-        return None
-    positions: list[Any] = []
-    for site in sites:
-        if not isinstance(site, Mapping):
-            return None
-        position = site.get("abc")
-        if position is None:
-            return None
-        positions.append(position)
-    return positions
+    structure = nna_results.get("nna_structure") if isinstance(nna_results, Mapping) else None
+    sites = structure.get("sites") if isinstance(structure, Mapping) else None
+    if not isinstance(sites, list) or not all(
+        isinstance(site, Mapping) and site.get("abc") is not None for site in sites
+    ):
+        return []
+    return [site["abc"] for site in sites]
 
 
 def _parse_baderkit(
-    payload: Mapping[str, Any], frame: Frame | None, *, native_format: str = "bader.json"
+    payload: Mapping[str, Any], frame: Frame | None, native_format: str
 ) -> DescriptorDocument:
+    if frame is None:
+        raise DescriptorError(f"{native_format} requires a Frame to supply periodic atom positions")
     atom_results = payload.get("atom_results", {})
     maxima_results = payload.get("maxima_results", {})
     if not isinstance(atom_results, Mapping) or not isinstance(maxima_results, Mapping):
@@ -279,36 +233,24 @@ def _parse_baderkit(
     charges = maxima_results.get("basin_charges")
     volumes = maxima_results.get("basin_volumes")
     basin_atoms = atom_results.get("basin_atoms")
-    known_atom_indices = {atom.index for atom in frame.atoms} if frame is not None else None
+    known_atom_indices = {atom.index for atom in frame.atoms}
     features: list[Feature] = []
-    if isinstance(positions, Sequence) and not isinstance(positions, (str, bytes)):
+    if isinstance(positions, list):
         for index, raw_position in enumerate(positions):
             assigned = _series_item(basin_atoms, index)
-            atom_index = (
-                int(assigned)
-                if isinstance(assigned, (int, float)) and not isinstance(assigned, bool)
-                else None
-            )
-            is_nna = atom_index is None or (
-                known_atom_indices is not None and atom_index not in known_atom_indices
-            )
-            kind = "non_nuclear_attractor" if is_nna else "atomic_basin"
+            neighbors: tuple[int, ...] = ()
+            if type(assigned) in (int, float) and int(assigned) in known_atom_indices:
+                neighbors = (int(assigned),)
             charge = _series_item(charges, index)
             volume = _series_item(volumes, index)
             features.append(
                 Feature(
                     id=f"baderkit:basin:{index}",
-                    kind=kind,
+                    kind="atomic_basin" if neighbors else "non_nuclear_attractor",
                     fractional_position=_position(raw_position, f"BaderKit basin {index} position"),
-                    charge=None
-                    if charge is None
-                    else _finite(charge, f"BaderKit basin {index} charge"),
-                    volume=None
-                    if volume is None
-                    else _finite(volume, f"BaderKit basin {index} volume"),
-                    neighbor_atom_indices=(atom_index,)
-                    if atom_index is not None and not is_nna
-                    else (),
+                    charge=_optional_finite(charge, f"BaderKit basin {index} charge"),
+                    volume=_optional_finite(volume, f"BaderKit basin {index} volume"),
+                    neighbor_atom_indices=neighbors,
                     attributes={
                         "source_index": index,
                         "charge_quantity": "integrated_electron_population",
@@ -328,13 +270,12 @@ def _parse_baderkit(
     species = atom_results.get("species")
     maxima_elf_values = atom_results.get("maxima_elf_values")
     is_badelf = native_format.lower() == "badelf.json"
-    structure_positions = _baderkit_structure_positions(payload) if is_badelf else None
-    atom_count = len(frame.atoms) if frame is not None else None
-    if isinstance(atom_charges, Sequence) and not isinstance(atom_charges, (str, bytes)):
+    structure_positions = _baderkit_structure_positions(payload) if is_badelf else []
+    if isinstance(atom_charges, list):
         for index, charge in enumerate(atom_charges):
-            if is_badelf and atom_count is not None and index >= atom_count:
-                nna_index = index - atom_count
-                if structure_positions is None or index >= len(structure_positions):
+            if is_badelf and index >= len(frame.atoms):
+                nna_index = index - len(frame.atoms)
+                if index >= len(structure_positions):
                     raise DescriptorError(
                         "BaderKit BadELF JSON contains NNA charge results without "
                         "matching nna_structure fractional coordinates"
@@ -344,7 +285,7 @@ def _parse_baderkit(
                 )
                 identifier = f"baderkit:nna:{nna_index}"
                 kind = "non_nuclear_attractor"
-                neighbors: tuple[int, ...] = ()
+                neighbors = ()
             else:
                 position = _frame_position(frame, index, "BaderKit atomic charges")
                 identifier = f"baderkit:atom:{index}"
@@ -359,28 +300,21 @@ def _parse_baderkit(
             raw_species = _series_item(species, index)
             if isinstance(raw_species, str):
                 attributes["species"] = raw_species
-            raw_elf_value = _series_item(maxima_elf_values, index)
-            if raw_elf_value is not None:
-                attributes["maxima_elf_value"] = _finite(
-                    raw_elf_value, f"BaderKit atom/NNA {index} maximum ELF value"
-                )
-            raw_oxidation_state = _series_item(oxidation_states, index)
-            if raw_oxidation_state is not None:
-                attributes["oxidation_state"] = _finite(
-                    raw_oxidation_state, f"BaderKit atom/NNA {index} oxidation state"
-                )
+            for key, values, label in (
+                ("maxima_elf_value", maxima_elf_values, "maximum ELF value"),
+                ("oxidation_state", oxidation_states, "oxidation state"),
+            ):
+                raw_value = _series_item(values, index)
+                if raw_value is not None:
+                    attributes[key] = _finite(raw_value, f"BaderKit atom/NNA {index} {label}")
             features.append(
                 Feature(
                     id=identifier,
                     kind=kind,
                     fractional_position=position,
                     charge=_finite(charge, f"BaderKit atom {index} charge"),
-                    volume=(
-                        None
-                        if _series_item(atom_volumes, index) is None
-                        else _finite(
-                            _series_item(atom_volumes, index), f"BaderKit atom {index} volume"
-                        )
+                    volume=_optional_finite(
+                        _series_item(atom_volumes, index), f"BaderKit atom {index} volume"
                     ),
                     neighbor_atom_indices=neighbors,
                     attributes=attributes,
@@ -425,14 +359,14 @@ _CRITIC2_CLASSES: dict[float, str] = {-3: "n", -1: "b", 1: "r", 3: "c"}
 
 
 def _critic2_class(signature: Any) -> str:
-    if isinstance(signature, bool) or not isinstance(signature, (int, float)):
+    if type(signature) not in (int, float):
         return "unclassified"
     return _CRITIC2_CLASSES.get(signature, "unclassified")
 
 
 def _critic2_cpreport_records(
     payload: Mapping[str, Any],
-) -> tuple[Sequence[Any], Mapping[int, Mapping[str, Any]], int | None]:
+) -> tuple[list[Any], Mapping[int, Mapping[str, Any]], int | None]:
     """Return records and joins from critic2's native ``CPREPORT *.json``.
 
     The upstream format nests ``cell_cps`` and ``nonequivalent_cps`` below a
@@ -446,28 +380,24 @@ def _critic2_cpreport_records(
         raise DescriptorError("critic2 CPREPORT JSON requires a critical_points object")
     cell_records = critical_points.get("cell_cps")
     nonequivalent = critical_points.get("nonequivalent_cps")
-    if not isinstance(cell_records, Sequence) or isinstance(cell_records, (str, bytes)):
+    if not isinstance(cell_records, list):
         raise DescriptorError("critic2 CPREPORT JSON requires critical_points.cell_cps")
     joined: dict[int, Mapping[str, Any]] = {}
-    if isinstance(nonequivalent, Sequence) and not isinstance(nonequivalent, (str, bytes)):
+    if isinstance(nonequivalent, list):
         for index, record in enumerate(nonequivalent):
             if not isinstance(record, Mapping):
                 raise DescriptorError(
                     f"critic2 nonequivalent critical point {index} must be an object"
                 )
             raw_id = record.get("id", index + 1)
-            if isinstance(raw_id, bool) or not isinstance(raw_id, int) or raw_id < 1:
+            if type(raw_id) is not int or raw_id < 1:
                 raise DescriptorError(
                     f"critic2 nonequivalent critical point {index} has an invalid id"
                 )
             joined[raw_id] = record
     structure = payload.get("structure")
-    atom_count: int | None = None
-    if isinstance(structure, Mapping):
-        raw_atom_count = structure.get("number_of_cell_atoms")
-        if isinstance(raw_atom_count, int) and not isinstance(raw_atom_count, bool):
-            atom_count = raw_atom_count
-    return cell_records, joined, atom_count
+    atom_count = structure.get("number_of_cell_atoms") if isinstance(structure, Mapping) else None
+    return cell_records, joined, atom_count if type(atom_count) is int else None
 
 
 def _critic2_attractor_atoms(record: Mapping[str, Any], atom_count: int | None) -> tuple[int, ...]:
@@ -475,19 +405,15 @@ def _critic2_attractor_atoms(record: Mapping[str, Any], atom_count: int | None) 
 
     if atom_count is None:
         return ()
-    attractors = record.get("attractors", ())
-    if not isinstance(attractors, Sequence) or isinstance(attractors, (str, bytes)):
+    attractors = record.get("attractors", [])
+    if not isinstance(attractors, list):
         raise DescriptorError("critic2 critical point attractors must be an array")
     result: list[int] = []
     for index, attractor in enumerate(attractors):
         if not isinstance(attractor, Mapping):
             raise DescriptorError(f"critic2 attractor {index} must be an object")
         cell_id = attractor.get("cell_id")
-        if (
-            isinstance(cell_id, int)
-            and not isinstance(cell_id, bool)
-            and 1 <= cell_id <= atom_count
-        ):
+        if type(cell_id) is int and 1 <= cell_id <= atom_count:
             result.append(cell_id - 1)
     return tuple(dict.fromkeys(result))
 
@@ -495,17 +421,12 @@ def _critic2_attractor_atoms(record: Mapping[str, Any], atom_count: int | None) 
 def _critic2_hessian_trace(value: Any) -> float | None:
     """Return the finite trace of a flattened or nested 3x3 Hessian."""
 
-    diagonal: tuple[Any, Any, Any]
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        if len(value) == 9:
-            diagonal = (value[0], value[4], value[8])
-        elif len(value) == 3 and all(
-            isinstance(row, Sequence) and not isinstance(row, (str, bytes)) and len(row) == 3
-            for row in value
-        ):
-            diagonal = (value[0][0], value[1][1], value[2][2])
-        else:
-            return None
+    if not isinstance(value, list):
+        return None
+    if len(value) == 9:
+        diagonal = (value[0], value[4], value[8])
+    elif len(value) == 3 and all(isinstance(row, list) and len(row) == 3 for row in value):
+        diagonal = (value[0][0], value[1][1], value[2][2])
     else:
         return None
     if any(isinstance(item, bool) for item in diagonal):
@@ -523,15 +444,13 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
     # Every cell critical point is counted, nuclei included, before any is skipped.
     # critic2 writes number_of_cell_cps as the nonequivalent count, so it is not used.
     counts = dict.fromkeys(("n", "b", "r", "c", "unclassified"), 0)
+    # Record keys that a feature does not keep in its attributes.
+    reserved = {"id", "name", "fractional_coordinates", "cartesian_coordinates", "charge", "volume"}
     for index, record in enumerate(records):
         if not isinstance(record, Mapping):
             raise DescriptorError(f"critic2 critical point {index} must be an object")
         nonequivalent_id = record.get("nonequivalent_id", record.get("id"))
-        detail = (
-            joined.get(nonequivalent_id, {})
-            if isinstance(nonequivalent_id, int) and not isinstance(nonequivalent_id, bool)
-            else {}
-        )
+        detail = joined.get(nonequivalent_id, {}) if type(nonequivalent_id) is int else {}
         # A cell CP inherits scientific quantities from its nonequivalent
         # definition.  Explicit cell-record values are more specific and
         # intentionally override the shared definition when both are present.
@@ -543,19 +462,7 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
         if combined.get("signature") == -3 and combined.get("is_nucleus") is True:
             continue
         neighbors = _critic2_attractor_atoms(record, atom_count)
-        attributes = {
-            str(key): value
-            for key, value in combined.items()
-            if key
-            not in {
-                "id",
-                "name",
-                "fractional_coordinates",
-                "cartesian_coordinates",
-                "charge",
-                "volume",
-            }
-        }
+        attributes = {key: value for key, value in combined.items() if key not in reserved}
         if "laplacian" not in attributes:
             laplacian = _critic2_hessian_trace(attributes.get("hessian"))
             if laplacian is not None:
@@ -567,19 +474,9 @@ def _parse_critic2(payload: Mapping[str, Any]) -> DescriptorDocument:
                 fractional_position=_position(
                     raw_position, f"critic2 critical point {index} position"
                 ),
-                charge=(
-                    None
-                    if combined.get("charge") is None
-                    else _finite(combined["charge"], "critic2 charge")
-                ),
-                volume=(
-                    None
-                    if combined.get("volume") is None
-                    else _finite(combined["volume"], "critic2 volume")
-                ),
-                neighbor_atom_indices=_neighbors(
-                    neighbors, f"critic2 critical point {index} atoms"
-                ),
+                charge=_optional_finite(combined.get("charge"), "critic2 charge"),
+                volume=_optional_finite(combined.get("volume"), "critic2 volume"),
+                neighbor_atom_indices=neighbors,
                 attributes=attributes,
             )
         )
@@ -622,33 +519,21 @@ _ORBITAL_LABEL = re.compile(r"([A-Za-z]+\d+)_\S+")
 _INTEGER_FIELD = re.compile(r"[+-]?\d+\Z")
 
 
-def _atom_index(value: Any, context: str) -> int:
-    if isinstance(value, bool):
-        raise DescriptorError(f"{context} is not an atom index")
-    if isinstance(value, int):
-        raw = value
-    elif isinstance(value, str):
-        match = _ATOM_LABEL.fullmatch(value.strip())
-        if match is None:
-            raise DescriptorError(
-                f"cannot read atom index from {value!r} in {context}; expected an atom "
-                "label such as Na1"
-            )
-        raw = int(match.group(1))
-    else:
-        raise DescriptorError(f"cannot read atom index from {value!r} in {context}")
-    result = raw - 1
+def _atom_index(label: str, context: str) -> int:
+    match = _ATOM_LABEL.fullmatch(label)
+    if match is None:
+        raise DescriptorError(
+            f"cannot read atom index from {label!r} in {context}; expected an atom "
+            "label such as Na1"
+        )
+    result = int(match.group(1)) - 1
     if result < 0:
         raise DescriptorError(f"{context} must use one-based positive atom labels")
     return result
 
 
 def _periodic_midpoint(
-    frame: Frame,
-    first: int,
-    second: int,
-    *,
-    lattice_translation: tuple[int, int, int] | None = None,
+    frame: Frame, first: int, second: int, lattice_translation: tuple[int, int, int] | None
 ) -> tuple[float, float, float]:
     left = _frame_position(frame, first, "bond descriptor")
     right = _frame_position(frame, second, "bond descriptor")
@@ -761,8 +646,7 @@ def _lobster_rows(path: Path) -> tuple[list[tuple[int, list[str], list[str]]], i
 def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     if frame is None:
         raise DescriptorError("LOBSTER list files require a Frame for periodic bond midpoints")
-    lower_name = path.name.lower()
-    family = "icobi" if "icobi" in lower_name else "icohp"
+    family = "icobi" if "icobi" in path.name.lower() else "icohp"
     descriptor = "icohp_ev" if family == "icohp" else family
     features: list[Feature] = []
     spin_resolved = False
@@ -778,16 +662,11 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
         distance = _finite(fields[3].replace("D", "E"), f"{context} distance")
         lattice_translation: tuple[int, int, int] | None = None
         if len(fields) == 7:
-            raw_translation = fields[4:7]
-            if any(_INTEGER_FIELD.fullmatch(component) is None for component in raw_translation):
+            if any(_INTEGER_FIELD.fullmatch(component) is None for component in fields[4:7]):
                 raise DescriptorError(
                     f"{context} lattice translation must contain exactly three integers"
                 )
-            lattice_translation = (
-                int(raw_translation[0]),
-                int(raw_translation[1]),
-                int(raw_translation[2]),
-            )
+            lattice_translation = (int(fields[4]), int(fields[5]), int(fields[6]))
         if first == second and not any(lattice_translation or ()):
             raise DescriptorError(
                 f"{context} bonds {fields[1]} to itself without a nonzero lattice translation"
@@ -819,13 +698,10 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
             "bond_length_angstrom": distance,
             "distance": distance,
             "source_line": line_number,
-            "midpoint_convention": (
-                "minimum_image"
-                if lattice_translation is None
-                else "explicit_atom2_lattice_translation"
-            ),
+            "midpoint_convention": "minimum_image",
         }
         if lattice_translation is not None:
+            attributes["midpoint_convention"] = "explicit_atom2_lattice_translation"
             attributes["lattice_translation"] = list(lattice_translation)
             # neighbor_atom_indices is sorted, so record which atom the translation
             # moves: LOBSTER's second label, which may be the lower index (Cl5 Na1).
@@ -841,12 +717,7 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
             Feature(
                 id=f"lobster:{descriptor}:{len(features)}",
                 kind="bond_descriptor",
-                fractional_position=_periodic_midpoint(
-                    frame,
-                    first,
-                    second,
-                    lattice_translation=lattice_translation,
-                ),
+                fractional_position=_periodic_midpoint(frame, first, second, lattice_translation),
                 # A bond to the atom's own periodic image lists that atom once;
                 # lattice_translation names the image.
                 neighbor_atom_indices=(first,) if first == second else (first, second),
@@ -866,7 +737,7 @@ def _parse_lobster_list(path: Path, frame: Frame | None) -> DescriptorDocument:
     return DescriptorDocument(producer="lobster", features=tuple(features), metadata=metadata)
 
 
-def _acf_records(lines: Sequence[str]) -> list[tuple[float, float]]:
+def _acf_records(lines: list[str]) -> list[tuple[float, float]]:
     """Return (CHARGE, ATOMIC VOL) for each atom row of a Bader ``ACF.dat``."""
 
     records: list[tuple[float, float]] = []
@@ -885,9 +756,13 @@ def _parse_atomic_charge_text(path: Path, frame: Frame | None, producer: str) ->
         raise DescriptorError(f"{path.name} requires a Frame to map charges onto atoms")
     lines = _read_descriptor_text(path).splitlines()
     records: list[tuple[float, float | None]] = []
-    if path.name.upper() == "ACF.DAT":
+    if producer == "bader":
         records.extend(_acf_records(lines))
+        definition = "bader_electron_population"
+        convention = "Bader ACF charge is a positive integrated electron population in elementary-charge units."
     else:
+        definition = "ddec_net_atomic_charge"
+        convention = "DDEC net atomic charge in elementary-charge units; positive values indicate electron deficiency."
         start = 2 if lines and lines[0].strip().isdigit() else 0
         declared = int(lines[0]) if start else None
         for line in lines[start:]:
@@ -902,8 +777,7 @@ def _parse_atomic_charge_text(path: Path, frame: Frame | None, producer: str) ->
             raise DescriptorError(
                 f"{path.name} declares {declared} atoms but only {len(records)} charge rows were parsed"
             )
-        if declared is not None:
-            records = records[:declared]
+        records = records[:declared]
     if not records:
         raise DescriptorError(f"no atomic charge records found in {path}")
     if len(records) != len(frame.atoms):
@@ -919,22 +793,13 @@ def _parse_atomic_charge_text(path: Path, frame: Frame | None, producer: str) ->
             volume=volume,
             neighbor_atom_indices=(index,),
             attributes={
-                "charge_definition": (
-                    "ddec_net_atomic_charge"
-                    if producer == "chargemol"
-                    else "bader_electron_population"
-                ),
+                "charge_definition": definition,
                 "charge_unit": "e",
                 "volume_unit": "angstrom^3" if volume is not None else None,
                 "source_line_format": path.name,
             },
         )
         for index, (charge, volume) in enumerate(records)
-    )
-    convention = (
-        "DDEC net atomic charge in elementary-charge units; positive values indicate electron deficiency."
-        if producer == "chargemol"
-        else "Bader ACF charge is a positive integrated electron population in elementary-charge units."
     )
     return DescriptorDocument(
         producer=producer,
@@ -943,12 +808,7 @@ def _parse_atomic_charge_text(path: Path, frame: Frame | None, producer: str) ->
     )
 
 
-def load_descriptor(
-    path: str | Path,
-    *,
-    producer: str | None = None,
-    frame: Frame | None = None,
-) -> DescriptorDocument:
+def load_descriptor(path: str | Path, *, frame: Frame | None = None) -> DescriptorDocument:
     """Load a canonical or supported native plugin descriptor.
 
     JSON carrying ``schema_version=electrace.features.v1`` is normalized as the
@@ -977,15 +837,9 @@ def load_descriptor(
         raise DescriptorError("descriptor JSON root must be an object")
     if "schema_version" in payload:
         return descriptor_from_dict(payload)
-    selected = (producer or "").lower()
-    if not selected:
-        if lower_name in {"bader.json", "badelf.json"}:
-            selected = "baderkit"
-        elif "critic" in lower_name or isinstance(payload.get("critical_points"), Mapping):
-            selected = "critic2"
-    if selected == "baderkit":
-        return _parse_baderkit(payload, frame, native_format=source.name)
-    if selected == "critic2":
+    if lower_name in {"bader.json", "badelf.json"}:
+        return _parse_baderkit(payload, frame, source.name)
+    if "critic" in lower_name or isinstance(payload.get("critical_points"), Mapping):
         return _parse_critic2(payload)
     raise DescriptorError(
         f"unsupported native JSON descriptor {source.name}; expected bader.json, "
@@ -993,19 +847,13 @@ def load_descriptor(
     )
 
 
-def dump_descriptor(
-    document: DescriptorDocument,
-    path: str | Path,
-    *,
-    indent: int = 2,
-    overwrite: bool = False,
-) -> Path:
+def dump_descriptor(document: DescriptorDocument, path: str | Path) -> Path:
     """Write canonical descriptor JSON."""
 
     destination = Path(path)
-    if destination.exists() and not overwrite:
+    if destination.exists():
         raise FileExistsError(f"refusing to replace existing descriptor: {destination}")
-    payload = json.dumps(document.to_dict(), indent=indent, allow_nan=False) + "\n"
+    payload = json.dumps(document.to_dict(), indent=2, allow_nan=False) + "\n"
     atomic_write_text(destination, payload)
     return destination
 
@@ -1013,19 +861,15 @@ def dump_descriptor(
 def _normalized_semantic_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    normalized = " ".join(value.strip().casefold().split())
-    return normalized or None
+    return " ".join(value.casefold().split()) or None
 
 
-def attach_descriptors(frame: Frame, documents: Iterable[DescriptorDocument]) -> Frame:
+def attach_descriptors(frame: Frame, documents: list[DescriptorDocument]) -> Frame:
     """Return a frame with validated features and document provenance appended."""
 
     features = list(frame.features)
-    metadata = dict(frame.metadata)
-    raw_sources = metadata.get("descriptor_producers", [])
-    sources = list(raw_sources) if isinstance(raw_sources, list) else []
-    raw_records = metadata.get("descriptor_documents", [])
-    document_records = list(raw_records) if isinstance(raw_records, list) else []
+    sources: list[str] = []
+    document_records: list[dict[str, Any]] = []
     identifiers = {feature.id for feature in features}
     known_atom_indices = {atom.index for atom in frame.atoms}
     for document in documents:
@@ -1069,34 +913,29 @@ def attach_descriptors(frame: Frame, documents: Iterable[DescriptorDocument]) ->
                         f"{convention!r}"
                     )
                 attributes["charge_convention"] = convention
-            tagged = replace(
-                feature,
-                attributes=attributes,
-            )
-            identifiers.add(tagged.id)
-            features.append(tagged)
+            identifiers.add(feature.id)
+            features.append(replace(feature, attributes=attributes))
         sources.append(document.producer)
         producer: dict[str, Any] = {"name": document.producer}
         if document.producer_version is not None:
             producer["version"] = document.producer_version
         document_records.append(
             {
-                "schema_version": document.schema_version,
+                "schema_version": SCHEMA_VERSION,
                 "producer": producer,
                 "metadata": dict(document.metadata),
             }
         )
-    if sources:
-        metadata["descriptor_producers"] = sources
-    if document_records:
-        metadata["descriptor_documents"] = document_records
+    metadata = dict(frame.metadata)
+    metadata["descriptor_producers"] = sources
+    metadata["descriptor_documents"] = document_records
     return replace(frame, features=tuple(features), metadata=metadata)
 
 
 SPIN_DESCRIPTOR = Path("spin", "ACF.dat")
 
 
-def attach_spin_populations(frame: Frame, path: str | Path) -> Frame:
+def attach_spin_populations(frame: Frame, source: Path) -> Frame:
     """Attach each atom's Bader-basin magnetization from ``spin/ACF.dat`` as ``spin``.
 
     ``spin/ACF.dat`` is Bader's output for ``bader CHGCAR_mag -ref CHGCAR_tot``: its
@@ -1105,7 +944,6 @@ def attach_spin_populations(frame: Frame, path: str | Path) -> Frame:
     atom-charge features, so no other partition receives them.
     """
 
-    source = Path(path).expanduser().resolve()
     spins = [spin for spin, _ in _acf_records(_read_descriptor_text(source).splitlines())]
     if len(spins) != len(frame.atoms):
         raise DescriptorError(
@@ -1179,23 +1017,13 @@ def _species_blocks(frame: Frame) -> tuple[list[str], dict[int, int]]:
             "the POSCAR names no species (VASP 4), so its blocks cannot be checked "
             "against the POTCAR entries"
         )
-    species = frame.metadata.get("species")
-    counts = frame.metadata.get("species_counts")
-    if (
-        not isinstance(species, list)
-        or not isinstance(counts, list)
-        or len(species) != len(counts)
-        or any(type(count) is not int or count < 0 for count in counts)
-        or sum(counts) != len(frame.atoms)
-    ):
-        raise DescriptorError("the frame records no POSCAR species line and counts")
     block_of: dict[int, int] = {}
     start = 0
-    for block, count in enumerate(counts):
+    for block, count in enumerate(frame.metadata["species_counts"]):
         for atom in frame.atoms[start : start + count]:
             block_of[atom.index] = block
         start += count
-    return [element_symbol(str(label)) for label in species], block_of
+    return [element_symbol(label) for label in frame.metadata["species"]], block_of
 
 
 def _frame_zval(
@@ -1219,7 +1047,7 @@ def _frame_zval(
     return source, zval, block_of
 
 
-def attach_net_charges(frame: Frame, directory: str | Path) -> Frame:
+def attach_net_charges(frame: Frame, directory: Path) -> Frame:
     """Attach ``net_charge`` = ZVAL - population to Bader and BaderKit atom populations.
 
     ZVAL comes from the first of ``POTCAR`` and ``OUTCAR`` in the frame *directory*.
@@ -1234,7 +1062,7 @@ def attach_net_charges(frame: Frame, directory: str | Path) -> Frame:
     if not any(_is_population(feature) for feature in frame.features):
         return frame
     try:
-        source, zval, block_of = _frame_zval(frame, Path(directory))
+        source, zval, block_of = _frame_zval(frame, directory)
     except (DescriptorError, VaspParseError) as exc:
         return replace(frame, metadata={**frame.metadata, "net_charge_unavailable": str(exc)})
     features = list(frame.features)

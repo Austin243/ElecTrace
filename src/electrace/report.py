@@ -348,39 +348,23 @@ _HTML = """<!doctype html>
 """
 
 
-def render_html_report(
-    analysis: Mapping[str, Any],
-    output_path: str | Path,
-    *,
-    title: str | None = None,
-) -> Path:
+def render_html_report(analysis: Mapping[str, Any], output: Path) -> Path:
     """Render *analysis* as a portable HTML electronic-autopsy report.
 
     The output has no CDN or JavaScript package dependencies, which makes it
     suitable for offline clusters and long-term computational provenance.
     """
 
-    project = analysis.get("project", {})
-    project_name = (
-        str(project.get("name", "ElecTrace analysis"))
-        if isinstance(project, Mapping)
-        else "ElecTrace analysis"
-    )
-    page_title = title or f"{project_name} · ElecTrace"
+    project_name = analysis["project"]["name"]
     payload = _strict_json_dumps(
-        analysis,
-        context="HTML report analysis JSON",
-        separators=(",", ":"),
-        sort_keys=True,
+        analysis, context="HTML report analysis JSON", separators=(",", ":")
     ).replace("<", "\\u003c")
     document = (
-        _HTML.replace("__TITLE__", _escape_html(page_title))
+        _HTML.replace("__TITLE__", _escape_html(f"{project_name} · ElecTrace"))
         .replace("__HEADING__", _escape_html(project_name))
         .replace("__DATA__", payload)
     )
-    output = Path(output_path)
-    atomic_write_text(output, document)
-    return output
+    return atomic_write_text(output, document)
 
 
 def _escape_html(value: str) -> str:

@@ -9,22 +9,15 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .vasp import read_vasp_energy
 
 
 class DiscoveryError(ValueError):
     """Raised when a directory cannot be interpreted as an ordered path."""
-
-
-class SeriesKind(StrEnum):
-    """Supported directory layouts."""
-
-    NEB = "neb"
-    STATIC = "static"
-    PRESSURE = "pressure"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,36 +28,24 @@ class FrameSource:
     label: str
     directory: Path
     structure: Path
-    energy_ev: float | None = None
-    pressure_gpa: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    energy_ev: float | None
+    pressure_gpa: float | None
+    metadata: dict[str, Any]
 
     def __post_init__(self) -> None:
-        if self.index < 0:
-            raise ValueError("frame index must be non-negative")
-        if not self.label or not self.label.strip():
+        if not self.label.strip():
             raise ValueError("frame label must not be empty")
-        if self.energy_ev is not None and not math.isfinite(self.energy_ev):
-            raise ValueError("frame energy must be finite")
         if self.pressure_gpa is not None and not math.isfinite(self.pressure_gpa):
             raise ValueError("frame pressure must be finite")
 
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredPath:
-    """An immutable, validated ordered collection of VASP frame sources."""
+    """An ordered collection of VASP frame sources."""
 
     root: Path
-    kind: SeriesKind
+    kind: str  # "neb", "static", or "pressure"
     frames: tuple[FrameSource, ...]
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not self.frames:
-            raise ValueError("a discovered path must contain at least one frame")
-        indices = [frame.index for frame in self.frames]
-        if indices != sorted(indices) or len(indices) != len(set(indices)):
-            raise ValueError("frame indices must be unique and sorted")
 
 
 _NUMERIC_DIRECTORY = re.compile(r"^[0-9]+$")
@@ -78,6 +59,7 @@ _PRESSURE_PATTERNS = (
         r"(?P<value>[+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:$|[_ -])"
     ),
 )
+_GPA_PER_UNIT = {"gpa": 1.0, "kbar": 0.1, "kb": 0.1, "bar": 1.0e-4}
 _OUTCAR_PRESSURE = re.compile(
     r"external\s+pressure\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)\s*kB",
     re.IGNORECASE,
@@ -85,8 +67,6 @@ _OUTCAR_PRESSURE = re.compile(
 
 
 def _input_filename(value: str, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string")
     name = value.strip()
     if (
         not name
@@ -94,17 +74,13 @@ def _input_filename(value: str, field_name: str) -> str:
         or any(ord(character) < 32 or ord(character) == 127 for character in name)
         or "/" in name
         or "\\" in name
-        or Path(name).is_absolute()
     ):
         raise DiscoveryError(f"{field_name} must be a basename, not a path: {value!r}")
     return name
 
 
 def _structure_in(
-    directory: Path,
-    prefer_contcar: bool,
-    structure_name: str,
-    fallback_structure_name: str,
+    directory: Path, prefer_contcar: bool, structure_name: str, fallback_structure_name: str
 ) -> Path | None:
     primary = _input_filename(structure_name, "structure_name")
     fallback = _input_filename(fallback_structure_name, "fallback_structure_name")
@@ -116,17 +92,28 @@ def _structure_in(
     return None
 
 
-def _energy_in(directory: Path) -> tuple[float | None, str | None]:
-    # Local import avoids coupling directory discovery to parser initialization.
-    from .vasp import read_vasp_energy
+def _frame_source(
+    index: int, directory: Path, structure: Path, pressure: float | None = None, **metadata: Any
+) -> FrameSource:
+    """Describe one frame, taking its energy from the first of OUTCAR and OSZICAR that has one."""
 
+    energy = None
     for filename in ("OUTCAR", "OSZICAR"):
         candidate = directory / filename
         if candidate.is_file():
-            value = read_vasp_energy(candidate)
-            if value is not None:
-                return value, filename
-    return None, None
+            energy = read_vasp_energy(candidate)
+            if energy is not None:
+                metadata["energy_source"] = filename
+                break
+    return FrameSource(
+        index=index,
+        label=directory.name,
+        directory=directory,
+        structure=structure,
+        energy_ev=energy,
+        pressure_gpa=pressure,
+        metadata=metadata,
+    )
 
 
 def pressure_from_label(label: str) -> float | None:
@@ -139,22 +126,15 @@ def pressure_from_label(label: str) -> float | None:
 
     for pattern in _PRESSURE_PATTERNS:
         match = pattern.search(label)
-        if match is None:
-            continue
-        value = float(match.group("value"))
-        unit = (match.groupdict().get("unit") or "gpa").lower()
-        if unit in {"kbar", "kb"}:
-            return value * 0.1
-        if unit == "bar":
-            return value * 1.0e-4
-        return value
+        if match is not None:
+            unit = (match.groupdict().get("unit") or "gpa").lower()
+            return float(match.group("value")) * _GPA_PER_UNIT[unit]
     return None
 
 
-def pressure_from_outcar(path: str | Path) -> float | None:
+def pressure_from_outcar(source: Path) -> float | None:
     """Extract the last VASP external pressure and convert kbar to GPa."""
 
-    source = Path(path)
     if not source.is_file():
         return None
     last: float | None = None
@@ -162,7 +142,7 @@ def pressure_from_outcar(path: str | Path) -> float | None:
         for line in handle:
             match = _OUTCAR_PRESSURE.search(line)
             if match is not None:
-                last = float(match.group(1).replace("D", "E").replace("d", "e")) * 0.1
+                last = float(match.group(1)) * 0.1
     return last
 
 
@@ -196,26 +176,24 @@ def discover_neb(
     if not numeric:
         raise DiscoveryError(f"no numeric NEB image directories found under {base}")
 
-    by_index: dict[int, Path] = {}
-    skipped: list[str] = []
+    by_index: dict[int, tuple[Path, Path]] = {}
     for directory in numeric:
         index = int(directory.name)
         if index in by_index:
             raise DiscoveryError(
-                f"ambiguous NEB indices: {by_index[index].name!r} and {directory.name!r} both mean {index}"
+                f"ambiguous NEB indices: {by_index[index][0].name!r} and {directory.name!r} both mean {index}"
             )
         structure = _structure_in(
             directory, prefer_contcar, structure_name, fallback_structure_name
         )
         if structure is None:
-            skipped.append(directory.name)
             if strict:
                 raise DiscoveryError(
                     f"numeric image directory {directory} has no usable "
                     f"{structure_name} or {fallback_structure_name}"
                 )
             continue
-        by_index[index] = directory
+        by_index[index] = (directory, structure)
 
     if len(by_index) < 2:
         raise DiscoveryError("a NEB path requires at least two usable numeric image directories")
@@ -226,33 +204,11 @@ def discover_neb(
             missing = sorted(set(expected) - set(ordered_indices))
             raise DiscoveryError(f"NEB image indices are not contiguous; missing {missing}")
 
-    frames: list[FrameSource] = []
-    for canonical_index, directory_index in enumerate(ordered_indices):
-        directory = by_index[directory_index]
-        structure = _structure_in(
-            directory, prefer_contcar, structure_name, fallback_structure_name
-        )
-        assert structure is not None
-        energy, energy_source = _energy_in(directory)
-        metadata: dict[str, Any] = {"directory_index": directory_index}
-        if energy_source is not None:
-            metadata["energy_source"] = energy_source
-        frames.append(
-            FrameSource(
-                index=canonical_index,
-                label=directory.name,
-                directory=directory,
-                structure=structure,
-                energy_ev=energy,
-                metadata=metadata,
-            )
-        )
-    return DiscoveredPath(
-        root=base,
-        kind=SeriesKind.NEB,
-        frames=tuple(frames),
-        metadata={"skipped_numeric_directories": skipped, "strict": strict},
+    frames = tuple(
+        _frame_source(canonical_index, *by_index[directory_index], directory_index=directory_index)
+        for canonical_index, directory_index in enumerate(ordered_indices)
     )
+    return DiscoveredPath(root=base, kind="neb", frames=frames)
 
 
 def _natural_key(value: str) -> tuple[tuple[int, int | str], ...]:
@@ -297,63 +253,51 @@ def discover_static_series(
             f"no child directories with {structure_name} or {fallback_structure_name} "
             f"found under {base}"
         )
-    if require_pressure and any(item[2] is None for item in found):
-        labels = [directory.name for directory, _, pressure in found if pressure is None]
-        raise DiscoveryError(f"pressure is missing for static frames: {', '.join(sorted(labels))}")
+    missing = sorted(directory.name for directory, _, pressure in found if pressure is None)
+    if require_pressure and missing:
+        raise DiscoveryError(f"pressure is missing for static frames: {', '.join(missing)}")
 
-    is_pressure = all(item[2] is not None for item in found)
+    is_pressure = not missing
     if is_pressure:
-
-        def pressure_key(item: tuple[Path, Path, float | None]) -> tuple[float, object]:
-            pressure = item[2]
-            assert pressure is not None
-            return pressure, _natural_key(item[0].name)
-
-        found.sort(key=pressure_key)
-        pressures = [pressure for _, _, pressure in found if pressure is not None]
+        found.sort(key=lambda item: (item[2], _natural_key(item[0].name)))
+        pressures = [pressure for _, _, pressure in found]
         if len(pressures) != len(set(pressures)):
             raise DiscoveryError("pressure series contains duplicate pressure values")
     else:
         found.sort(key=lambda item: _natural_key(item[0].name))
 
-    frames: list[FrameSource] = []
-    for index, (directory, structure, pressure) in enumerate(found):
-        energy, energy_source = _energy_in(directory)
-        metadata: dict[str, Any] = {}
-        if energy_source is not None:
-            metadata["energy_source"] = energy_source
-        frames.append(
-            FrameSource(
-                index=index,
-                label=directory.name,
-                directory=directory,
-                structure=structure,
-                energy_ev=energy,
-                pressure_gpa=pressure,
-                metadata=metadata,
-            )
-        )
-    return DiscoveredPath(
-        root=base,
-        kind=SeriesKind.PRESSURE if is_pressure else SeriesKind.STATIC,
-        frames=tuple(frames),
-        metadata={"ordered_by": "pressure_gpa" if is_pressure else "natural_label"},
+    frames = tuple(
+        _frame_source(index, directory, structure, pressure)
+        for index, (directory, structure, pressure) in enumerate(found)
     )
+    return DiscoveredPath(root=base, kind="pressure" if is_pressure else "static", frames=frames)
 
 
 def discover_path(
     root: str | Path,
     *,
-    mode: str | SeriesKind = "auto",
+    mode: str = "auto",
+    strict: bool = True,
     prefer_contcar: bool = True,
     structure_name: str = "CONTCAR",
     fallback_structure_name: str = "POSCAR",
-    strict: bool = True,
 ) -> DiscoveredPath:
     """Discover an ordered VASP path, automatically detecting NEB layouts."""
 
-    normalized = mode.value if isinstance(mode, SeriesKind) else str(mode).strip().lower()
-    if normalized == "neb":
+    if mode == "auto":
+        base = Path(root).expanduser().resolve()
+        numeric_with_structures = 0
+        if base.is_dir():
+            numeric_with_structures = sum(
+                1
+                for child in base.iterdir()
+                if child.is_dir()
+                and _NUMERIC_DIRECTORY.fullmatch(child.name)
+                and _structure_in(child, prefer_contcar, structure_name, fallback_structure_name)
+                is not None
+            )
+        mode = "neb" if numeric_with_structures >= 2 else "static"
+    if mode == "neb":
         return discover_neb(
             root,
             prefer_contcar=prefer_contcar,
@@ -361,41 +305,14 @@ def discover_path(
             fallback_structure_name=fallback_structure_name,
             strict=strict,
         )
-    if normalized in {"static", "ordered", "pressure"}:
+    if mode in {"static", "ordered", "pressure"}:
         return discover_static_series(
             root,
             prefer_contcar=prefer_contcar,
             structure_name=structure_name,
             fallback_structure_name=fallback_structure_name,
-            require_pressure=normalized == "pressure",
+            require_pressure=mode == "pressure",
         )
-    if normalized != "auto":
-        raise DiscoveryError(
-            f"unknown discovery mode {mode!r}; expected auto, neb, static/ordered, or pressure"
-        )
-
-    base = Path(root).expanduser().resolve()
-    numeric_with_structures = 0
-    if base.is_dir():
-        numeric_with_structures = sum(
-            1
-            for child in base.iterdir()
-            if child.is_dir()
-            and _NUMERIC_DIRECTORY.fullmatch(child.name)
-            and _structure_in(child, prefer_contcar, structure_name, fallback_structure_name)
-            is not None
-        )
-    if numeric_with_structures >= 2:
-        return discover_neb(
-            base,
-            prefer_contcar=prefer_contcar,
-            structure_name=structure_name,
-            fallback_structure_name=fallback_structure_name,
-            strict=strict,
-        )
-    return discover_static_series(
-        base,
-        prefer_contcar=prefer_contcar,
-        structure_name=structure_name,
-        fallback_structure_name=fallback_structure_name,
+    raise DiscoveryError(
+        f"unknown discovery mode {mode!r}; expected auto, neb, static/ordered, or pressure"
     )

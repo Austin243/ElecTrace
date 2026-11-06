@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping
-from collections.abc import Sequence as TypingSequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from itertools import pairwise
 from typing import Any, TypeAlias
@@ -16,16 +15,10 @@ Identifier: TypeAlias = int | str
 
 
 class FeatureKind(StrEnum):
-    ATOMIC_BASIN = "atomic_basin"
-    ELF_BASIN = "elf_basin"
-    NON_NUCLEAR_ATTRACTOR = "non_nuclear_attractor"
     BOND_CRITICAL_POINT = "bond_critical_point"
     RING_CRITICAL_POINT = "ring_critical_point"
     CAGE_CRITICAL_POINT = "cage_critical_point"
-    BOND_PATH = "bond_path"
-    BOND_DESCRIPTOR = "bond_descriptor"
     ATOMIC_CHARGE = "atomic_charge"
-    OTHER = "other"
 
 
 class MatchRelation(StrEnum):
@@ -77,8 +70,6 @@ def _finite(value: float | None, name: str) -> float | None:
 
 
 def _json_value(value: Any) -> Any:
-    if isinstance(value, StrEnum):
-        return value.value
     if value is None or isinstance(value, (str, int, bool)):
         return value
     if isinstance(value, float):
@@ -91,9 +82,19 @@ def _json_value(value: Any) -> Any:
         return [_json_value(item) for item in value]
     if hasattr(value, "tolist"):
         return _json_value(value.tolist())
-    if hasattr(value, "item"):
-        return _json_value(value.item())
+    if isinstance(value, (Atom, Feature, MatchEdge)):
+        return value.to_dict()
     raise TypeError(f"{type(value).__name__} is not JSON serializable")
+
+
+def _record(item: Any) -> dict[str, Any]:
+    """Serialize a dataclass field by field; float fields pass through unchecked."""
+
+    record = {}
+    for field_ in fields(item):
+        value = getattr(item, field_.name)
+        record[field_.name] = value if isinstance(value, float) else _json_value(value)
+    return record
 
 
 @dataclass(slots=True)
@@ -112,12 +113,7 @@ class Atom:
         self.attributes = dict(self.attributes)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "index": self.index,
-            "element": self.element,
-            "fractional_position": list(self.fractional_position),
-            "attributes": _json_value(self.attributes),
-        }
+        return _record(self)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Atom:
@@ -132,7 +128,7 @@ class Atom:
 @dataclass(slots=True)
 class Feature:
     id: str
-    kind: str | FeatureKind
+    kind: str
     fractional_position: Vec3
     charge: float | None = None
     volume: float | None = None
@@ -165,17 +161,9 @@ class Feature:
             self.voxel_indices = tuple(sorted(voxels))
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
-            "id": self.id,
-            "kind": self.kind,
-            "fractional_position": list(self.fractional_position),
-            "charge": self.charge,
-            "volume": self.volume,
-            "neighbor_atom_indices": list(self.neighbor_atom_indices),
-            "attributes": _json_value(self.attributes),
-        }
-        if self.voxel_indices is not None:
-            result["voxel_indices"] = [list(voxel) for voxel in self.voxel_indices]
+        result = _record(self)
+        if self.voxel_indices is None:
+            del result["voxel_indices"]
         return result
 
     @classmethod
@@ -207,12 +195,6 @@ class Frame:
         self.index = int(self.index)
         self.label = str(self.label)
         self.cell = _matrix3(self.cell)
-        self.atoms = tuple(
-            item if isinstance(item, Atom) else Atom.from_dict(item) for item in self.atoms
-        )
-        self.features = tuple(
-            item if isinstance(item, Feature) else Feature.from_dict(item) for item in self.features
-        )
         atom_ids = {atom.index for atom in self.atoms}
         if len(atom_ids) != len(self.atoms) or len({item.id for item in self.features}) != len(
             self.features
@@ -229,22 +211,8 @@ class Frame:
         except StopIteration:
             raise KeyError(index) from None
 
-    def feature_by_id(self, feature_id: str) -> Feature:
-        try:
-            return next(feature for feature in self.features if feature.id == feature_id)
-        except StopIteration:
-            raise KeyError(feature_id) from None
-
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "index": self.index,
-            "label": self.label,
-            "cell": [list(row) for row in self.cell],
-            "atoms": [atom.to_dict() for atom in self.atoms],
-            "features": [feature.to_dict() for feature in self.features],
-            "energy": self.energy,
-            "metadata": _json_value(self.metadata),
-        }
+        return _record(self)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Frame:
@@ -263,33 +231,13 @@ class Frame:
 @dataclass(slots=True)
 class Sequence:
     frames: tuple[Frame, ...]
-    label: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.frames = tuple(
-            item if isinstance(item, Frame) else Frame.from_dict(item) for item in self.frames
-        )
         indices = [frame.index for frame in self.frames]
         if any(right <= left for left, right in pairwise(indices)):
             raise ValueError("frames must have increasing unique indices")
-        self.label = str(self.label)
         self.metadata = dict(self.metadata)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "label": self.label,
-            "frames": [item.to_dict() for item in self.frames],
-            "metadata": _json_value(self.metadata),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Sequence:
-        return cls(
-            tuple(Frame.from_dict(item) for item in data.get("frames", ())),
-            str(data.get("label", "")),
-            dict(data.get("metadata", {})),
-        )
 
 
 @dataclass(slots=True)
@@ -299,18 +247,6 @@ class MatchEdge:
     cost: float
     confidence: float
     evidence: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        self.source_ids, self.target_ids = tuple(self.source_ids), tuple(self.target_ids)
-        self.cost, self.confidence = float(self.cost), float(self.confidence)
-        self.evidence = dict(self.evidence)
-        if (
-            not self.source_ids
-            or not self.target_ids
-            or self.cost < 0
-            or not 0 <= self.confidence <= 1
-        ):
-            raise ValueError("invalid match edge")
 
     @property
     def relation(self) -> MatchRelation:
@@ -322,39 +258,8 @@ class MatchEdge:
             return MatchRelation.MERGE
         return MatchRelation.MANY_TO_MANY
 
-    @property
-    def source_id(self) -> Identifier:
-        if len(self.source_ids) != 1:
-            raise AttributeError("hyperedge has multiple sources")
-        return self.source_ids[0]
-
-    @property
-    def target_id(self) -> Identifier:
-        if len(self.target_ids) != 1:
-            raise AttributeError("hyperedge has multiple targets")
-        return self.target_ids[0]
-
-    score = property(lambda self: self.confidence)
-
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_ids": list(self.source_ids),
-            "target_ids": list(self.target_ids),
-            "relation": self.relation.value,
-            "cost": self.cost,
-            "confidence": self.confidence,
-            "evidence": _json_value(self.evidence),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> MatchEdge:
-        return cls(
-            tuple(data["source_ids"]),
-            tuple(data["target_ids"]),
-            float(data["cost"]),
-            float(data["confidence"]),
-            dict(data.get("evidence", {})),
-        )
+        return {**_record(self), "relation": self.relation.value}
 
 
 @dataclass(slots=True)
@@ -368,44 +273,20 @@ class MatchResult:
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def matches(self) -> tuple[MatchEdge, ...]:
-        return self.edges
-
-    @property
     def mapping(self) -> dict[Identifier, Identifier]:
         return {
-            edge.source_id: edge.target_id
+            edge.source_ids[0]: edge.target_ids[0]
             for edge in self.edges
             if edge.relation is MatchRelation.ONE_TO_ONE
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "previous_frame_index": self.previous_frame_index,
-            "current_frame_index": self.current_frame_index,
-            "edges": [edge.to_dict() for edge in self.edges],
-            "unmatched_previous": list(self.unmatched_previous),
-            "unmatched_current": list(self.unmatched_current),
-            "total_cost": self.total_cost,
-            "diagnostics": _json_value(self.diagnostics),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> MatchResult:
-        return cls(
-            int(data["previous_frame_index"]),
-            int(data["current_frame_index"]),
-            tuple(MatchEdge.from_dict(item) for item in data.get("edges", ())),
-            tuple(data.get("unmatched_previous", ())),
-            tuple(data.get("unmatched_current", ())),
-            float(data.get("total_cost", 0)),
-            dict(data.get("diagnostics", {})),
-        )
+        return _record(self)
 
 
 @dataclass(slots=True)
 class Event:
-    type: EventType | str
+    type: EventType
     frame_before: int
     frame_after: int
     source_ids: tuple[Identifier, ...] = ()
@@ -416,46 +297,9 @@ class Event:
     description: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        self.type = EventType(self.type)
-        self.source_ids, self.target_ids = tuple(self.source_ids), tuple(self.target_ids)
-        self.confidence, self.persistence = float(self.confidence), int(self.persistence)
-        self.evidence, self.metadata = dict(self.evidence), dict(self.metadata)
-        if not 0 <= self.confidence <= 1 or self.persistence < 1:
-            raise ValueError("invalid event confidence or persistence")
-
     @property
     def event_type(self) -> EventType:
-        return EventType(self.type)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "type": self.event_type.value,
-            "frame_before": self.frame_before,
-            "frame_after": self.frame_after,
-            "source_ids": list(self.source_ids),
-            "target_ids": list(self.target_ids),
-            "confidence": self.confidence,
-            "persistence": self.persistence,
-            "evidence": _json_value(self.evidence),
-            "description": self.description,
-            "metadata": _json_value(self.metadata),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Event:
-        return cls(
-            str(data["type"]),
-            int(data["frame_before"]),
-            int(data["frame_after"]),
-            tuple(data.get("source_ids", ())),
-            tuple(data.get("target_ids", ())),
-            float(data.get("confidence", 0)),
-            int(data.get("persistence", 1)),
-            dict(data.get("evidence", {})),
-            str(data.get("description", "")),
-            dict(data.get("metadata", {})),
-        )
+        return self.type
 
 
 @dataclass(slots=True)
@@ -464,24 +308,3 @@ class TrackingResult:
     feature_matches: tuple[MatchResult, ...]
     events: tuple[Event, ...]
     diagnostics: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "atom_matches": [item.to_dict() for item in self.atom_matches],
-            "feature_matches": [item.to_dict() for item in self.feature_matches],
-            "events": [item.to_dict() for item in self.events],
-            "diagnostics": _json_value(self.diagnostics),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> TrackingResult:
-        return cls(
-            tuple(MatchResult.from_dict(item) for item in data.get("atom_matches", ())),
-            tuple(MatchResult.from_dict(item) for item in data.get("feature_matches", ())),
-            tuple(Event.from_dict(item) for item in data.get("events", ())),
-            dict(data.get("diagnostics", {})),
-        )
-
-
-def ensure_sequence(value: Sequence | TypingSequence[Frame]) -> Sequence:
-    return value if isinstance(value, Sequence) else Sequence(tuple(value))
