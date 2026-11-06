@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import platform
 import sys
@@ -90,6 +91,10 @@ def main(
     ),
 ) -> None:
     """ElecTrace tracks electronic features across ordered periodic paths."""
+
+    # Runs keep hundreds of thousands of long-lived objects, and the default thresholds rescan
+    # them so often that collection is about a seventh of the CPU time on real bands.
+    gc.set_threshold(200_000, 20, 100)
 
 
 def _emit_json(command: str, data: object, *, warnings: Sequence[str] = ()) -> None:
