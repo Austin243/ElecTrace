@@ -293,12 +293,15 @@ These change results on inputs that used to run without complaint.
 - The report's timeline labels each event with the step it happened on. It showed
   `frame_after` to the end of the event's lineage, so a change on step 04→05 read
   "frame 5→6" while the same report's track table said 04→05, and it mixed frame
-  indices with labels. Property-change and rearrangement badges now have a color.
+  indices with labels. Property-change and rearrangement badges now have a color, and
+  the badge column fits them.
 - A warning says when critic2 `field` or `laplacian` values exist but
   `[events.descriptor_thresholds]` has no threshold for them, so that their changes raise
   no events, and the starter configuration shows the two lines, commented out. No
   thresholds or events change: the HCN frames under a starter configuration still give
   10 events, and 20 with the two lines added.
+- `electrace inspect` prints warnings literally. It read square brackets as console
+  markup, so `[events.descriptor_thresholds]` vanished from the text.
 - `electrace demo` writes bond-critical-point densities as `field`, which bond rows read,
   so its bond rows have densities and its figure has a density panel. Its events are
   unchanged. It is a regression fixture, not a result.

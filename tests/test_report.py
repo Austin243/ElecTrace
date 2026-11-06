@@ -40,6 +40,14 @@ def test_every_event_type_has_a_badge_color() -> None:
     assert {item.value for item in EventType} <= colored
 
 
+def test_timeline_badge_column_fits_the_longest_badge() -> None:
+    # "PROPERTY_CHANGE" at .7rem monospace with its padding needs about 7.5rem.
+    match = re.search(r"\.event \{ display: grid; grid-template-columns: ([\d.]+)rem", _HTML)
+
+    assert match is not None
+    assert float(match.group(1)) >= 8
+
+
 def test_timeline_labels_each_event_with_its_step() -> None:
     timeline = _HTML[
         _HTML.index('document.getElementById("timeline")') : _HTML.index("noiseNote(e) {")

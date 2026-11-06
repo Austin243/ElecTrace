@@ -68,7 +68,7 @@ _HTML = """<!doctype html>
     .chart-note { font-size: .82rem; margin: .6rem 0 0; }
     .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
     .timeline { display: grid; gap: .45rem; }
-    .event { display: grid; grid-template-columns: 6.5rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
+    .event { display: grid; grid-template-columns: 8rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
     .event:first-child { border-top: 0; }
     .badge { border: 1px solid currentColor; border-radius: 999px; padding: .2rem .55rem; width: fit-content; font: 700 .7rem ui-monospace, monospace; text-transform: uppercase; }
     .birth { color: var(--green); } .death { color: var(--red); } .split, .merge, .rearrangement { color: var(--violet); } .change, .property_change, .connectivity_change { color: var(--amber); }
@@ -85,7 +85,7 @@ _HTML = """<!doctype html>
     pre { overflow: auto; background: #07131d; border: 1px solid var(--line); padding: .8rem; border-radius: 8px; font-size: .74rem; }
     .scroll { overflow-x: auto; }
     footer { color: var(--muted); text-align: center; font-size: .78rem; padding: 1.5rem; }
-    @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .grid { grid-template-columns: 1fr; } .event { grid-template-columns: 5.5rem 5rem 1fr; } .event > :last-child { display:none; } }
+    @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .grid { grid-template-columns: 1fr; } .event { grid-template-columns: 8rem 5rem 1fr; } .event > :last-child { display:none; } }
   </style>
 </head>
 <body>

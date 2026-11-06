@@ -539,6 +539,13 @@ or Python-style slices:
 Staging writes an isolated workspace and does not execute a program. Review the
 generated commands and inputs before authorizing work.
 
+Staging over an existing workspace needs `--force`, which replaces it. It stops if the
+workspace holds files a fresh stage would not write, such as job outputs, logs, run and
+Slurm records, and collected analyses, and names them. `--force --discard-results`
+deletes them, including under queued or running jobs. Removing a step or frame from the
+manifest also asks for `--discard-results`, because its staged files cannot be told
+from results.
+
 ## Supported calculation steps
 
 | Goal | Step | Capability | Collected output |

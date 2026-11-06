@@ -377,7 +377,7 @@ def _print_analysis_summary(analysis: dict[str, Any]) -> None:
     if warnings:
         console.print(f"[yellow]{len(warnings)} warning(s)[/yellow]")
         for warning in warnings:
-            console.print(f"  - {warning}")
+            console.print(f"  - {escape(str(warning))}")
 
 
 @app.command()

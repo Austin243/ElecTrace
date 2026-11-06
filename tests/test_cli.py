@@ -223,6 +223,19 @@ def test_numbered_frames_get_the_order_line_and_no_order_warning(tmp_path: Path)
     assert "natural order" not in text
 
 
+def test_inspect_prints_warnings_with_square_brackets_literally(tmp_path: Path) -> None:
+    analysis = tmp_path / "analysis.json"
+    analysis.write_text(
+        json.dumps({"warnings": ["set [events.descriptor_thresholds] and [bold]x[/bold]"]}),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["inspect", str(analysis)])
+
+    assert result.exit_code == 0, result.output
+    assert "set [events.descriptor_thresholds] and [bold]x[/bold]" in _plain(result.output)
+
+
 def test_parse_errors_use_normal_cli_output() -> None:
     result = runner.invoke(app, ["doctor", "--unknown", "--json"])
 
