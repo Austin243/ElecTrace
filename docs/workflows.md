@@ -33,7 +33,7 @@ prints the order it used, and `[project] series_kind` sets it:
 | `neb` | numeric directories, by number; other names stop with an error | `neb` |
 | `ordered` | natural order of the directory names, so `image_2` before `image_10` | `pressure` when every name states one, otherwise `static` |
 | `static` | the same | `static` |
-| `pressure` | by pressure, from each name or else the last `external pressure` in `OUTCAR`; a frame without one stops with an error | `pressure` |
+| `pressure` | by pressure, from each name or else the last `external pressure` plus `Pullay stress` in `OUTCAR`; a frame without one stops with an error | `pressure` |
 | `auto` | as `neb` for two or more numeric directories; by pressure when every name states one (`5GPa`, `p20`, `100kbar`); otherwise the natural order of the names | as that order |
 
 An `OUTCAR`'s stress alone never sorts frames, because every VASP run prints one. A
@@ -41,6 +41,14 @@ warning says when the order differs from the names' order, and when numbers in t
 names do not set it: `IS`, `TS`, and `FS` come out as `FS`, `IS`, `TS`, and no rule can
 tell. Name or link such directories `00`, `01`, ... to set the order. A pressure series
 places no event on a barrier.
+
+VASP prints `external pressure` as the stress-tensor pressure minus `PSTRESS`, which it
+labels `Pullay stress`, so under `PSTRESS` it is only the residual. ElecTrace reads their
+sum, the pressure of the cell rather than the nominal value: a `PSTRESS = 3000` run ending
+in `external pressure = -9.36 kB  Pullay stress = 3000.00 kB` reads as 299.06 GPa. Name a
+directory `300GPa` to use the nominal pressure. Without `PSTRESS` the sum is `external
+pressure` itself. If `PSTRESS` only offsets a basis-set Pulay stress, the sum is the stress
+before that correction.
 
 `workflow analyze` keeps the staged order and repeats any warning about it in its
 results. A workflow with `series_kind: pressure` stays a pressure series there only if

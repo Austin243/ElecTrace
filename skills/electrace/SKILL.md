@@ -28,7 +28,8 @@ provenance. Do not silently add `--permissive` to relax frame discovery.
 Check the frame order that `analyze` prints against the path, since every event depends
 on it. Frames keep the natural order of their directory names; a warning says when
 numbers in the names do not set that order (`IS`, `TS`, `FS`), and only
-`series_kind = "pressure"` sorts frames by `OUTCAR` stress.
+`series_kind = "pressure"` sorts frames by `OUTCAR` pressure: `external pressure` plus
+`Pullay stress`, the pressure of the cell, which under `PSTRESS` is not the nominal value.
 
 `missing_descriptors` in `analysis.json` names any output that some frames lack, with
 the births and deaths left out for it. Tell the user which analysis to run or repair;
