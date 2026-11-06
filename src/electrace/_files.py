@@ -11,6 +11,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
+# Marks a collected workflow analysis, whose input/ holds rewritten energies.
+COLLECTION_RECORD = ".electrace-collection.json"
+
 
 @contextmanager
 def atomic_output_path(output: Path) -> Iterator[Path]:

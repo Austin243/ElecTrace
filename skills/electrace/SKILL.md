@@ -76,6 +76,8 @@ frame is not a located transition state. For a variable-cell path at one pressur
 use H = E + PV; without it they use E, and a warning says when frame volumes differ.
 Under `PSTRESS`, `OSZICAR`'s `F` and `E0` already include PV and `OUTCAR`'s `TOTEN` does
 not, so report the warning about `OSZICAR` energies.
+Report the warning too when a path takes energies from both `OUTCAR` and `OSZICAR`:
+under `PSTRESS` they differ by PV, so any barrier across them is unreliable.
 
 To draw chosen bonds and atoms along the path, install `electrace[plot]` and run
 `electrace figure RESULTS --bond C41-H227 --atom H227 --output NAME --json`. It

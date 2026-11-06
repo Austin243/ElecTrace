@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from electrace._files import atomic_write_json, atomic_write_text, publish_directory
-from electrace.io.discovery import discover_path
+from electrace.io.discovery import discover_path, energy_source_warnings
 from electrace.io.vasp import element_symbol, parse_poscar
 from electrace.plugins.critic2_input import (
     ALL_ELECTRON_FILES,
@@ -666,7 +666,7 @@ def load_project(manifest_path: str | Path) -> tuple[Path, WorkflowManifest, Pat
 def _selected_frames(
     manifest: WorkflowManifest, source_root: Path, workspace: Path
 ) -> tuple[tuple[StagedFrame, ...], tuple[str, ...]]:
-    """Return the selected frames and any warning about the order they were found in."""
+    """Return the selected frames and any warning about their order or energies."""
 
     discovered = discover_path(
         source_root,
@@ -675,7 +675,7 @@ def _selected_frames(
         fallback_structure_name=manifest.project.fallback,
     )
     sources = discovered.frames
-    selected = (sources[index] for index in parse_frame_selection(manifest.frames, len(sources)))
+    selected = [sources[index] for index in parse_frame_selection(manifest.frames, len(sources))]
     frames = tuple(
         StagedFrame(
             source.index,
@@ -689,7 +689,7 @@ def _selected_frames(
         )
         for order, source in enumerate(selected)
     )
-    return frames, discovered.warnings
+    return frames, (*discovered.warnings, *energy_source_warnings(selected))
 
 
 def _workspace_is_managed(path: Path) -> bool:

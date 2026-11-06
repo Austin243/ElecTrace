@@ -79,7 +79,7 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
         step.id: _staging._template_files(step, source_manifest.parent) for step in manifest.steps
     }
 
-    frames, order_warnings = _staging._selected_frames(manifest, source_root, workspace)
+    frames, frame_warnings = _staging._selected_frames(manifest, source_root, workspace)
     species_warnings = tuple(
         warning
         for step in manifest.steps
@@ -99,7 +99,7 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
                 # cannot be seeded before anything is written.
                 _staging._periodic_input(step, frame.structure)
     warnings = (
-        *order_warnings,
+        *frame_warnings,
         *_workspace_warnings(workspace),
         *_executable_warnings(manifest, source_manifest.parent),
         *species_warnings,

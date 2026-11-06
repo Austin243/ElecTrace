@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -156,6 +157,25 @@ def pressure_from_outcar(source: Path) -> float | None:
                 external, pullay = match.groups()
                 last = (float(external) + float(pullay or 0.0)) * 0.1
     return last
+
+
+def energy_source_warnings(frames: Iterable[FrameSource]) -> tuple[str, ...]:
+    """Warn when frames of one path take their energies from different files."""
+
+    labels: dict[str, list[str]] = {}
+    for frame in frames:
+        if "energy_source" in frame.metadata:
+            labels.setdefault(frame.metadata["energy_source"], []).append(frame.label)
+    if len(labels) < 2:
+        return ()
+    files = "; ".join(f"{name} for {', '.join(names)}" for name, names in labels.items())
+    return (
+        f"Frame energies come from different files ({files}), and those are different "
+        "quantities: OUTCAR's free energy TOTEN and OSZICAR's E0 differ by the smearing term "
+        "and, under PSTRESS, by PV, since only E0 includes it. Energy differences across these "
+        "frames, and any barrier from them, are unreliable. Give every frame a complete OUTCAR, "
+        "or none.",
+    )
 
 
 def _check_contiguous(indices: list[int]) -> None:

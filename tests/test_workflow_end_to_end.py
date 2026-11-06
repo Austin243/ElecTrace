@@ -205,4 +205,4 @@ def test_numbered_workflow_collects_the_same_configuration(tmp_path, workflow_ma
 
     text = collected.config_path.read_text(encoding="utf-8")
     assert 'series_kind = "ordered"' in text
-    assert "order_warnings" not in text
+    assert "workflow_warnings" not in text

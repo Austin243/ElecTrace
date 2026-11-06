@@ -178,12 +178,17 @@ state. ElecTrace does not take it from a calculation, where each image has its o
 computed pressure and, under `PSTRESS`, `external pressure` in `OUTCAR` is the residual,
 not the target.
 
-The energy must not already include PV. Under `PSTRESS`, `free energy TOTEN` in `OUTCAR`
-leaves it out, while `F` and `E0` in `OSZICAR` include it. ElecTrace takes a frame's
-energy from `OUTCAR` when it has one, so keep the `OUTCAR` of such runs. A warning lists
-the frames whose energy comes from `OSZICAR`, because ElecTrace cannot tell whether those
-runs set `PSTRESS`. `TOTEN` is the free energy and `E0` the sigma → 0 energy, so for a
-metallic path the two files also differ by the smearing term.
+The energy must not already include PV. A frame's energy is the last `free energy TOTEN`
+in its `OUTCAR` or, if that has none, the last `E0` in its `OSZICAR`. These are different
+quantities. Under `PSTRESS`, `TOTEN` leaves PV out, while `F` and `E0` in `OSZICAR`
+include it; one frame of a real `PSTRESS = 3000` run reads 25.04 eV from `OUTCAR` and
+194.35 eV from `OSZICAR`. `TOTEN` is also the free energy and `E0` the sigma → 0 energy,
+so for a metallic path the two files differ by the smearing term as well. Keep the
+`OUTCAR` of such runs. With a stated pressure, a warning lists the frames whose energy
+comes from `OSZICAR`, because ElecTrace cannot tell whether those runs set `PSTRESS`.
+Another warning names the frames of each file when one path uses both; give every frame
+a complete `OUTCAR`, or none. For a workflow, `workflow validate`, `workflow stage`, and
+`workflow analyze` make this check on the selected source frames.
 
 ## Focus on the reacting atoms
 
