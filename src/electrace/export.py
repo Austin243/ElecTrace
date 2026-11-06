@@ -15,7 +15,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from electrace._files import atomic_output_path, atomic_write_text
+from electrace._files import atomic_output_path
 
 
 def _strict_json_dumps(value: Any, *, context: str, **kwargs: Any) -> str:
@@ -72,8 +72,19 @@ def _write_csv(
 def write_json(data: Mapping[str, Any], output: Path) -> Path:
     """Write the canonical analysis representation as stable, pretty JSON."""
 
-    payload = _strict_json_dumps(data, context="analysis JSON", indent=2)
-    return atomic_write_text(output, payload + "\n")
+    # Streamed: the indenting encoder's tokens would otherwise all be held for one final join.
+    with (
+        atomic_output_path(output) as temporary,
+        temporary.open("w", encoding="utf-8", newline="\n") as handle,
+    ):
+        try:
+            json.dump(data, handle, allow_nan=False, sort_keys=True, indent=2)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"analysis JSON contains a non-finite or non-JSON value: {exc}"
+            ) from exc
+        handle.write("\n")
+    return output
 
 
 def write_events_csv(events: Iterable[Mapping[str, Any]], output: Path) -> Path:
