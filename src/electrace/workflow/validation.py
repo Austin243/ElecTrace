@@ -46,7 +46,10 @@ def _workspace_warnings(workspace: Path) -> tuple[str, ...]:
         raise ValueError(
             f"workflow workspace already exists and is not ElecTrace-managed: {workspace}"
         )
-    return (f"workflow workspace already exists; staging it again requires --force: {workspace}",)
+    return (
+        "workflow workspace already exists; staging it again requires --force, and "
+        f"--discard-results if it holds results: {workspace}",
+    )
 
 
 def _executable_warnings(

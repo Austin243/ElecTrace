@@ -113,7 +113,9 @@ electrace workflow analyze electrace-workflow.yaml --json
 - Never invent a `POTCAR`, executable, credential, or private input.
 - If validation reports a POSCAR/POTCAR species-order mismatch, ask the user for a
   `POTCAR` in the structure's species order; do not reorder structure files.
-- Never add `--yes`, `--force`, or `--permissive` merely to make a command succeed.
+- Never add `--yes`, `--force`, `--discard-results`, or `--permissive` merely to make a
+  command succeed. `workflow stage --force --discard-results` deletes job outputs, and
+  needs the user's authorization for that deletion.
 - Treat Bader/DDEC values, ELF/QTAIM topology, and ICOHP/ICOBI as method-dependent
   evidence, not unique oxidation states, bonds, mechanisms, or energies.
 - Treat missing evidence as missing and surface external-tool failures.

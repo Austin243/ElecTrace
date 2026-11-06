@@ -712,7 +712,46 @@ def _rebase_job(job: JobSpec, source_root: Path, destination_root: Path) -> JobS
     )
 
 
-def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> StagedWorkflow:
+def _files_under(root: Path) -> set[Path]:
+    return {
+        path.relative_to(root) for path in root.rglob("*") if path.is_symlink() or not path.is_dir()
+    }
+
+
+def _check_no_results_lost(workspace: Path, fresh: Path) -> None:
+    """Stop before deleting files a fresh stage would not write, which may be results.
+
+    Job outputs, logs, run and submission records, and collected analyses are all such
+    files. Generated Slurm scripts are not, since submitting writes them again. A step
+    or frame removed from the manifest also counts, because nothing here can tell its
+    files from results.
+    """
+
+    record = Path("slurm", "submissions.json")
+    extra = sorted(
+        path
+        for path in _files_under(workspace) - _files_under(fresh)
+        if not (
+            path.parent == record.parent
+            and (path.suffix == ".slurm" or path.name == "scripts.json")
+        )
+    )
+    if not extra:
+        return
+    examples = ", ".join(str(path) for path in extra[:3])
+    running = " A Slurm submission record exists, so jobs may be queued or running." * (
+        record in extra
+    )
+    raise ValueError(
+        f"refusing to replace workflow workspace {workspace}: it holds {len(extra)} file(s) a "
+        f"fresh stage would not write, such as {examples}, which may be results.{running} "
+        "Copy what you need, or repeat with --force --discard-results to delete them."
+    )
+
+
+def stage_workflow(
+    manifest_path: str | Path, *, overwrite: bool = False, discard_results: bool = False
+) -> StagedWorkflow:
     source_manifest, manifest, source_root, workspace = load_project(manifest_path)
     manifest_hash = sha256_file(source_manifest)
     if not source_root.is_dir():
@@ -760,6 +799,8 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
             raise ValueError("workflow manifest changed while staging")
         if workspace.exists() and (not overwrite or not _workspace_is_managed(workspace)):
             raise ValueError(f"refusing to replace unmarked workflow workspace: {workspace}")
+        if workspace.exists() and not discard_results:
+            _check_no_results_lost(workspace, temporary)
         publish_directory(temporary, workspace)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)

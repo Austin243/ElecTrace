@@ -676,13 +676,24 @@ def workflow_validate(
 @workflow_app.command("stage")
 def workflow_stage(
     manifest: Path = typer.Argument(...),
-    force: bool = typer.Option(False, "--force"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing ElecTrace workspace, unless it holds files a fresh stage "
+        "would not write.",
+    ),
+    discard_results: bool = typer.Option(
+        False,
+        "--discard-results",
+        help="With --force, also delete those files: job outputs, logs, run and Slurm "
+        "records, and collected analyses. Queued or running jobs lose their directories.",
+    ),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Select frames and stage auditable jobs without executing anything."""
 
     with _report_errors("workflow.stage", as_json, KeyError):
-        staged = stage_workflow(manifest, overwrite=force)
+        staged = stage_workflow(manifest, overwrite=force, discard_results=discard_results)
     _finish(
         "workflow.stage",
         staged.to_dict(),

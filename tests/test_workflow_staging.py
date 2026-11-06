@@ -2,8 +2,11 @@ import shutil
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
+from electrace.cli import app
 from electrace.workflow import validate_workflow
+from electrace.workflow.operations import run_staged_workflow
 from electrace.workflow.staging import (
     _apply_incar_overrides,
     load_staged_workflow,
@@ -193,3 +196,85 @@ def test_stage_applies_incar_overrides_and_leaves_the_template_alone(tmp_path, w
 
     assert (staged.jobs[0].cwd / "INCAR").read_text(encoding="utf-8") == "ENCUT = 400; ISPIN = 2\n"
     assert (tmp_path / "vasp-template/INCAR").read_text(encoding="utf-8") == template
+
+
+@pytest.mark.parametrize(
+    "leftover",
+    [
+        "frames/000000-00/density/CHGCAR",
+        "frames/000000-00/density/vasp.stdout.log",
+        "run-results.json",
+        "analysis/electrace.toml",
+        "slurm/submissions.json",
+    ],
+)
+def test_stage_force_keeps_anything_a_fresh_stage_would_not_write(
+    tmp_path, workflow_manifest, leftover
+):
+    manifest = workflow_manifest()
+    stage_workflow(manifest)
+    path = tmp_path / "workspace" / leftover
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("days of work", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="--discard-results") as caught:
+        stage_workflow(manifest, overwrite=True)
+
+    assert path.read_text(encoding="utf-8") == "days of work"
+    assert leftover in str(caught.value)
+    assert list(tmp_path.glob(".workspace.stage-*")) == []
+
+    stage_workflow(manifest, overwrite=True, discard_results=True)
+    assert not path.exists()
+
+
+def test_stage_force_says_when_jobs_may_still_be_running(tmp_path, workflow_manifest):
+    manifest = workflow_manifest()
+    stage_workflow(manifest)
+    record = tmp_path / "workspace/slurm/submissions.json"
+    record.parent.mkdir()
+    record.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="queued or running"):
+        stage_workflow(manifest, overwrite=True)
+
+
+def test_stage_force_still_replaces_a_workspace_without_results(tmp_path, workflow_manifest):
+    """The counterexample: nothing ran, so there is nothing to lose."""
+
+    manifest = workflow_manifest()
+    staged = stage_workflow(manifest)
+    scripts = tmp_path / "workspace/slurm"
+    scripts.mkdir()
+    (scripts / "frame-000000.slurm").write_text("#!/bin/sh\n", encoding="utf-8")
+    (scripts / "scripts.json").write_text("{}", encoding="utf-8")
+
+    replaced = stage_workflow(manifest, overwrite=True)
+
+    assert replaced.to_dict() == staged.to_dict()
+    assert not scripts.exists()
+
+
+def test_stage_force_on_the_command_line_after_a_local_run(tmp_path, workflow_manifest):
+    vasp = tmp_path / "vasp.sh"
+    vasp.write_text("#!/bin/sh\necho density > CHGCAR\n", encoding="utf-8")
+    vasp.chmod(0o700)
+    manifest = workflow_manifest(executables={"vasp": str(vasp)})
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    density = list((tmp_path / "workspace").rglob("CHGCAR"))
+    assert len(density) == 2
+    runner = CliRunner()
+
+    refused = runner.invoke(app, ["workflow", "stage", str(manifest), "--force"])
+    assert refused.exit_code == 2
+    assert all(path.is_file() for path in density)
+
+    replaced = runner.invoke(
+        app, ["workflow", "stage", str(manifest), "--force", "--discard-results"]
+    )
+    assert replaced.exit_code == 0, replaced.output
+    assert not any(path.exists() for path in density)
+
+    help_text = " ".join(runner.invoke(app, ["workflow", "stage", "--help"]).output.split())
+    assert "--discard-results" in help_text

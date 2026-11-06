@@ -282,3 +282,11 @@ These change results on inputs that used to run without complaint.
 - A stray numeric directory such as `20261105123000` under a NEB root now stops with the
   usual "not contiguous" error instead of an uncaught `MemoryError` or `OverflowError`.
   Gaps of more than 100 images are given as ranges.
+- `workflow stage --force` no longer deletes results by itself. It stops when the
+  workspace holds files a fresh stage would not write, such as `OUTCAR`, `WAVECAR`, logs,
+  run and Slurm submission records, and collected analyses, and it names them; before,
+  it deleted them all and printed the normal "Staged" message, even under queued or
+  running jobs. `--force --discard-results` deletes them, and `--force` alone still
+  replaces a workspace where nothing ran. Removing a step or frame from the manifest
+  of an unrun workflow also asks for `--discard-results`, because its staged files
+  cannot be told from results.
