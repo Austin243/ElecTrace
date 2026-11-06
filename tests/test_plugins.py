@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from electrace.plugins import (
-    DEFAULT_REGISTRY,
-    Capability,
-    doctor_plugins,
-    plan_plugin,
-)
+from electrace.plugins.base import Capability
+from electrace.plugins.builtin import PLUGINS
+from electrace.plugins.registry import doctor_plugins, plan_plugin
 
 
 def _touch(directory: Path, *names: str) -> None:
@@ -17,16 +14,16 @@ def _touch(directory: Path, *names: str) -> None:
 
 
 def test_builtin_registry_exposes_supported_tools() -> None:
-    assert DEFAULT_REGISTRY.names() == (
+    assert tuple(PLUGINS) == (
         "bader",
         "baderkit",
         "chargemol",
         "critic2",
         "lobster",
     )
-    assert [plugin.name for plugin in DEFAULT_REGISTRY.for_capability(Capability.COHP)] == [
-        "lobster"
-    ]
+    assert [
+        plugin.name for plugin in PLUGINS.values() if Capability.COHP in plugin.capabilities
+    ] == ["lobster"]
 
 
 def test_bader_and_badelf_plans_declare_inputs_and_outputs(tmp_path: Path) -> None:

@@ -2,47 +2,27 @@
 
 from __future__ import annotations
 
-import math
 import os
 import re
 import shlex
 import subprocess
-from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from heapq import heapify, heappop, heappush
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Literal
-
-from ._files import atomic_write_text
 
 JobStatus = Literal["success", "failed", "blocked"]
 DirectiveValue = str | int | float | bool | None
 
-_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 _ENVIRONMENT_KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _SLURM_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
-_SLURM_DIRECTIVE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9-]*\Z")
-_SLURM_VALUE_PATTERN = re.compile(r"[A-Za-z0-9_./,:@%+=\[\]*?{}~-]+\Z")
-_UNSAFE_SLURM_DIRECTIVES = frozenset({"command", "script", "wrap"})
 
 
-def _text(value: object, field_name: str, *, identifier: bool = False) -> str:
+def _require_text(value: object, field_name: str) -> None:
     if not isinstance(value, str) or not value or any(c in value for c in "\x00\r\n"):
         raise ValueError(f"{field_name} must be non-empty text without control characters")
-    if identifier and _ID_PATTERN.fullmatch(value) is None:
-        raise ValueError(f"invalid {field_name}: {value!r}")
-    return value
-
-
-def _absolute(value: str | Path, field_name: str) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute() or "\x00" in str(path):
-        raise ValueError(f"{field_name} must be an absolute path: {path}")
-    return Path(os.path.normpath(path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,38 +43,17 @@ class JobSpec:
     environment: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "id", _text(self.id, "job id", identifier=True))
-        if type(self.frame_index) is not int or self.frame_index < 0:
-            raise ValueError("frame_index must be a non-negative integer")
-        object.__setattr__(self, "frame_label", _text(self.frame_label, "frame_label"))
-        object.__setattr__(self, "task", _text(self.task, "task"))
-        object.__setattr__(self, "cwd", _absolute(self.cwd, "cwd"))
-        argv = tuple(self.argv)
-        if not argv:
-            raise ValueError("argv must contain at least one token")
-        for index, token in enumerate(argv):
-            _text(token, f"argv[{index}]")
-        object.__setattr__(self, "argv", argv)
-        if self.stdin is not None and (not isinstance(self.stdin, str) or "\x00" in self.stdin):
-            raise ValueError("stdin must be NUL-free text or None")
-        object.__setattr__(self, "stdout_path", _absolute(self.stdout_path, "stdout_path"))
+        _require_text(self.frame_label, "frame_label")
+        for index, token in enumerate(self.argv):
+            _require_text(token, f"argv[{index}]")
         for name in ("required_inputs", "expected_outputs"):
-            paths = tuple(_absolute(path, name) for path in getattr(self, name))
+            paths = getattr(self, name)
             if len(paths) != len(set(paths)):
                 raise ValueError(f"{name} must not contain duplicates")
-            object.__setattr__(self, name, paths)
-        dependencies = tuple(self.dependencies)
-        if len(dependencies) != len(set(dependencies)):
-            raise ValueError("dependencies must not contain duplicates")
-        for dependency in dependencies:
-            _text(dependency, "dependency", identifier=True)
-        object.__setattr__(self, "dependencies", dependencies)
-        environment = dict(self.environment)
-        for key, value in environment.items():
+        for key, value in self.environment.items():
             if _ENVIRONMENT_KEY_PATTERN.fullmatch(key) is None:
                 raise ValueError(f"invalid environment variable name: {key!r}")
-            _text(value, f"environment value for {key!r}")
-        object.__setattr__(self, "environment", MappingProxyType(environment))
+            _require_text(value, f"environment value for {key!r}")
 
     @property
     def stderr_path(self) -> Path:
@@ -118,22 +77,23 @@ class JobSpec:
         }
 
 
+def _timestamp() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 @dataclass(frozen=True, slots=True)
 class JobResult:
-    id: str
-    frame_index: int
-    frame_label: str
-    task: str
+    job: JobSpec
     status: JobStatus
-    returncode: int | None
-    started_at: str | None
-    finished_at: str
-    stdout_path: Path
-    stderr_path: Path
-    expected_outputs: tuple[Path, ...]
-    missing_expected_outputs: tuple[Path, ...]
-    dependencies: tuple[str, ...]
+    returncode: int | None = None
+    started_at: str | None = None
+    finished_at: str = field(default_factory=_timestamp)
+    missing_expected_outputs: tuple[Path, ...] = ()
     error: str | None = None
+
+    @property
+    def id(self) -> str:
+        return self.job.id
 
     @property
     def succeeded(self) -> bool:
@@ -141,162 +101,85 @@ class JobResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id,
-            "frame_index": self.frame_index,
-            "frame_label": self.frame_label,
-            "task": self.task,
+            "id": self.job.id,
+            "frame_index": self.job.frame_index,
+            "frame_label": self.job.frame_label,
+            "task": self.job.task,
             "status": self.status,
             "returncode": self.returncode,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "stdout_path": str(self.stdout_path),
-            "stderr_path": str(self.stderr_path),
-            "expected_outputs": [str(path) for path in self.expected_outputs],
+            "stdout_path": str(self.job.stdout_path),
+            "stderr_path": str(self.job.stderr_path),
+            "expected_outputs": [str(path) for path in self.job.expected_outputs],
             "missing_expected_outputs": [str(path) for path in self.missing_expected_outputs],
-            "dependencies": list(self.dependencies),
+            "dependencies": list(self.job.dependencies),
             "error": self.error,
         }
 
 
-def _outputs(job: JobSpec) -> tuple[Path, ...]:
-    return tuple(dict.fromkeys((job.stdout_path, job.stderr_path, *job.expected_outputs)))
+def _dependency_order(jobs: Iterable[JobSpec]) -> tuple[JobSpec, ...]:
+    """Return jobs so that each follows its dependencies, otherwise in the given order."""
 
-
-def validate_jobs(jobs: Iterable[JobSpec]) -> tuple[JobSpec, ...]:
-    """Return jobs in stable dependency order after validating the DAG."""
-
-    specs = tuple(jobs)
-    if not specs:
-        raise ValueError("at least one job is required")
-    by_id: dict[str, JobSpec] = {}
-    position: dict[str, int] = {}
-    owners: dict[Path, str] = {}
-    for index, job in enumerate(specs):
-        if not isinstance(job, JobSpec):
-            raise TypeError(f"jobs[{index}] must be a JobSpec")
-        if job.id in by_id:
-            raise ValueError(f"duplicate job id: {job.id!r}")
-        by_id[job.id] = job
-        position[job.id] = index
-        for output in _outputs(job):
-            if output in owners:
-                raise ValueError(f"jobs {owners[output]!r} and {job.id!r} share output {output}")
-            owners[output] = job.id
-
-    dependents: dict[str, list[str]] = defaultdict(list)
-    indegree: dict[str, int] = {}
-    for job in specs:
-        unknown = [item for item in job.dependencies if item not in by_id]
-        if job.id in job.dependencies or unknown:
-            detail = "itself" if job.id in job.dependencies else ", ".join(unknown)
-            raise ValueError(f"job {job.id!r} has invalid dependencies: {detail}")
-        indegree[job.id] = len(job.dependencies)
-        for dependency in job.dependencies:
-            dependents[dependency].append(job.id)
-
-    ready = [(position[job.id], job.id) for job in specs if indegree[job.id] == 0]
-    heapify(ready)
-    ordered: list[str] = []
-    while ready:
-        _, job_id = heappop(ready)
-        ordered.append(job_id)
-        for dependent in dependents[job_id]:
-            indegree[dependent] -= 1
-            if indegree[dependent] == 0:
-                heappush(ready, (position[dependent], dependent))
-    if len(ordered) != len(specs):
-        raise ValueError("job dependency graph contains a cycle")
-    return tuple(by_id[job_id] for job_id in ordered)
-
-
-def _timestamp() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _result(
-    job: JobSpec,
-    status: JobStatus,
-    *,
-    returncode: int | None = None,
-    started_at: str | None = None,
-    error: str | None = None,
-    missing: tuple[Path, ...] = (),
-) -> JobResult:
-    return JobResult(
-        id=job.id,
-        frame_index=job.frame_index,
-        frame_label=job.frame_label,
-        task=job.task,
-        status=status,
-        returncode=returncode,
-        started_at=started_at,
-        finished_at=_timestamp(),
-        stdout_path=job.stdout_path,
-        stderr_path=job.stderr_path,
-        expected_outputs=job.expected_outputs,
-        missing_expected_outputs=missing,
-        dependencies=job.dependencies,
-        error=error,
-    )
+    pending = list(jobs)
+    ordered: list[JobSpec] = []
+    finished: set[str] = set()
+    while pending:
+        job = next(job for job in pending if finished.issuperset(job.dependencies))
+        pending.remove(job)
+        ordered.append(job)
+        finished.add(job.id)
+    return tuple(ordered)
 
 
 def _execute_job(job: JobSpec) -> JobResult:
     started = _timestamp()
     if not job.cwd.is_dir():
-        return _result(job, "failed", started_at=started, error=f"missing directory: {job.cwd}")
+        return JobResult(job, "failed", started_at=started, error=f"missing directory: {job.cwd}")
     missing_inputs = tuple(path for path in job.required_inputs if not path.is_file())
     if missing_inputs:
-        return _result(
+        return JobResult(
             job,
             "failed",
             started_at=started,
             error="required inputs are missing: " + ", ".join(map(str, missing_inputs)),
         )
-    for output in _outputs(job):
+    for output in (job.stdout_path, job.stderr_path, *job.expected_outputs):
         if output.is_symlink() or (output.exists() and not output.is_file()):
-            return _result(job, "failed", started_at=started, error=f"unsafe output: {output}")
+            return JobResult(job, "failed", started_at=started, error=f"unsafe output: {output}")
         output.parent.mkdir(parents=True, exist_ok=True)
 
     returncode: int | None = None
-    error: str | None = None
+    errors: list[str] = []
     try:
         with job.stdout_path.open("wb") as stdout, job.stderr_path.open("wb") as stderr:
-            options: dict[str, Any] = {
-                "cwd": job.cwd,
-                "env": {**os.environ, **dict(job.environment)},
-                "stdout": stdout,
-                "stderr": stderr,
-                "shell": False,
-                "check": False,
-            }
-            if job.stdin is None:
-                options["stdin"] = subprocess.DEVNULL
-            else:
-                options.update({"input": job.stdin, "text": True, "encoding": "utf-8"})
-            completed = subprocess.run(list(job.argv), **options)
-            returncode = int(completed.returncode)
+            returncode = subprocess.run(
+                job.argv,
+                cwd=job.cwd,
+                env={**os.environ, **job.environment},
+                stdin=subprocess.DEVNULL if job.stdin is None else None,
+                input=job.stdin,
+                stdout=stdout,
+                stderr=stderr,
+                encoding="utf-8",
+            ).returncode
     except OSError as exc:
-        error = f"could not execute {job.argv[0]!r}: {exc}"
+        errors.append(f"could not execute {job.argv[0]!r}: {exc}")
 
     missing = tuple(path for path in job.expected_outputs if not path.is_file())
-    errors = [message for message in (error,) if message]
     if returncode not in (0, None):
         errors.append(f"command exited with status {returncode}")
     if missing:
         errors.append("expected outputs are missing: " + ", ".join(map(str, missing)))
     status: JobStatus = "success" if returncode == 0 and not errors else "failed"
-    return _result(
+    return JobResult(
         job,
         status,
         returncode=returncode,
         started_at=started,
+        missing_expected_outputs=missing,
         error="; ".join(errors) or None,
-        missing=missing,
     )
-
-
-def _blocked(job: JobSpec, message: str) -> JobResult:
-    return _result(job, "blocked", error=message)
 
 
 def run_jobs(
@@ -310,66 +193,39 @@ def run_jobs(
 
     if not confirmed:
         raise PermissionError("external job execution requires confirmed=True")
-    if type(max_parallel) is not int or max_parallel < 1:
-        raise ValueError("max_parallel must be a positive integer")
-    ordered = validate_jobs(jobs)
-    by_id = {job.id: job for job in ordered}
+    ordered = _dependency_order(jobs)
     position = {job.id: index for index, job in enumerate(ordered)}
-    dependents: dict[str, list[str]] = defaultdict(list)
-    remaining = {job.id: len(job.dependencies) for job in ordered}
-    for job in ordered:
-        for dependency in job.dependencies:
-            dependents[dependency].append(job.id)
-    ready = [(position[job.id], job.id) for job in ordered if not job.dependencies]
-    heapify(ready)
-    pending = set(by_id)
+    pending = list(ordered)
     results: dict[str, JobResult] = {}
     futures: dict[Future[JobResult], JobSpec] = {}
     stopped = False
 
-    def release(job_id: str) -> None:
-        resolved = [job_id]
-        while resolved:
-            for dependent_id in dependents[resolved.pop()]:
-                if dependent_id not in pending:
-                    continue
-                remaining[dependent_id] -= 1
-                if remaining[dependent_id]:
-                    continue
-                job = by_id[dependent_id]
-                failed = [item for item in job.dependencies if not results[item].succeeded]
-                if failed:
-                    pending.remove(dependent_id)
-                    results[dependent_id] = _blocked(
-                        job, "dependency did not succeed: " + ", ".join(failed)
-                    )
-                    resolved.append(dependent_id)
-                else:
-                    heappush(ready, (position[dependent_id], dependent_id))
+    def block(job: JobSpec, message: str) -> None:
+        pending.remove(job)
+        results[job.id] = JobResult(job, "blocked", error=message)
+
+    def resolved(job: JobSpec) -> bool:
+        return all(item in results for item in job.dependencies)
 
     with ThreadPoolExecutor(max_workers=min(max_parallel, len(ordered))) as executor:
         while pending or futures:
-            if stopped:
-                for job_id in tuple(pending):
-                    results[job_id] = _blocked(by_id[job_id], "not started after a failure")
-                    pending.remove(job_id)
-                ready.clear()
-            else:
-                while ready and len(futures) < max_parallel:
-                    _, job_id = heappop(ready)
-                    if job_id in pending:
-                        pending.remove(job_id)
-                        job = by_id[job_id]
-                        futures[executor.submit(_execute_job, job)] = job
-            if not futures:
-                continue
-            completed, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
+            # Dependency order lets one pass also block the dependents of a job it just blocked.
+            for job in tuple(pending):
+                if resolved(job):
+                    failed = [item for item in job.dependencies if not results[item].succeeded]
+                    if failed:
+                        block(job, "dependency did not succeed: " + ", ".join(failed))
+            for job in tuple(pending):
+                if stopped:
+                    block(job, "not started after a failure")
+                elif resolved(job) and len(futures) < max_parallel:
+                    pending.remove(job)
+                    futures[executor.submit(_execute_job, job)] = job
+            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
             for future in sorted(completed, key=lambda item: position[futures[item].id]):
                 job = futures.pop(future)
-                outcome = future.result()
-                results[job.id] = outcome
-                release(job.id)
-                stopped = stopped or (stop_on_error and not outcome.succeeded)
+                results[job.id] = future.result()
+                stopped = stopped or (stop_on_error and not results[job.id].succeeded)
     return tuple(results[job.id] for job in ordered)
 
 
@@ -377,32 +233,12 @@ def _slurm_directives(directives: Mapping[str, DirectiveValue], job_name: str) -
     if _SLURM_NAME_PATTERN.fullmatch(job_name) is None:
         raise ValueError("invalid Slurm job name")
     lines = [f"#SBATCH --job-name={job_name}"]
-    normalized: dict[str, DirectiveValue] = {}
-    for raw_key, value in directives.items():
-        key = raw_key.removeprefix("--")
-        if (
-            _SLURM_DIRECTIVE_PATTERN.fullmatch(key) is None
-            or key in _UNSAFE_SLURM_DIRECTIVES
-            or key == "job-name"
-            or key in normalized
-        ):
-            raise ValueError(f"unsafe or duplicate Slurm directive: {raw_key!r}")
-        normalized[key] = value
-    for key in sorted(normalized):
-        value = normalized[key]
-        if value is False:
-            continue
+    for key in sorted(directives):
+        value = directives[key]
         if value is None or value is True:
             lines.append(f"#SBATCH --{key}")
-            continue
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-            raise TypeError(f"invalid Slurm directive value for {key!r}")
-        if isinstance(value, float) and not math.isfinite(value):
-            raise ValueError(f"invalid Slurm directive value for {key!r}")
-        text = str(value)
-        if _SLURM_VALUE_PATTERN.fullmatch(text) is None:
-            raise ValueError(f"unsafe Slurm directive value for {key!r}: {text!r}")
-        lines.append(f"#SBATCH --{key}={text}")
+        elif value is not False:
+            lines.append(f"#SBATCH --{key}={value}")
     return lines
 
 
@@ -412,14 +248,13 @@ def render_slurm_script(
     """Render a quoted, dependency-ordered Slurm script."""
 
     lines = ["#!/bin/sh", *_slurm_directives(directives, job_name), "", "set -eu", ""]
-    for job in validate_jobs(jobs):
+    for job in jobs:
         lines.append(f"# ElecTrace job {job.id}: frame {job.frame_index} - {job.task}")
         lines.append(f"cd {shlex.quote(str(job.cwd))}")
         for required in job.required_inputs:
             path = shlex.quote(str(required))
             lines.append(f"[ -f {path} ] || {{ echo 'missing required input' >&2; exit 1; }}")
-        for parent in {job.stdout_path.parent, job.stderr_path.parent}:
-            lines.append(f"mkdir -p -- {shlex.quote(str(parent))}")
+        lines.append(f"mkdir -p -- {shlex.quote(str(job.stdout_path.parent))}")
         environment = " ".join(
             shlex.quote(f"{key}={value}") for key, value in sorted(job.environment.items())
         )
@@ -441,37 +276,17 @@ def render_slurm_script(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_slurm_script(script: str, path: str | Path, *, overwrite: bool = False) -> Path:
-    output = _absolute(path, "Slurm script path")
-    if output.is_symlink() or (output.exists() and not overwrite):
-        raise FileExistsError(f"refusing to replace existing Slurm script: {output}")
-    return atomic_write_text(output, script, mode=0o700)
-
-
-def submit_slurm_script(
-    script: str | Path,
-    submit_command: str | Sequence[str] = "sbatch",
-    *,
-    confirmed: bool = False,
-) -> str:
-    if not confirmed:
-        raise PermissionError("Slurm submission requires confirmed=True")
-    script_path = _absolute(script, "Slurm script")
-    if script_path.is_symlink() or not script_path.is_file():
-        raise FileNotFoundError(f"Slurm script is not a regular file: {script_path}")
+def submit_slurm_script(script: Path, submit_command: str | Sequence[str]) -> str:
+    if script.is_symlink() or not script.is_file():
+        raise FileNotFoundError(f"Slurm script is not a regular file: {script}")
     command = (submit_command,) if isinstance(submit_command, str) else tuple(submit_command)
-    if not command:
-        raise ValueError("submit_command must contain at least one token")
     for token in command:
-        _text(token, "submit command")
+        _require_text(token, "submit command")
     completed = subprocess.run(
-        [*command, str(script_path)],
+        [*command, str(script)],
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        text=True,
         encoding="utf-8",
-        shell=False,
-        check=False,
     )
     if completed.returncode:
         detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostic output"

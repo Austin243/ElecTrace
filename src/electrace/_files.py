@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,22 +17,8 @@ def atomic_output_path(output: Path) -> Iterator[Path]:
     """Yield a same-directory temporary path, then atomically replace *output*."""
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    for _ in range(10):
-        candidate = output.with_name(f".{output.name}.{uuid4().hex}.tmp")
-        try:
-            descriptor = os.open(
-                candidate,
-                os.O_CREAT | os.O_EXCL | os.O_RDWR,
-                0o666,
-            )
-        except FileExistsError:  # pragma: no cover - UUID collision defense
-            continue
-        os.close(descriptor)
-        temporary = candidate
-        break
-    if temporary is None:  # pragma: no cover - UUID collision defense
-        raise OSError(f"could not allocate a temporary output beside {output}")
+    temporary = output.with_name(f".{output.name}.{uuid4().hex}.tmp")
+    temporary.touch(exist_ok=False)
     try:
         yield temporary
         os.replace(temporary, output)
@@ -45,3 +34,27 @@ def atomic_write_text(output: Path, payload: str, *, mode: int | None = None) ->
         if mode is not None:
             temporary.chmod(mode)
     return output
+
+
+def atomic_write_json(path: Path, payload: object) -> Path:
+    """Atomically publish deterministic, standards-compliant JSON."""
+
+    document = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    return atomic_write_text(path, document, mode=0o600)
+
+
+def publish_directory(temporary: Path, target: Path) -> None:
+    """Move *temporary* to *target*, restoring any previous *target* if the move fails."""
+
+    if not target.exists():
+        temporary.replace(target)
+        return
+    backup = Path(tempfile.mkdtemp(prefix=f".{target.name}.previous-", dir=target.parent))
+    backup.rmdir()
+    target.replace(backup)
+    try:
+        temporary.replace(target)
+    except BaseException:
+        backup.replace(target)
+        raise
+    shutil.rmtree(backup)

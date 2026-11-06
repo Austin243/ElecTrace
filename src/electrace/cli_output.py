@@ -9,12 +9,7 @@ from typing import Any, Final
 CLI_SCHEMA_VERSION: Final = "electrace.cli.v1"
 
 
-def success(
-    command: str,
-    data: object = None,
-    *,
-    warnings: Sequence[str] = (),
-) -> dict[str, Any]:
+def success(command: str, data: object, *, warnings: Sequence[str] = ()) -> dict[str, Any]:
     """Return the common successful response shape."""
 
     return {
@@ -26,14 +21,7 @@ def success(
     }
 
 
-def failure(
-    command: str,
-    code: str,
-    message: str,
-    *,
-    details: object = None,
-    warnings: Sequence[str] = (),
-) -> dict[str, Any]:
+def failure(command: str, code: str, message: str, *, details: object = None) -> dict[str, Any]:
     """Return the common failed response shape."""
 
     return {
@@ -41,23 +29,11 @@ def failure(
         "ok": False,
         "command": command,
         "error": {"code": code, "message": message, "details": details},
-        "warnings": list(warnings),
+        "warnings": [],
     }
 
 
 def serialize(envelope: Mapping[str, object]) -> str:
     """Serialize one compact JSON document followed by a newline."""
 
-    return (
-        json.dumps(
-            envelope,
-            allow_nan=False,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        + "\n"
-    )
-
-
-__all__ = ["CLI_SCHEMA_VERSION", "failure", "serialize", "success"]
+    return json.dumps(envelope, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n"

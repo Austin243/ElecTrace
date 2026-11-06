@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
-from electrace.io.discovery import FrameSource
-
 
 class FrameSelectionError(ValueError):
     """A frame selector is malformed or resolves to no frames."""
 
 
-def _selectors(selection: str) -> tuple[int | slice, ...]:
-    if not isinstance(selection, str) or not selection.strip():
-        raise FrameSelectionError("frame selection must be non-empty text")
-    selection = selection.strip()
+def frame_selectors(selection: str) -> tuple[int | slice, ...]:
     if selection == "all":
         return (slice(None),)
     if "all" in {part.strip() for part in selection.split(",")}:
@@ -48,15 +41,9 @@ def _selectors(selection: str) -> tuple[int | slice, ...]:
     return tuple(result)
 
 
-def validate_frame_selection(selection: str) -> None:
-    _selectors(selection)
-
-
 def parse_frame_selection(selection: str, frame_count: int) -> tuple[int, ...]:
-    if not isinstance(frame_count, int) or isinstance(frame_count, bool) or frame_count < 0:
-        raise ValueError("frame_count must be a non-negative integer")
     resolved: list[int] = []
-    for selector in _selectors(selection):
+    for selector in frame_selectors(selection):
         if isinstance(selector, int):
             if selector >= frame_count:
                 raise FrameSelectionError(f"frame index {selector} is outside 0:{frame_count}")
@@ -68,27 +55,3 @@ def parse_frame_selection(selection: str, frame_count: int) -> tuple[int, ...]:
     if len(resolved) != len(set(resolved)):
         raise FrameSelectionError("frame selection contains duplicates")
     return tuple(resolved)
-
-
-def resolve_frame_selection(
-    selection: str, frames: Sequence[FrameSource]
-) -> tuple[FrameSource, ...]:
-    records = tuple(frames)
-    if tuple(frame.index for frame in records) != tuple(range(len(records))):
-        raise FrameSelectionError("frames must use consecutive zero-based canonical indices")
-    return tuple(records[index] for index in parse_frame_selection(selection, len(records)))
-
-
-def resolve_selected_frames(
-    frames: Sequence[FrameSource], selection: str
-) -> tuple[FrameSource, ...]:
-    return resolve_frame_selection(selection, frames)
-
-
-__all__ = [
-    "FrameSelectionError",
-    "parse_frame_selection",
-    "resolve_frame_selection",
-    "resolve_selected_frames",
-    "validate_frame_selection",
-]

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -17,10 +17,9 @@ from electrace._files import atomic_output_path
 Vector3: TypeAlias = tuple[float, float, float]
 Matrix3: TypeAlias = tuple[Vector3, Vector3, Vector3]
 GridShape: TypeAlias = tuple[int, int, int]
-SelectiveFlags: TypeAlias = tuple[bool, bool, bool]
 FloatGrid: TypeAlias = npt.NDArray[np.float64]
 
-DEFAULT_MAX_POINTS = 100_000_000
+MAX_POINTS = 100_000_000
 SPIN_SPLIT_NAMES = ("CHGCAR_tot", "CHGCAR_mag")
 DENSITY_SUM_NAME = "CHGCAR_sum"
 _INTEGER = re.compile(r"[+-]?\d+\Z")
@@ -41,28 +40,10 @@ class VaspGridMetadata:
     species: tuple[str, ...]
     atom_counts: tuple[int, ...]
     fractional_positions: tuple[Vector3, ...]
-    selective_dynamics: tuple[SelectiveFlags | None, ...]
-    coordinate_mode: Literal["direct", "cartesian"]
     symbols_inferred: bool
     shape: GridShape
     dataset_index: int
     dataset_count: int
-
-    @property
-    def elements(self) -> tuple[str, ...]:
-        return tuple(
-            symbol
-            for symbol, count in zip(self.species, self.atom_counts, strict=True)
-            for _ in range(count)
-        )
-
-    @property
-    def point_count(self) -> int:
-        return math.prod(self.shape)
-
-    @property
-    def cell_volume(self) -> float:
-        return abs(float(np.linalg.det(self.cell)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,19 +68,16 @@ class VaspGrid:
             "dataset_index": self.metadata.dataset_index,
             "dataset_count": self.metadata.dataset_count,
             "shape": list(self.shape),
-            "point_count": self.metadata.point_count,
-            "cell_volume": self.metadata.cell_volume,
+            "point_count": math.prod(self.shape),
+            "cell_volume": abs(float(np.linalg.det(self.metadata.cell))),
             "minimum": float(self.data.min()),
             "maximum": float(self.data.max()),
             "mean": float(self.data.mean()),
         }
 
-    def sample(self, fractional: Sequence[float]) -> float:
-        try:
-            coordinate = np.asarray(tuple(fractional), dtype=float)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("fractional coordinate must contain three finite numbers") from exc
-        if coordinate.shape != (3,) or not np.isfinite(coordinate).all():
+    def sample(self, fractional: Vector3) -> float:
+        coordinate = np.asarray(fractional, dtype=float)
+        if not np.isfinite(coordinate).all():
             raise ValueError("fractional coordinate must contain three finite numbers")
         scaled = (coordinate % 1.0) * np.asarray(self.shape)
         lower = np.floor(scaled).astype(int)
@@ -116,19 +94,11 @@ class VaspGrid:
         return result
 
 
-@dataclass(slots=True)
-class _Cursor:
-    lines: Iterator[str]
-    number: int = 0
-
-    def next(self, context: str, required: bool = True) -> str | None:
-        for raw in self.lines:
-            self.number += 1
-            if raw.strip():
-                return raw.strip()
-        if required:
-            raise VaspGridError(f"VASP volumetric file is missing {context}")
-        return None
+def _next(lines: Iterator[str], context: str) -> str:
+    line = next(lines, None)
+    if line is None:
+        raise VaspGridError(f"VASP volumetric file is missing {context}")
+    return line
 
 
 def _float(token: str, context: str) -> float:
@@ -150,12 +120,9 @@ def _vector(line: str, context: str) -> Vector3:
 
 def _integers(line: str, context: str) -> tuple[int, ...]:
     try:
-        values = tuple(int(token) for token in line.split())
+        return tuple(int(token) for token in line.split())
     except ValueError as exc:
         raise VaspGridError(f"{context} must contain integers") from exc
-    if not values:
-        raise VaspGridError(f"{context} is empty")
-    return values
 
 
 def _shape(line: str) -> GridShape:
@@ -165,12 +132,13 @@ def _shape(line: str) -> GridShape:
     return values
 
 
-def _values(cursor: _Cursor, count: int, context: str, keep: bool) -> FloatGrid | None:
+def _values(lines: Iterator[str], count: int, context: str, *, keep: bool) -> FloatGrid | None:
+    """Read and check *count* numbers; return them only when asked to *keep* them."""
+
     result = np.empty(count) if keep else None
     consumed = 0
     while consumed < count:
-        line = cursor.next(f"values for {context}")
-        assert line is not None
+        line = _next(lines, f"values for {context}")
         if line.casefold().startswith("augmentation"):
             raise VaspGridError(f"{context} is truncated: it has {consumed} of {count} values")
         tokens = line.split()
@@ -184,7 +152,7 @@ def _values(cursor: _Cursor, count: int, context: str, keep: bool) -> FloatGrid 
     return result
 
 
-def _next_dataset(cursor: _Cursor, shape: GridShape, dataset: int) -> bool:
+def _next_dataset(lines: Iterator[str], shape: GridShape, dataset: int) -> bool:
     """Skip CHGCAR extras after a grid; return whether another grid follows.
 
     VASP follows each CHGCAR grid with PAW augmentation occupancies and, for
@@ -195,13 +163,13 @@ def _next_dataset(cursor: _Cursor, shape: GridShape, dataset: int) -> bool:
     """
 
     moments = 0
-    while (line := cursor.next("another dataset", required=False)) is not None:
+    while (line := next(lines, None)) is not None:
         fields = line.split()
         if line.casefold().startswith("augmentation"):
             if len(fields) < 3 or not all(_INTEGER.fullmatch(item) for item in fields[-2:]):
                 raise VaspGridError(f"invalid augmentation header after dataset {dataset}")
             context = f"augmentation block {fields[-2]} after dataset {dataset}"
-            _values(cursor, int(fields[-1]), context, False)
+            _values(lines, int(fields[-1]), context, keep=False)
         elif len(fields) == 3 and all(_INTEGER.fullmatch(item) for item in fields):
             if _shape(line) != shape:
                 raise VaspGridError("all datasets must use the same shape")
@@ -221,17 +189,14 @@ def _next_dataset(cursor: _Cursor, shape: GridShape, dataset: int) -> bool:
 def _parse(
     source: Path,
     comment: str,
-    cursor: _Cursor,
-    keep: Callable[[int], bool],
-    max_points: int,
+    lines: Iterator[str],
+    wanted: Callable[[int], bool],
 ) -> dict[int, VaspGrid]:
-    scale_line = cursor.next("scale factor")
-    assert scale_line is not None
-    scales = tuple(_float(token, "scale") for token in scale_line.split())
+    scales = tuple(_float(token, "scale") for token in _next(lines, "scale factor").split())
     if len(scales) not in {1, 3}:
         raise VaspGridError("scale line must contain one or three numbers")
     raw_cell = np.asarray(
-        [_vector(cast(str, cursor.next("lattice vector")), "lattice vector") for _ in range(3)]
+        [_vector(_next(lines, "lattice vector"), "lattice vector") for _ in range(3)]
     )
     raw_volume = abs(float(np.linalg.det(raw_cell)))
     if raw_volume < 1e-14:
@@ -240,17 +205,15 @@ def _parse(
         scale = scales[0]
         if scale == 0:
             raise VaspGridError("scale factor cannot be zero")
-        scale = (-scale / raw_volume) ** (1 / 3) if scale < 0 else scale
-        cell_array = raw_cell * scale
-        coordinate_scale = np.full(3, scale)
+        coordinate_scale = np.full(3, (-scale / raw_volume) ** (1 / 3) if scale < 0 else scale)
     else:
         if any(value <= 0 for value in scales):
             raise VaspGridError("three scale factors must be positive")
         coordinate_scale = np.asarray(scales)
-        cell_array = raw_cell * coordinate_scale
+    cell_array = raw_cell * coordinate_scale
     cell = cast(Matrix3, tuple(map(tuple, cell_array.tolist())))
 
-    symbol_line = cast(str, cursor.next("element symbols or atom counts"))
+    symbol_line = _next(lines, "element symbols or atom counts")
     symbols = symbol_line.split()
     inferred = all(token.lstrip("+-").isdigit() for token in symbols)
     if inferred:
@@ -258,52 +221,44 @@ def _parse(
         species = tuple(f"X{index + 1}" for index in range(len(counts)))
     else:
         species = tuple(symbols)
-        counts = _integers(cast(str, cursor.next("atom counts")), "atom counts")
+        counts = _integers(_next(lines, "atom counts"), "atom counts")
     if len(species) != len(counts) or any(count < 0 for count in counts) or not sum(counts):
         raise VaspGridError("invalid element symbols or atom counts")
 
-    mode_line = cast(str, cursor.next("coordinate mode"))
+    mode_line = _next(lines, "coordinate mode")
     selective = mode_line.casefold().startswith("s")
     if selective:
-        mode_line = cast(str, cursor.next("coordinate mode"))
-    if mode_line.casefold().startswith("d"):
-        mode: Literal["direct", "cartesian"] = "direct"
-    elif mode_line.casefold().startswith(("c", "k")):
-        mode = "cartesian"
-    else:
+        mode_line = _next(lines, "coordinate mode")
+    cartesian = mode_line.casefold().startswith(("c", "k"))
+    if not cartesian and not mode_line.casefold().startswith("d"):
         raise VaspGridError(f"unknown coordinate mode {mode_line!r}")
 
     positions: list[Vector3] = []
-    flags: list[SelectiveFlags | None] = []
     inverse = np.linalg.inv(cell_array)
     for atom in range(sum(counts)):
-        line = cast(str, cursor.next(f"coordinates for atom {atom + 1}"))
+        line = _next(lines, f"coordinates for atom {atom + 1}")
         fields = line.split()
         position = np.asarray(_vector(line, "atom coordinates"))
-        if mode == "cartesian":
+        if cartesian:
             position = (position * coordinate_scale) @ inverse
         positions.append(cast(Vector3, tuple(position.tolist())))
-        if selective:
-            if len(fields) < 6 or any(value.casefold() not in {"t", "f"} for value in fields[3:6]):
-                raise VaspGridError("invalid selective-dynamics flags")
-            flags.append(
-                cast(SelectiveFlags, tuple(value.casefold() == "t" for value in fields[3:6]))
-            )
-        else:
-            flags.append(None)
+        if selective and (
+            len(fields) < 6 or any(value.casefold() not in {"t", "f"} for value in fields[3:6])
+        ):
+            raise VaspGridError("invalid selective-dynamics flags")
 
-    shape = _shape(cast(str, cursor.next("grid dimensions")))
+    shape = _shape(_next(lines, "grid dimensions"))
     point_count = math.prod(shape)
-    if point_count > max_points:
-        raise VaspGridError(f"grid exceeds max_points={max_points}")
+    if point_count > MAX_POINTS:
+        raise VaspGridError(f"grid exceeds max_points={MAX_POINTS}")
     kept: dict[int, FloatGrid] = {}
     dataset_count = 0
     while True:
-        values = _values(cursor, point_count, f"dataset {dataset_count}", keep(dataset_count))
+        values = _values(lines, point_count, f"dataset {dataset_count}", keep=wanted(dataset_count))
         if values is not None:
             kept[dataset_count] = np.reshape(values, shape, order="F")
         dataset_count += 1
-        if not _next_dataset(cursor, shape, dataset_count - 1):
+        if not _next_dataset(lines, shape, dataset_count - 1):
             break
     metadata = VaspGridMetadata(
         source,
@@ -312,8 +267,6 @@ def _parse(
         species,
         counts,
         tuple(positions),
-        tuple(flags),
-        mode,
         inferred,
         shape,
         0,
@@ -325,28 +278,21 @@ def _parse(
     }
 
 
-def _read(path: str | Path, keep: Callable[[int], bool], max_points: int) -> dict[int, VaspGrid]:
-    if isinstance(max_points, bool) or not isinstance(max_points, int) or max_points < 1:
-        raise ValueError("max_points must be positive")
+def _read(path: str | Path, wanted: Callable[[int], bool]) -> dict[int, VaspGrid]:
     source = Path(path).expanduser().resolve()
     try:
         with source.open("r", encoding="utf-8") as stream:
             comment = stream.readline()
             if not comment:
                 raise VaspGridError(f"VASP volumetric file is empty: {source}")
-            return _parse(source, comment.strip(), _Cursor(iter(stream), 1), keep, max_points)
-    except VaspGridError:
-        raise
+            lines = (stripped for raw in stream if (stripped := raw.strip()))
+            return _parse(source, comment.strip(), lines, wanted)
     except (OSError, UnicodeError) as exc:
         raise VaspGridError(f"cannot read VASP volumetric file {source}: {exc}") from exc
 
 
-def read_vasp_grid(
-    path: str | Path, dataset: int = 0, max_points: int = DEFAULT_MAX_POINTS
-) -> VaspGrid:
-    if isinstance(dataset, bool) or not isinstance(dataset, int) or dataset < 0:
-        raise ValueError("dataset must be a non-negative integer")
-    grids = _read(path, lambda index: index == dataset, max_points)
+def read_vasp_grid(path: str | Path, dataset: int = 0) -> VaspGrid:
+    grids = _read(path, lambda index: index == dataset)
     if dataset not in grids:
         raise VaspGridError(f"dataset {dataset} is unavailable")
     return grids[dataset]
@@ -381,7 +327,6 @@ def split_spin_density(
     output_directory: str | Path | None = None,
     *,
     overwrite: bool = False,
-    max_points: int = DEFAULT_MAX_POINTS,
 ) -> dict[str, object]:
     """Write the total and magnetization grids of a collinear ISPIN = 2 CHGCAR.
 
@@ -397,7 +342,7 @@ def split_spin_density(
             f"spin splitting reads a CHGCAR or CHG density, not {source.name}; an ISPIN = 2 "
             "ELFCAR holds spin-up and spin-down ELF rather than total and magnetization"
         )
-    grids = _read(source, lambda index: index < 2, max_points)
+    grids = _read(source, lambda index: index < 2)
     count = grids[0].metadata.dataset_count
     if count == 1:
         raise VaspGridError(
@@ -458,7 +403,6 @@ def sum_density_grids(
     output_directory: str | Path | None = None,
     *,
     overwrite: bool = False,
-    max_points: int = DEFAULT_MAX_POINTS,
 ) -> dict[str, object]:
     """Write ``CHGCAR_sum``, the sum of two grids of one structure, such as AECCAR0 + AECCAR2.
 
@@ -471,8 +415,8 @@ def sum_density_grids(
     files from different runs or images; nothing is written otherwise.
     """
 
-    first = read_vasp_grid(path, max_points=max_points)
-    second = read_vasp_grid(other, max_points=max_points)
+    first = read_vasp_grid(path)
+    second = read_vasp_grid(other)
     mismatch = _structure_mismatch(first.metadata, second.metadata)
     if mismatch is not None:
         raise VaspGridError(
@@ -499,16 +443,3 @@ def sum_density_grids(
         "integrated_sum": float(total.data.mean()),
         "written": str(target),
     }
-
-
-__all__ = [
-    "DEFAULT_MAX_POINTS",
-    "DENSITY_SUM_NAME",
-    "SPIN_SPLIT_NAMES",
-    "VaspGrid",
-    "VaspGridError",
-    "VaspGridMetadata",
-    "read_vasp_grid",
-    "split_spin_density",
-    "sum_density_grids",
-]
