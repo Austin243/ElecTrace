@@ -14,7 +14,7 @@
     "warnings": {"type": "array", "items": {"type": "string"}},
     "frames": {
       "type": "array",
-      "description": "One record per frame. With configuration.outputs.match_details false, each record has no features list; feature_count remains.",
+      "description": "One record per frame. With configuration.outputs.match_details false, each record has no features list; feature_count remains. With project.pressure_gpa, a frame with an energy also has enthalpy, E + PV in eV.",
       "items": {"type": "object", "additionalProperties": true}
     },
     "critical_point_counts": {
@@ -87,7 +87,7 @@
           "description": {"type": "string"},
           "barrier_position": {
             "enum": ["before", "spanning", "after", null],
-            "description": "Event step relative to the highest-energy frame(s): spanning when the step starts or ends at one; null when events are not placed."
+            "description": "Event step relative to the frame(s) in barrier: spanning when the step starts or ends at one; null when events are not placed."
           },
           "noise_floor": {
             "type": "object",
@@ -405,17 +405,19 @@
     },
     "barrier": {
       "type": "object",
-      "description": "Highest-energy frame(s) used to place events. Reporting only: no tolerance or thresholds.",
+      "description": "Highest-energy frame(s) used to place events, or highest-enthalpy frame(s) when quantity is enthalpy. Reporting only: no tolerance or thresholds.",
       "required": ["frames"],
       "properties": {
         "frames": {
           "type": "array",
           "items": {"type": "integer", "minimum": 0},
-          "description": "Frame indices at the maximum energy; several only on exact ties; empty when events are not placed."
+          "description": "Frame indices at the maximum energy or enthalpy; several only on exact ties; empty when events are not placed."
         },
         "rise_from_first": {"type": "number", "minimum": 0},
         "rise_from_last": {"type": "number", "minimum": 0},
-        "reason": {"type": "string", "description": "Why events are not placed."}
+        "reason": {"type": "string", "description": "Why events are not placed."},
+        "quantity": {"const": "enthalpy", "description": "Present with project.pressure_gpa: frames and rises compare H = E + PV, not E."},
+        "pressure_gpa": {"type": "number", "description": "The pressure P in H = E + PV, in GPa."}
       },
       "additionalProperties": false
     },

@@ -84,10 +84,12 @@ def _render_config(staged: StagedWorkflow, final_root: Path, series_kind: str) -
     if staged.warnings:
         # Collected labels always number the order, so analysis cannot see the source names.
         metadata["workflow_order_warnings"] = list(staged.warnings)
+    pressure = staged.manifest.project.pressure_gpa
     lines = [
         "[project]",
         'name = "Collected ElecTrace workflow"',
         f"series_kind = {_toml_value(series_kind)}",
+        *(() if pressure is None else (f"pressure_gpa = {_toml_value(pressure)}",)),
         "",
         "[inputs]",
         'root = "input"',

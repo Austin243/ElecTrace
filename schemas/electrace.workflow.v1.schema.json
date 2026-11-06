@@ -34,7 +34,8 @@
         "series_kind": {"enum": ["auto", "neb", "ordered", "pressure", "static"]},
         "workspace": {"$ref": "#/$defs/nonempty"},
         "structure": {"$ref": "#/$defs/basename"},
-        "fallback": {"$ref": "#/$defs/basename"}
+        "fallback": {"$ref": "#/$defs/basename"},
+        "pressure_gpa": {"type": "number"}
       },
       "additionalProperties": false
     },

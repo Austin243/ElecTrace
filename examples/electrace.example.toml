@@ -4,6 +4,8 @@ name = "Electronic rearrangement along a VASP path"
 # neb, ordered, static, or pressure; auto picks neb for numeric directories, pressure when
 # every name states one, and otherwise the natural order of the names.
 series_kind = "auto"
+# External pressure in GPa of a variable-cell path: barriers then compare H = E + PV.
+# pressure_gpa = 35.0
 
 [inputs]
 root = "."

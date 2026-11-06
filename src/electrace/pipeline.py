@@ -57,6 +57,12 @@ from electrace.models import (
 from electrace.provenance import environment_record, fingerprint_files, sha256_file
 from electrace.report import render_html_report
 
+# 1 eV/Å^3 in GPa: P * V / this is in eV for P in GPa and V in Å^3.
+_GPA_PER_EV_PER_A3 = 160.21766208
+# Volumes closer than this fraction count as equal. A lattice written to six decimals
+# rounds a cell's volume by less than this.
+_SAME_VOLUME = 1e-6
+
 
 @dataclass(frozen=True, slots=True)
 class AnalysisArtifacts:
@@ -104,15 +110,38 @@ def _event_config(config: ElecTraceConfig) -> EventDetectionConfig:
     )
 
 
-def _frame_record(frame: Frame) -> dict[str, Any]:
+def _volume(frame: Frame) -> float:
+    return abs(float(np.linalg.det(np.asarray(frame.cell, dtype=float))))
+
+
+def _profile(frames: Iterable[Frame], pressure_gpa: float | None) -> list[float | None]:
+    """Return what a barrier compares: each frame's energy, or with a pressure H = E + PV.
+
+    V comes from the frame's own cell. A frame without an energy stays None.
+    """
+
+    if pressure_gpa is None:
+        return [frame.energy for frame in frames]
+    return [
+        None
+        if frame.energy is None
+        else frame.energy + pressure_gpa * _volume(frame) / _GPA_PER_EV_PER_A3
+        for frame in frames
+    ]
+
+
+def _frame_record(frame: Frame, pressure_gpa: float | None) -> dict[str, Any]:
     kinds = Counter(feature.kind for feature in frame.features)
-    return {
+    record = {
         **frame.to_dict(),
         "atom_count": len(frame.atoms),
         "feature_count": len(frame.features),
         "feature_kinds": dict(sorted(kinds.items())),
-        "cell_volume": abs(float(np.linalg.det(np.asarray(frame.cell, dtype=float)))),
+        "cell_volume": _volume(frame),
     }
+    if pressure_gpa is not None and frame.energy is not None:
+        record["enthalpy"] = _profile([frame], pressure_gpa)[0]
+    return record
 
 
 def _source_files(sequence: Sequence, config_path: Path) -> list[Path]:
@@ -440,9 +469,18 @@ def _summarize_groups(report: Mapping[str, Any]) -> None:
         group["changes"] = changes
 
 
-def _locate_barrier(sequence: Sequence, series_kind: str) -> dict[str, Any]:
+def _barrier_basis(pressure_gpa: float | None) -> dict[str, Any]:
+    """Return the keys that mark a record as enthalpy; an energy record has none."""
+
+    return {} if pressure_gpa is None else {"quantity": "enthalpy", "pressure_gpa": pressure_gpa}
+
+
+def _locate_barrier(
+    sequence: Sequence, series_kind: str, pressure_gpa: float | None
+) -> dict[str, Any]:
     """Find the highest-energy frame(s) for placing events; reporting only.
 
+    With a pressure, the highest-enthalpy frame(s), which need not be the same frames.
     Frames that tie exactly at the maximum are all kept; no tolerance is applied.
     """
 
@@ -451,16 +489,55 @@ def _locate_barrier(sequence: Sequence, series_kind: str) -> dict[str, Any]:
             "frames": [],
             "reason": "Events are not placed: a pressure series is not a reaction path.",
         }
-    energies = [frame.energy for frame in sequence.frames if frame.energy is not None]
-    if len(energies) < len(sequence.frames):
+    values = [value for value in _profile(sequence.frames, pressure_gpa) if value is not None]
+    if len(values) < len(sequence.frames):
         missing = ", ".join(frame.label for frame in sequence.frames if frame.energy is None)
-        return {"frames": [], "reason": f"Events are not placed: no energy for frame(s) {missing}."}
-    peak = max(energies)
+        return {
+            "frames": [],
+            "reason": f"Events are not placed: no energy for frame(s) {missing}.",
+            **_barrier_basis(pressure_gpa),
+        }
+    peak = max(values)
     return {
-        "frames": [frame.index for frame in sequence.frames if frame.energy == peak],
-        "rise_from_first": peak - energies[0],
-        "rise_from_last": peak - energies[-1],
+        "frames": [
+            frame.index
+            for frame, value in zip(sequence.frames, values, strict=True)
+            if value == peak
+        ],
+        "rise_from_first": peak - values[0],
+        "rise_from_last": peak - values[-1],
+        **_barrier_basis(pressure_gpa),
     }
+
+
+def _barrier_warnings(
+    frames: Iterable[Frame], series_kind: str, pressure_gpa: float | None
+) -> list[str]:
+    """Flag a profile that may not compare what a barrier at one pressure should."""
+
+    known = [frame for frame in frames if frame.energy is not None]
+    if series_kind == "pressure" or not known:
+        return []
+    if pressure_gpa is not None:
+        oszicar = [
+            frame.label for frame in known if frame.metadata.get("energy_source") == "OSZICAR"
+        ]
+        if not oszicar:
+            return []
+        return [
+            f"The energies of frame(s) {', '.join(oszicar)} come from OSZICAR. If those runs "
+            "set PSTRESS, OSZICAR's F and E0 already include PV, so H = E + PV counts it "
+            "twice; keep the OUTCAR, whose free energy TOTEN leaves it out."
+        ]
+    volumes = [_volume(frame) for frame in known]
+    low, high = min(volumes), max(volumes)
+    if high - low <= _SAME_VOLUME * high:
+        return []
+    return [
+        f"Frame volumes differ ({low:.3f} to {high:.3f} Å³, {100 * (high - low) / high:.2f}%), "
+        "so energy differences are not barriers at constant pressure. Set "
+        "project.pressure_gpa, or give electrace figure --pressure, to use H = E + PV."
+    ]
 
 
 def _barrier_position(event: Mapping[str, Any], peak_frames: list[int]) -> str | None:
@@ -608,6 +685,13 @@ def analyze_sequence(
 
     if len(sequence.frames) < 2:
         raise ValueError("ElecTrace requires at least two ordered frames")
+    series_kind = sequence.metadata["series_kind"]
+    pressure_gpa = config.pressure_gpa
+    if pressure_gpa is not None and series_kind == "pressure":
+        raise ValueError(
+            "project.pressure_gpa applies to a path at one pressure, but these frames are a "
+            "pressure series; if they are a path, set project.series_kind"
+        )
     configured_focus = config.outputs.focus_atoms
     if isinstance(configured_focus, str):
         check_atom_order(sequence)
@@ -694,6 +778,7 @@ def analyze_sequence(
     missing_energies = [frame.label for frame in sequence.frames if frame.energy is None]
     if missing_energies:
         warnings.append("No VASP energy was found for frame(s): " + ", ".join(missing_energies))
+    warnings.extend(_barrier_warnings(sequence.frames, series_kind, pressure_gpa))
     inferred_symbols = [
         frame.label for frame in sequence.frames if frame.metadata.get("symbols_inferred") is True
     ]
@@ -736,8 +821,7 @@ def analyze_sequence(
         config.events.medium_confidence_threshold,
         config.events.high_confidence_threshold,
     )
-    series_kind = sequence.metadata["series_kind"]
-    barrier = _locate_barrier(sequence, series_kind)
+    barrier = _locate_barrier(sequence, series_kind, pressure_gpa)
     for event in events:
         event["barrier_position"] = _barrier_position(event, barrier["frames"])
     # Numbering, confidences, and barrier labels already used every event, so weak
@@ -788,7 +872,7 @@ def analyze_sequence(
             "descriptor_documents": descriptor_documents,
         },
         "warnings": warnings,
-        "frames": [_frame_record(frame) for frame in sequence.frames],
+        "frames": [_frame_record(frame, pressure_gpa) for frame in sequence.frames],
         "critical_point_counts": critical_point_counts,
         "transitions": transitions,
         "events": events,
