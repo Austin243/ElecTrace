@@ -124,6 +124,13 @@ def _render_config(staged: StagedWorkflow, final_root: Path, series_kind: str) -
     return "\n".join(lines) + "\n"
 
 
+# A staged energy in the format of the file it was read from.
+_ENERGY_RECORDS = {
+    "OUTCAR": " free  energy   TOTEN  = {0:.16g} eV\n",
+    "OSZICAR": " 1 F= {0:.16g} E0= {0:.16g} d E = 0.0\n",
+}
+
+
 def _zval_source(manifest: WorkflowManifest, frame: StagedFrame) -> Path | None:
     """Return the POTCAR or OUTCAR that gives ZVAL for a frame's collected Bader charges.
 
@@ -217,14 +224,16 @@ def collect_workflow_outputs(
                 label=frame.label,
                 energy=frame.energy_ev,
             )
-            if frame.energy_ev is not None:
-                energy = Path("input") / frame.analysis_label / "OSZICAR"
+            zval = _zval_source(staged.manifest, frame)
+            # Under the name of the file it was read from, which says whether it can include
+            # PV. An OUTCAR copied for ZVAL below already holds its own energy.
+            read_from = frame.energy_source
+            if read_from is not None and (zval is None or zval.name != read_from):
+                energy = Path("input") / frame.analysis_label / read_from
                 (temporary / energy).write_text(
-                    f" 1 F= {frame.energy_ev:.16g} E0= {frame.energy_ev:.16g} d E = 0.0\n",
-                    encoding="utf-8",
+                    _ENERGY_RECORDS[read_from].format(frame.energy_ev), encoding="utf-8"
                 )
                 written.append(energy)
-            zval = _zval_source(staged.manifest, frame)
             if zval is not None:
                 valence = Path("input") / frame.analysis_label / zval.name
                 shutil.copy2(zval, temporary / valence)

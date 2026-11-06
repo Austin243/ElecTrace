@@ -110,6 +110,7 @@ class StagedFrame:
     structure: Path
     workspace_directory: Path
     energy_ev: float | None = None
+    energy_source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -684,6 +685,7 @@ def _selected_frames(
             source.structure,
             workspace / "frames" / _safe_label(source.index, source.label),
             source.energy_ev,
+            source.metadata.get("energy_source"),
         )
         for order, source in enumerate(selected)
     )

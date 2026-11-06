@@ -17,8 +17,10 @@
   event labels from `analysis.json`, with a warning when they differ from those in the
   file. A pressure series refuses a pressure. Under `PSTRESS`, `OSZICAR`'s `F` and `E0`
   already include PV and `OUTCAR`'s `TOTEN` does not, so energies from `OSZICAR` with a
-  pressure give a warning. Without a pressure every number is unchanged, and a new
-  warning says when frame volumes differ by more than one part in 10⁶.
+  pressure give a warning. A collected workflow now keeps each energy under the name of
+  the file it was read from, so `energy_source` and that warning describe the source
+  frame. Without a pressure every number is unchanged, and a new warning says when frame
+  volumes differ by more than one part in 10⁶.
 - Opt-in `[outputs] atom_groups` (named lists of 0-based atom indices) and
   `molecule_groups` (each molecule of the first frame, under the bond cutoffs of
   `focus_atoms = "auto"`). `atom_groups` in `analysis.json`, `atom_groups.csv`, and the

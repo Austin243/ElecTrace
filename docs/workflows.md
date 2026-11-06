@@ -165,9 +165,10 @@ staging, because a changed manifest no longer matches its workspace. A pressure 
 refuses the setting, because each of its frames has its own pressure.
 
 Without a pressure, energies are compared as before, and a warning says when frame
-volumes differ by more than one part in 10⁶. ElecTrace never reads the pressure from a
-calculation: under `PSTRESS`, `external pressure` in `OUTCAR` is the residual, not the
-target.
+volumes differ by more than one part in 10⁶. A barrier's pressure is always the one you
+state. ElecTrace does not take it from a calculation, where each image has its own
+computed pressure and, under `PSTRESS`, `external pressure` in `OUTCAR` is the residual,
+not the target.
 
 The energy must not already include PV. Under `PSTRESS`, `free energy TOTEN` in `OUTCAR`
 leaves it out, while `F` and `E0` in `OSZICAR` include it. ElecTrace takes a frame's
@@ -763,7 +764,9 @@ features across frames, and writes the same result bundle used for existing evid
 For [net charges](#net-atomic-charges), each frame's collection also holds the
 `POTCAR` its VASP step used or, when that step has none, the source frame's own
 `POTCAR` or `OUTCAR`. A VASP step's `OUTCAR` is not collected, because its energy
-would replace the source frame's.
+would replace the source frame's. A frame's energy is kept under the name of the
+`OUTCAR` or `OSZICAR` it was read from, usually as a file holding only that energy, so
+the warning about `OSZICAR` energies describes the source frame.
 
 ## Scientific boundaries
 
