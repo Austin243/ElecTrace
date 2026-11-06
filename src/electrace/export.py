@@ -19,10 +19,10 @@ from electrace._files import atomic_output_path, atomic_write_text
 
 
 def _strict_json_dumps(value: Any, *, context: str, **kwargs: Any) -> str:
-    """Serialize *value* as standards-compliant JSON with an actionable error."""
+    """Serialize *value* as sorted, standards-compliant JSON with an actionable error."""
 
     try:
-        return json.dumps(value, allow_nan=False, **kwargs)
+        return json.dumps(value, allow_nan=False, sort_keys=True, **kwargs)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{context} contains a non-finite or non-JSON value: {exc}") from exc
 
@@ -30,8 +30,7 @@ def _strict_json_dumps(value: Any, *, context: str, **kwargs: Any) -> str:
 def _safe_csv_string(value: str) -> str:
     """Neutralize formulas while preserving every non-formula-like string."""
 
-    candidate = value.lstrip()
-    return f"'{value}" if candidate.startswith(("=", "+", "-", "@")) else value
+    return f"'{value}" if value.lstrip().startswith(("=", "+", "-", "@")) else value
 
 
 def _flatten_csv_rows(rows: Iterable[Mapping[str, Any]], *, context: str) -> list[dict[str, Any]]:
@@ -41,10 +40,7 @@ def _flatten_csv_rows(rows: Iterable[Mapping[str, Any]], *, context: str) -> lis
     for row_index, row in enumerate(rows, start=1):
         flattened: dict[str, Any] = {}
         for key, value in row.items():
-            if not isinstance(key, str):
-                raise ValueError(f"{context} row {row_index} has non-string field name {key!r}")
-            field_context = f"{context} row {row_index}, field {key!r}"
-            encoded = _strict_json_dumps(value, context=field_context, sort_keys=True)
+            encoded = _strict_json_dumps(value, context=f"{context} row {row_index}, field {key!r}")
             if isinstance(value, (Mapping, list, tuple)):
                 flattened[key] = encoded
             elif isinstance(value, str):
@@ -55,37 +51,34 @@ def _flatten_csv_rows(rows: Iterable[Mapping[str, Any]], *, context: str) -> lis
     return flattened_rows
 
 
-def _write_csv(rows: list[dict[str, Any]], fields: list[str], output: Path) -> None:
-    """Write validated rows, neutralizing formula-like untrusted headers too."""
+def _write_csv(
+    records: Iterable[Mapping[str, Any]], output: Path, context: str, preferred: list[str]
+) -> Path:
+    """Write formula-neutralized rows: the preferred columns, then the others by name."""
 
+    rows = _flatten_csv_rows(records, context=context)
+    fields = preferred + sorted({key for row in rows for key in row if key not in preferred})
     with (
         atomic_output_path(output) as temporary,
         temporary.open("w", encoding="utf-8", newline="") as handle,
     ):
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        # Field names can be untrusted too.
         writer.writerow({field: _safe_csv_string(field) for field in fields})
         writer.writerows(rows)
-
-
-def write_json(data: Mapping[str, Any], path: str | Path) -> Path:
-    """Write the canonical analysis representation as stable, pretty JSON."""
-
-    payload = _strict_json_dumps(
-        data,
-        context="analysis JSON",
-        indent=2,
-        sort_keys=True,
-    )
-    output = Path(path)
-    atomic_write_text(output, payload + "\n")
     return output
 
 
-def write_events_csv(events: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+def write_json(data: Mapping[str, Any], output: Path) -> Path:
+    """Write the canonical analysis representation as stable, pretty JSON."""
+
+    payload = _strict_json_dumps(data, context="analysis JSON", indent=2)
+    return atomic_write_text(output, payload + "\n")
+
+
+def write_events_csv(events: Iterable[Mapping[str, Any]], output: Path) -> Path:
     """Write a flat, formula-neutralized event table for data tools."""
 
-    rows = _flatten_csv_rows(events, context="events CSV")
-    output = Path(path)
     preferred = [
         "event_id",
         "type",
@@ -97,13 +90,10 @@ def write_events_csv(events: Iterable[Mapping[str, Any]], path: str | Path) -> P
         "persistent",
         "description",
     ]
-    extras = sorted({key for row in rows for key in row if key not in preferred})
-    fields = preferred + extras
-    _write_csv(rows, fields, output)
-    return output
+    return _write_csv(events, output, "events CSV", preferred)
 
 
-def write_track_summary_csv(summary: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+def write_track_summary_csv(summary: Iterable[Mapping[str, Any]], output: Path) -> Path:
     """Write one formula-neutralized row per track with a column group per quantity."""
 
     flattened: list[dict[str, Any]] = []
@@ -122,8 +112,6 @@ def write_track_summary_csv(summary: Iterable[Mapping[str, Any]], path: str | Pa
                 }
             )
         flattened.append(row)
-    rows = _flatten_csv_rows(flattened, context="track-summary CSV")
-    output = Path(path)
     preferred = [
         "track_id",
         "kind",
@@ -134,16 +122,13 @@ def write_track_summary_csv(summary: Iterable[Mapping[str, Any]], path: str | Pa
         "parent_track_ids",
     ]
     # Keep each quantity's columns together, in summary order.
-    fields = list(dict.fromkeys([*preferred, *(key for row in rows for key in row)]))
-    _write_csv(rows, fields, output)
-    return output
+    fields = list(dict.fromkeys([*preferred, *(key for row in flattened for key in row)]))
+    return _write_csv(flattened, output, "track-summary CSV", fields)
 
 
-def write_bonds_csv(bonds: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+def write_bonds_csv(bonds: Iterable[Mapping[str, Any]], output: Path) -> Path:
     """Write one formula-neutralized row per bond and frame, grouped by bond."""
 
-    rows = _flatten_csv_rows(bonds, context="bonds CSV")
-    output = Path(path)
     preferred = [
         "bond_id",
         "frame",
@@ -161,12 +146,10 @@ def write_bonds_csv(bonds: Iterable[Mapping[str, Any]], path: str | Path) -> Pat
         "feature_ids",
         "track_ids",
     ]
-    extras = sorted({key for row in rows for key in row if key not in preferred})
-    _write_csv(rows, preferred + extras, output)
-    return output
+    return _write_csv(bonds, output, "bonds CSV", preferred)
 
 
-def write_atom_groups_csv(groups: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+def write_atom_groups_csv(groups: Iterable[Mapping[str, Any]], output: Path) -> Path:
     """Write one row per atom group, charge producer, and frame; atoms are in the JSON."""
 
     fields = [
@@ -181,31 +164,28 @@ def write_atom_groups_csv(groups: Iterable[Mapping[str, Any]], path: str | Path)
         "net_charge",
         "spin",
     ]
-    rows = _flatten_csv_rows(
-        (
-            {
-                "group_id": group["group_id"],
-                "source": group["source"],
-                "formula": group["formula"],
-                "atom_count": len(group["atoms"]),
-                "producer": group["producer"],
-                **{name: value[name] for name in fields[5:]},
-            }
-            for group in groups
-            for value in group["values"]
-        ),
-        context="atom-groups CSV",
+    rows = (
+        {
+            "group_id": group["group_id"],
+            "source": group["source"],
+            "formula": group["formula"],
+            "atom_count": len(group["atoms"]),
+            "producer": group["producer"],
+            "frame": value["frame"],
+            "frame_label": value["frame_label"],
+            "charge": value["charge"],
+            "net_charge": value["net_charge"],
+            "spin": value["spin"],
+        }
+        for group in groups
+        for value in group["values"]
     )
-    output = Path(path)
-    _write_csv(rows, fields, output)
-    return output
+    return _write_csv(rows, output, "atom-groups CSV", fields)
 
 
-def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], path: str | Path) -> Path:
+def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], output: Path) -> Path:
     """Write formula-neutralized feature-track observations in long form."""
 
-    rows = _flatten_csv_rows(tracks, context="feature-tracks CSV")
-    output = Path(path)
     preferred = [
         "track_id",
         "frame",
@@ -218,7 +198,4 @@ def write_tracks_csv(tracks: Iterable[Mapping[str, Any]], path: str | Path) -> P
         "volume",
         "confidence",
     ]
-    extras = sorted({key for row in rows for key in row if key not in preferred})
-    fields = preferred + extras
-    _write_csv(rows, fields, output)
-    return output
+    return _write_csv(tracks, output, "feature-tracks CSV", preferred)

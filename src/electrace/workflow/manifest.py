@@ -9,14 +9,7 @@ import yaml  # type: ignore[import-untyped]
 
 from electrace._files import atomic_write_text
 
-from .models import (
-    WORKFLOW_SCHEMA_VERSION,
-    ExecutableSpec,
-    SchedulerSpec,
-    WorkflowManifest,
-    WorkflowProject,
-    WorkflowStep,
-)
+from .models import WORKFLOW_SCHEMA_VERSION, WorkflowManifest
 
 MAX_WORKFLOW_MANIFEST_BYTES = 1_000_000
 
@@ -51,41 +44,40 @@ def load_workflow_manifest(path: str | Path) -> WorkflowManifest:
 def starter_workflow_manifest(*, root: str = ".") -> WorkflowManifest:
     """Return a local VASP-to-BadELF starter manifest."""
 
-    return WorkflowManifest(
-        schema_version=WORKFLOW_SCHEMA_VERSION,
-        project=WorkflowProject(
-            root=root,
-            series_kind="auto",
-            workspace=".electrace-work",
-            structure="CONTCAR",
-            fallback="POSCAR",
-        ),
-        frames="all",
-        executables={
-            "vasp": ExecutableSpec(path="vasp_std"),
-            "baderkit": ExecutableSpec(path="baderkit"),
-        },
-        scheduler=SchedulerSpec(kind="local"),
-        steps=(
-            WorkflowStep(
-                id="vasp_elf",
-                kind="vasp",
-                executable="vasp",
-                template_dir="templates/vasp-elf",
-                options={
-                    "required_inputs": ["INCAR", "KPOINTS", "POSCAR", "POTCAR"],
-                    "expected_outputs": ["CHGCAR", "ELFCAR", "CONTCAR"],
-                    "incar_overrides": {"LELF": True, "LCHARG": True, "NSW": 0},
+    return WorkflowManifest.from_dict(
+        {
+            "schema_version": WORKFLOW_SCHEMA_VERSION,
+            "project": {
+                "root": root,
+                "series_kind": "auto",
+                "workspace": ".electrace-work",
+                "structure": "CONTCAR",
+                "fallback": "POSCAR",
+            },
+            "frames": "all",
+            "executables": {"vasp": {"path": "vasp_std"}, "baderkit": {"path": "baderkit"}},
+            "scheduler": {"kind": "local"},
+            "steps": [
+                {
+                    "id": "vasp_elf",
+                    "kind": "vasp",
+                    "executable": "vasp",
+                    "template_dir": "templates/vasp-elf",
+                    "options": {
+                        "required_inputs": ["INCAR", "KPOINTS", "POSCAR", "POTCAR"],
+                        "expected_outputs": ["CHGCAR", "ELFCAR", "CONTCAR"],
+                        "incar_overrides": {"LELF": True, "LCHARG": True, "NSW": 0},
+                    },
                 },
-            ),
-            WorkflowStep(
-                id="elf_basins",
-                kind="baderkit",
-                executable="baderkit",
-                capability="elf_basins",
-                depends_on=("vasp_elf",),
-            ),
-        ),
+                {
+                    "id": "elf_basins",
+                    "kind": "baderkit",
+                    "executable": "baderkit",
+                    "capability": "elf_basins",
+                    "depends_on": ["vasp_elf"],
+                },
+            ],
+        }
     )
 
 
@@ -99,12 +91,3 @@ def dump_starter_manifest(path: str | Path, *, root: str = ".", overwrite: bool 
         starter_workflow_manifest(root=root).to_dict(), sort_keys=False, allow_unicode=True
     )
     return atomic_write_text(target, document)
-
-
-__all__ = [
-    "MAX_WORKFLOW_MANIFEST_BYTES",
-    "WorkflowManifestError",
-    "dump_starter_manifest",
-    "load_workflow_manifest",
-    "starter_workflow_manifest",
-]

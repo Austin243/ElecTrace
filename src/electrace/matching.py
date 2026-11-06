@@ -21,16 +21,17 @@ import numpy as np
 import numpy.typing as npt
 
 from .geometry import (
-    as_pbc,
     deformation_aware_distance,
     deformation_aware_distance_lower_bound,
     minimum_image_displacement,
     periodic_voxel_overlap,
 )
-from .models import Atom, Feature, FeatureKind, Frame, MatchEdge, MatchResult
+from .models import Atom, Feature, FeatureKind, Frame, Identifier, MatchEdge, MatchResult
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
+# A candidate split or merge member: the feature, its structural cost, and its pair evidence.
+GroupMember = tuple[Feature, float, dict[str, Any]]
 
 
 @dataclass(slots=True)
@@ -44,28 +45,7 @@ class AtomMatchConfig:
     max_distance: float = 2.0
     distance_scale: float = 0.5
     unmatched_cost: float = 3.0
-    allow_element_change: bool = False
-    element_mismatch_cost: float = 4.0
-    attribute_scales: dict[str, float] = field(default_factory=dict)
-    attribute_weight: float = 0.25
-    pbc: tuple[bool, bool, bool] = (True, True, True)
     identity: str = "geometric"
-
-    def __post_init__(self) -> None:
-        if self.identity not in ("geometric", "index"):
-            raise ValueError("identity must be 'geometric' or 'index'")
-        self.max_distance = _positive(self.max_distance, "max_distance")
-        self.distance_scale = _positive(self.distance_scale, "distance_scale")
-        self.unmatched_cost = _positive(self.unmatched_cost, "unmatched_cost")
-        self.element_mismatch_cost = _nonnegative(
-            self.element_mismatch_cost, "element_mismatch_cost"
-        )
-        self.attribute_weight = _nonnegative(self.attribute_weight, "attribute_weight")
-        self.attribute_scales = {
-            str(key): _positive(value, f"attribute scale {key!r}")
-            for key, value in self.attribute_scales.items()
-        }
-        self.pbc = as_pbc(self.pbc)
 
 
 @dataclass(slots=True)
@@ -92,9 +72,6 @@ class FeatureMatchConfig:
     voxel_weight: float = 0.9
     descriptor_weight: float = 0.35
     descriptor_scales: dict[str, float] = field(default_factory=dict)
-    allow_kind_mismatch: bool = False
-    equivalent_kinds: tuple[tuple[str, str], ...] = ()
-    kind_mismatch_cost: float = 3.0
     detect_splits_merges: bool = True
     split_merge_distance: float = 2.5
     split_merge_max_cost: float = 2.25
@@ -103,79 +80,9 @@ class FeatureMatchConfig:
     min_split_merge_confidence: float = 0.15
     pbc: tuple[bool, bool, bool] = (True, True, True)
 
-    def __post_init__(self) -> None:
-        for name in (
-            "max_distance",
-            "distance_scale",
-            "max_cost",
-            "unmatched_cost",
-            "charge_scale",
-            "volume_log_scale",
-            "split_merge_distance",
-            "split_merge_max_cost",
-        ):
-            setattr(self, name, _positive(getattr(self, name), name))
-        for name in (
-            "distance_weight",
-            "charge_weight",
-            "volume_weight",
-            "neighbor_weight",
-            "voxel_weight",
-            "descriptor_weight",
-            "kind_mismatch_cost",
-            "conservation_tolerance",
-            "min_split_merge_confidence",
-        ):
-            setattr(self, name, _nonnegative(getattr(self, name), name))
-        if self.min_split_merge_confidence > 1.0:
-            raise ValueError("min_split_merge_confidence must lie in [0, 1]")
-        if self.conservation_tolerance > 1.0:
-            raise ValueError("conservation_tolerance must lie in [0, 1]")
-        self.max_group_size = int(self.max_group_size)
-        if self.max_group_size < 2:
-            raise ValueError("max_group_size must be at least two")
-        self.descriptor_scales = {
-            str(key): _positive(value, f"descriptor scale {key!r}")
-            for key, value in self.descriptor_scales.items()
-        }
-        self.equivalent_kinds = tuple(
-            (str(left).lower(), str(right).lower()) for left, right in self.equivalent_kinds
-        )
-        self.pbc = as_pbc(self.pbc)
-
-
-def _positive(value: float, name: str) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0:
-        raise ValueError(f"{name} must be finite and positive")
-    return result
-
-
-def _nonnegative(value: float, name: str) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result < 0:
-        raise ValueError(f"{name} must be finite and non-negative")
-    return result
-
-
-def _finite_cost_matrix(cost_matrix: npt.ArrayLike) -> tuple[FloatArray, float]:
-    matrix = np.asarray(cost_matrix, dtype=float)
-    if matrix.ndim != 2:
-        raise ValueError("cost matrix must be two-dimensional")
-    if np.any(np.isnan(matrix)) or np.any(matrix == -np.inf):
-        raise ValueError("cost matrix cannot contain NaN or negative infinity")
-    if np.any(matrix < 0):
-        raise ValueError("assignment costs must be non-negative")
-    finite = matrix[np.isfinite(matrix)]
-    baseline = float(finite.max()) if finite.size else 1.0
-    # Any complete assignment using this sentinel is worse than every
-    # assignment composed only of finite entries.
-    sentinel = max(1.0, baseline) * (max(matrix.shape, default=0) + 1) * 1.0e6
-    return np.where(np.isfinite(matrix), matrix, sentinel), sentinel
-
 
 def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]:
-    """Rectangular O(n^2 m) Hungarian solver used when SciPy is unavailable.
+    """O(n^2 m) Hungarian solver, for n <= m, used when SciPy is unavailable.
 
     The implementation is the shortest-augmenting-path form of the Hungarian
     algorithm.  It is deterministic and supports infinite forbidden edges by
@@ -184,15 +91,13 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
     the first minimal column, so the assignment does not depend on the vectorization.
     """
 
-    cost, sentinel = _finite_cost_matrix(cost_matrix)
-    original = np.asarray(cost_matrix, dtype=float)
+    matrix = np.asarray(cost_matrix, dtype=float)
+    finite = np.isfinite(matrix)
+    # Any complete assignment using this sentinel is worse than every
+    # assignment composed only of finite entries.
+    sentinel = max(1.0, float(matrix[finite].max())) * (max(matrix.shape) + 1) * 1.0e6
+    cost = np.where(finite, matrix, sentinel)
     rows, columns = cost.shape
-    if rows == 0 or columns == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
-    transposed = rows > columns
-    if transposed:
-        cost = cost.T
-        rows, columns = cost.shape
 
     potential_rows = np.zeros(rows + 1, dtype=float)
     potential_columns = np.zeros(columns + 1, dtype=float)
@@ -204,7 +109,7 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
         minimum = np.full(columns + 1, np.inf, dtype=float)
         used = np.zeros(columns + 1, dtype=bool)
         column0 = 0
-        while True:
+        while column_match[column0] != 0:
             used[column0] = True
             row0 = int(column_match[column0])
             # Unused columns in increasing order; column 0 is always used.
@@ -216,95 +121,30 @@ def _hungarian_fallback(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]
             nearest = int(np.argmin(minimum[free]))
             delta = minimum[free[nearest]]
             column1 = int(free[nearest])
-            if not math.isfinite(float(delta)):
-                raise ValueError("assignment problem is infeasible")
             # Used columns hold distinct rows: matched ones plus the row being inserted.
             potential_rows[column_match[used]] += delta
             potential_columns[used] -= delta
             minimum[~used] -= delta
             column0 = column1
-            if column_match[column0] == 0:
-                break
-        while True:
+        while column0 != 0:
             column1 = int(predecessor[column0])
             column_match[column0] = column_match[column1]
             column0 = column1
-            if column0 == 0:
-                break
 
-    row_indices: list[int] = []
-    column_indices: list[int] = []
-    for column in range(1, columns + 1):
-        if column_match[column]:
-            row_indices.append(int(column_match[column] - 1))
-            column_indices.append(column - 1)
-    row_array = np.asarray(row_indices, dtype=np.int64)
-    column_array = np.asarray(column_indices, dtype=np.int64)
-    if transposed:
-        row_array, column_array = column_array, row_array
+    assigned = np.flatnonzero(column_match[1:])
+    row_array = column_match[1:][assigned] - 1
     order = np.argsort(row_array, kind="stable")
-    row_array = row_array[order]
-    column_array = column_array[order]
-    if any(
-        original[row, column] == np.inf for row, column in zip(row_array, column_array, strict=True)
-    ):
-        # Match scipy.optimize.linear_sum_assignment's infeasibility behavior.
-        raise ValueError(f"assignment problem is infeasible (forbidden cost {sentinel:g} selected)")
-    return row_array, column_array
-
-
-def solve_assignment(cost_matrix: npt.ArrayLike) -> tuple[IntArray, IntArray]:
-    """Solve a rectangular linear assignment, preferring SciPy when present."""
-
-    matrix = np.asarray(cost_matrix, dtype=float)
-    if matrix.ndim != 2:
-        raise ValueError("cost matrix must be two-dimensional")
-    # Keep validation and the documented non-negative-cost contract identical
-    # across the SciPy and bundled implementations.
-    _finite_cost_matrix(matrix)
-    if matrix.shape[0] == 0 or matrix.shape[1] == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
-    try:
-        from scipy.optimize import linear_sum_assignment
-
-        rows, columns = linear_sum_assignment(matrix)
-        return rows.astype(np.int64, copy=False), columns.astype(np.int64, copy=False)
-    except ImportError:
-        return _hungarian_fallback(matrix)
-
-
-# A familiar name for callers working directly with optimization routines.
-linear_assignment = solve_assignment
+    return row_array[order], assigned[order].astype(np.int64)
 
 
 def _assign_with_unmatched(
     pair_cost: FloatArray, unmatched_cost: float
 ) -> tuple[list[tuple[int, int]], set[int], set[int], float]:
     rows, columns = pair_cost.shape
-    if rows == 0:
-        return [], set(), set(range(columns)), columns * unmatched_cost
-    if columns == 0:
-        return [], set(range(rows)), set(), rows * unmatched_cost
+    if rows == 0 or columns == 0:
+        return [], set(range(rows)), set(range(columns)), (rows + columns) * unmatched_cost
     # Each source and target has its own dummy node.  The bottom-right block
     # lets unused dummies pair at zero cost.
-    augmented = _augmented_unmatched_cost(pair_cost, unmatched_cost)
-    assigned_rows, assigned_columns = solve_assignment(augmented)
-    matched = [
-        (int(row), int(column))
-        for row, column in zip(assigned_rows, assigned_columns, strict=True)
-        if row < rows and column < columns and math.isfinite(pair_cost[row, column])
-    ]
-    matched_rows = {row for row, _ in matched}
-    matched_columns = {column for _, column in matched}
-    unmatched_rows = set(range(rows)) - matched_rows
-    unmatched_columns = set(range(columns)) - matched_columns
-    total = sum(float(pair_cost[row, column]) for row, column in matched)
-    total += unmatched_cost * (len(unmatched_rows) + len(unmatched_columns))
-    return matched, unmatched_rows, unmatched_columns, float(total)
-
-
-def _augmented_unmatched_cost(pair_cost: FloatArray, unmatched_cost: float) -> FloatArray:
-    rows, columns = pair_cost.shape
     size = rows + columns
     augmented = np.full((size, size), np.inf, dtype=float)
     augmented[:rows, :columns] = pair_cost
@@ -313,7 +153,24 @@ def _augmented_unmatched_cost(pair_cost: FloatArray, unmatched_cost: float) -> F
     for column in range(columns):
         augmented[rows + column, column] = unmatched_cost
     augmented[rows:, columns:] = 0.0
-    return augmented
+    if np.isnan(augmented).any():
+        raise ValueError("cost matrix cannot contain NaN or negative infinity")
+    try:
+        from scipy.optimize import linear_sum_assignment
+    except ImportError:
+        assigned_rows, assigned_columns = _hungarian_fallback(augmented)
+    else:
+        assigned_rows, assigned_columns = linear_sum_assignment(augmented)
+    matched = [
+        (int(row), int(column))
+        for row, column in zip(assigned_rows, assigned_columns, strict=True)
+        if row < rows and column < columns and math.isfinite(pair_cost[row, column])
+    ]
+    unmatched_rows = set(range(rows)) - {row for row, _ in matched}
+    unmatched_columns = set(range(columns)) - {column for _, column in matched}
+    total = sum(float(pair_cost[row, column]) for row, column in matched)
+    total += unmatched_cost * (len(unmatched_rows) + len(unmatched_columns))
+    return matched, unmatched_rows, unmatched_columns, float(total)
 
 
 def _weighted_cost(components: Mapping[str, tuple[float, float]]) -> float:
@@ -322,49 +179,6 @@ def _weighted_cost(components: Mapping[str, tuple[float, float]]) -> float:
         return math.inf
     denominator = sum(weight for _, weight in active)
     return float(sum(value * weight for value, weight in active) / denominator)
-
-
-def _pair_confidence(cost: float) -> float:
-    return float(math.exp(-max(0.0, cost)))
-
-
-def _atom_pair(
-    previous: Atom,
-    current: Atom,
-    distance: float,
-    config: AtomMatchConfig,
-) -> tuple[float, dict[str, Any]]:
-    element_match = previous.element.casefold() == current.element.casefold()
-    if not element_match and not config.allow_element_change:
-        return math.inf, {"element_match": False}
-    if distance > config.max_distance:
-        return math.inf, {"distance": distance, "element_match": element_match}
-    components: dict[str, tuple[float, float]] = {
-        "distance": (distance / config.distance_scale, 1.0)
-    }
-    attribute_deltas: dict[str, float] = {}
-    for key, scale in config.attribute_scales.items():
-        left = previous.attributes.get(key)
-        right = current.attributes.get(key)
-        left_value = _as_finite_float(left)
-        right_value = _as_finite_float(right)
-        if left_value is not None and right_value is not None:
-            delta = abs(left_value - right_value) / scale
-            attribute_deltas[key] = delta
-    if attribute_deltas:
-        components["attributes"] = (
-            float(np.mean(list(attribute_deltas.values()))),
-            config.attribute_weight,
-        )
-    if not element_match:
-        components["element_mismatch"] = (config.element_mismatch_cost, 1.0)
-    cost = _weighted_cost(components)
-    return cost, {
-        "distance": distance,
-        "element_match": element_match,
-        "attribute_deltas": attribute_deltas,
-        "components": {key: value for key, (value, _) in components.items()},
-    }
 
 
 def match_atoms(
@@ -376,20 +190,19 @@ def match_atoms(
 
     settings = config or AtomMatchConfig()
     if settings.identity == "index":
-        return _match_atoms_by_index(previous, current, settings)
-    if settings.allow_element_change:
-        allowed = np.ones((len(previous.atoms), len(current.atoms)), dtype=bool)
-    else:
-        before = np.array([atom.element.casefold() for atom in previous.atoms], dtype=str)
-        after = np.array([atom.element.casefold() for atom in current.atoms], dtype=str)
-        allowed = before[:, None] == after[None, :]
+        return _match_atoms_by_index(previous, current)
+    # Integer codes compare exactly as the casefolded symbols do.
+    codes: dict[str, int] = {}
+    before = [codes.setdefault(atom.element.casefold(), len(codes)) for atom in previous.atoms]
+    after = [codes.setdefault(atom.element.casefold(), len(codes)) for atom in current.atoms]
+    allowed = np.equal.outer(before, after)
     distances = _candidate_distances(
         previous.atoms,
         current.atoms,
         allowed,
         previous.cell,
         current.cell,
-        settings.pbc,
+        (True, True, True),
         settings.max_distance,
     )
     costs = np.full((len(previous.atoms), len(current.atoms)), np.inf, dtype=float)
@@ -397,32 +210,32 @@ def match_atoms(
     evidence: dict[tuple[int, int], dict[str, Any]] = {}
     rows, columns = np.nonzero(distances <= settings.max_distance)
     for row, column in zip(rows.tolist(), columns.tolist(), strict=True):
-        cost, pair_evidence = _atom_pair(
-            previous.atoms[row],
-            current.atoms[column],
-            float(distances[row, column]),
-            settings,
-        )
+        distance = float(distances[row, column])
+        cost = distance / settings.distance_scale
         costs[row, column] = cost
-        evidence[row, column] = pair_evidence
+        evidence[row, column] = {
+            "distance": distance,
+            "element_match": True,
+            "attribute_deltas": {},
+            "components": {"distance": cost},
+        }
     matched, unmatched_rows, unmatched_columns, total = _assign_with_unmatched(
         costs, settings.unmatched_cost
     )
-    edges: list[MatchEdge] = []
-    for row, column in sorted(matched):
-        edges.append(
-            MatchEdge(
-                source_ids=(previous.atoms[row].index,),
-                target_ids=(current.atoms[column].index,),
-                cost=float(costs[row, column]),
-                confidence=_pair_confidence(float(costs[row, column])),
-                evidence=evidence[row, column],
-            )
+    edges = tuple(
+        MatchEdge(
+            source_ids=(previous.atoms[row].index,),
+            target_ids=(current.atoms[column].index,),
+            cost=float(costs[row, column]),
+            confidence=math.exp(-float(costs[row, column])),
+            evidence=evidence[row, column],
         )
+        for row, column in sorted(matched)
+    )
     return MatchResult(
         previous_frame_index=previous.index,
         current_frame_index=current.index,
-        edges=tuple(edges),
+        edges=edges,
         unmatched_previous=tuple(previous.atoms[row].index for row in sorted(unmatched_rows)),
         unmatched_current=tuple(
             current.atoms[column].index for column in sorted(unmatched_columns)
@@ -436,11 +249,7 @@ def match_atoms(
     )
 
 
-def _match_atoms_by_index(
-    previous: Frame,
-    current: Frame,
-    config: AtomMatchConfig,
-) -> MatchResult:
+def _match_atoms_by_index(previous: Frame, current: Frame) -> MatchResult:
     """Pair the i-th atoms of both frames; displacement is evidence, not cost.
 
     The caller asserts a fixed atom order.  Only the element sequence can be
@@ -462,19 +271,14 @@ def _match_atoms_by_index(
                 f"{target.element} in frame {current.label!r}; use geometric atom "
                 "identity when atom order or content changes"
             )
-    distances = (
-        np.asarray(
-            deformation_aware_distance(
-                [atom.fractional_position for atom in previous.atoms],
-                [atom.fractional_position for atom in current.atoms],
-                previous.cell,
-                current.cell,
-                config.pbc,
-            ),
-            dtype=float,
-        )
-        if previous.atoms
-        else np.empty(0, dtype=float)
+    distances = np.asarray(
+        deformation_aware_distance(
+            [atom.fractional_position for atom in previous.atoms],
+            [atom.fractional_position for atom in current.atoms],
+            previous.cell,
+            current.cell,
+        ),
+        dtype=float,
     )
     edges = tuple(
         MatchEdge(
@@ -526,10 +330,8 @@ def _candidate_distances(
         return distances
     previous_positions = np.asarray(
         [entity.fractional_position for entity in previous], dtype=float
-    ).reshape(len(previous), 3)
-    current_positions = np.asarray(
-        [entity.fractional_position for entity in current], dtype=float
-    ).reshape(len(current), 3)
+    )
+    current_positions = np.asarray([entity.fractional_position for entity in current], dtype=float)
     bound = deformation_aware_distance_lower_bound(
         previous_positions, current_positions, previous_cell, current_cell, pbc
     )
@@ -537,19 +339,13 @@ def _candidate_distances(
     rows, columns = np.nonzero(allowed & (bound <= gate * (1.0 + 1.0e-9)))
     if rows.size == 0:
         return distances
-    source_positions = previous_positions[rows]
-    target_positions = current_positions[columns]
-    values = np.asarray(
-        deformation_aware_distance(
-            source_positions,
-            target_positions,
-            previous_cell,
-            current_cell,
-            pbc,
-        ),
-        dtype=float,
+    distances[rows, columns] = deformation_aware_distance(
+        previous_positions[rows],
+        current_positions[columns],
+        previous_cell,
+        current_cell,
+        pbc,
     )
-    distances[rows, columns] = values
     return distances
 
 
@@ -558,25 +354,6 @@ def _as_finite_float(value: Any) -> float | None:
         return None
     result = float(value)
     return result if math.isfinite(result) else None
-
-
-def _atom_mapping(
-    atom_mapping: MatchResult | Mapping[int, int] | None,
-) -> dict[int, int]:
-    if atom_mapping is None:
-        return {}
-    if isinstance(atom_mapping, MatchResult):
-        return {int(source): int(target) for source, target in atom_mapping.mapping.items()}
-    return {int(source): int(target) for source, target in atom_mapping.items()}
-
-
-def _counter_jaccard(left: Counter[str], right: Counter[str]) -> float:
-    keys = set(left) | set(right)
-    union = sum(max(left[key], right[key]) for key in keys)
-    if union == 0:
-        return 1.0
-    intersection = sum(min(left[key], right[key]) for key in keys)
-    return float(intersection / union)
 
 
 def _neighbor_similarity(
@@ -592,23 +369,10 @@ def _neighbor_similarity(
         return None
     if mapping and all(index in mapping for index in left):
         mapped = {mapping[index] for index in left}
-        union = mapped | right
-        return float(len(mapped & right) / len(union)) if union else 1.0
-    previous_elements = Counter(previous.atom_by_index(index).element.casefold() for index in left)
-    current_elements = Counter(current.atom_by_index(index).element.casefold() for index in right)
-    return _counter_jaccard(previous_elements, current_elements)
-
-
-def _compatible_kind(source: Feature, target: Feature, config: FeatureMatchConfig) -> bool:
-    if source.kind == target.kind:
-        return True
-    pair = (source.kind, target.kind)
-    reverse = (target.kind, source.kind)
-    return (
-        config.allow_kind_mismatch
-        or pair in config.equivalent_kinds
-        or reverse in config.equivalent_kinds
-    )
+        return float(len(mapped & right) / len(mapped | right))
+    before = Counter(previous.atom_by_index(index).element.casefold() for index in left)
+    after = Counter(current.atom_by_index(index).element.casefold() for index in right)
+    return float((before & after).total() / (before | after).total())
 
 
 _DESCRIPTOR_FAMILY_ALIASES = {
@@ -623,16 +387,7 @@ def _semantic_token(value: Any) -> str | None:
 
     if not isinstance(value, str):
         return None
-    token = value.strip().casefold().replace("-", "_")
-    token = "_".join(token.split())
-    return token or None
-
-
-def _descriptor_family_token(value: Any) -> str | None:
-    token = _semantic_token(value)
-    if token is None:
-        return None
-    return _DESCRIPTOR_FAMILY_ALIASES.get(token, token)
+    return "_".join(value.casefold().replace("-", "_").split()) or None
 
 
 def _declared_descriptor_families(feature: Feature) -> frozenset[str]:
@@ -641,46 +396,32 @@ def _declared_descriptor_families(feature: Feature) -> frozenset[str]:
     value = feature.attributes.get("descriptor_family")
     if not isinstance(value, str):
         return frozenset()
+    tokens = (_semantic_token(part) for part in value.split("+"))
     return frozenset(
-        token for part in value.split("+") if (token := _descriptor_family_token(part)) is not None
+        _DESCRIPTOR_FAMILY_ALIASES.get(token, token) for token in tokens if token is not None
     )
 
 
-def _semantic_compatibility(source: Feature, target: Feature) -> tuple[bool, dict[str, Any]]:
+def _semantically_compatible(source: Feature, target: Feature) -> bool:
     """Reject pairs with explicitly contradictory descriptor semantics."""
+
+    def contradict(key: str) -> bool:
+        left = _semantic_token(source.attributes.get(key))
+        right = _semantic_token(target.attributes.get(key))
+        return left is not None and right is not None and left != right
 
     source_declared = _declared_descriptor_families(source)
     target_declared = _declared_descriptor_families(target)
-    source_charge = _semantic_token(source.attributes.get("charge_definition"))
-    target_charge = _semantic_token(target.attributes.get("charge_definition"))
-    source_convention = _semantic_token(source.attributes.get("charge_convention"))
-    target_convention = _semantic_token(target.attributes.get("charge_convention"))
-    source_producer = _semantic_token(source.attributes.get("descriptor_producer"))
-    target_producer = _semantic_token(target.attributes.get("descriptor_producer"))
-    reasons: list[str] = []
     if source_declared and target_declared and source_declared.isdisjoint(target_declared):
-        reasons.append("incompatible_descriptor_families")
-    if source_charge is not None and target_charge is not None and source_charge != target_charge:
-        reasons.append("incompatible_charge_definitions")
-    if (
-        source.charge is not None
-        and target.charge is not None
-        and source_convention is not None
-        and target_convention is not None
-        and source_convention != target_convention
-    ):
-        reasons.append("incompatible_charge_conventions")
-    if (
-        source_producer is not None
-        and target_producer is not None
-        and source_producer != target_producer
-    ):
-        reasons.append("incompatible_descriptor_producers")
-    return not reasons, {"compatible": not reasons, "rejection_reasons": reasons}
+        return False
+    if contradict("charge_definition") or contradict("descriptor_producer"):
+        return False
+    both_charged = source.charge is not None and target.charge is not None
+    return not (both_charged and contradict("charge_convention"))
 
 
 def _semantic_signature(feature: Feature) -> tuple[Any, ...]:
-    """Everything :func:`_compatible_kind` and :func:`_semantic_compatibility` read."""
+    """Feature kind plus everything :func:`_semantically_compatible` reads."""
 
     return (
         feature.kind,
@@ -693,9 +434,7 @@ def _semantic_signature(feature: Feature) -> tuple[Any, ...]:
 
 
 def _compatible_pairs(
-    previous: Sequence[Feature],
-    current: Sequence[Feature],
-    config: FeatureMatchConfig,
+    previous: Sequence[Feature], current: Sequence[Feature]
 ) -> tuple[npt.NDArray[np.bool_], int]:
     """Return the kind- and semantics-compatible pairs and the semantic rejection count.
 
@@ -716,30 +455,28 @@ def _compatible_pairs(
     for rows in groups(previous):
         for columns in current_groups:
             source, target = previous[rows[0]], current[columns[0]]
-            if not _compatible_kind(source, target, config):
+            if source.kind != target.kind:
                 continue
-            if _semantic_compatibility(source, target)[0]:
+            if _semantically_compatible(source, target):
                 allowed[np.ix_(rows, columns)] = True
             else:
                 rejections += len(rows) * len(columns)
     return allowed, rejections
 
 
-def _grid_shape(feature: Feature, frame: Frame) -> tuple[int, int, int] | None:
-    value = feature.attributes.get("grid_shape", frame.metadata.get("grid_shape"))
+def _grid_shape(feature: Feature) -> tuple[int, int, int] | None:
+    value = feature.attributes.get("grid_shape")
     if value is None:
         return None
     shape = tuple(int(component) for component in islice(value, 4))
     return shape if len(shape) == 3 and all(component > 0 for component in shape) else None
 
 
-def _voxel_similarity(
-    source: Feature, target: Feature, previous: Frame, current: Frame
-) -> float | None:
+def _voxel_similarity(source: Feature, target: Feature) -> float | None:
     if source.voxel_indices is None or target.voxel_indices is None:
         return None
-    shape_a = _grid_shape(source, previous)
-    shape_b = _grid_shape(target, current)
+    shape_a = _grid_shape(source)
+    shape_b = _grid_shape(target)
     if shape_a is None or shape_a != shape_b:
         return None
     # Align centroids to compare shape support; absolute translation is already
@@ -752,11 +489,7 @@ def _voxel_similarity(
         int(np.rint(delta * size)) for delta, size in zip(fractional_shift, shape_a, strict=True)
     )
     return periodic_voxel_overlap(
-        source.voxel_indices,
-        target.voxel_indices,
-        shape_a,
-        shift_b=shift,
-        metric="dice",
+        source.voxel_indices, target.voxel_indices, shape_a, shift_b=shift
     )
 
 
@@ -774,48 +507,31 @@ def _shared_neighbor_motion(
     is a shared, already-matched neighbor; all of them are reported.
     """
 
-    old_atoms = {atom.index: atom for atom in previous.atoms}
-    new_atoms = {atom.index: atom for atom in current.atoms}
     motion = []
     for old_id in source.neighbor_atom_indices:
         new_id = atom_mapping.get(old_id)
-        if (
-            new_id not in target.neighbor_atom_indices
-            or old_id not in old_atoms
-            or new_id not in new_atoms
-        ):
+        if new_id not in target.neighbor_atom_indices:
             continue
-        old_atom, new_atom = old_atoms[old_id], new_atoms[new_id]
+        old_atom, new_atom = previous.atom_by_index(old_id), current.atom_by_index(new_id)
         old_offset = np.asarray(source.fractional_position) - old_atom.fractional_position
         new_offset = np.asarray(target.fractional_position) - new_atom.fractional_position
+        relative = deformation_aware_distance(
+            old_offset, new_offset, previous.cell, current.cell, config.pbc
+        )
+        before = minimum_image_displacement(
+            old_atom.fractional_position, source.fractional_position, previous.cell, config.pbc
+        )
+        after = minimum_image_displacement(
+            new_atom.fractional_position, target.fractional_position, current.cell, config.pbc
+        )
         motion.append(
             {
                 "source_atom_index": old_id,
                 "target_atom_index": new_id,
                 "element": old_atom.element,
-                "relative_displacement_angstrom": deformation_aware_distance(
-                    old_offset, new_offset, previous.cell, current.cell, config.pbc
-                ),
-                "distance_before_angstrom": float(
-                    np.linalg.norm(
-                        minimum_image_displacement(
-                            old_atom.fractional_position,
-                            source.fractional_position,
-                            previous.cell,
-                            config.pbc,
-                        )
-                    )
-                ),
-                "distance_after_angstrom": float(
-                    np.linalg.norm(
-                        minimum_image_displacement(
-                            new_atom.fractional_position,
-                            target.fractional_position,
-                            current.cell,
-                            config.pbc,
-                        )
-                    )
-                ),
+                "relative_displacement_angstrom": relative,
+                "distance_before_angstrom": float(np.linalg.norm(before)),
+                "distance_after_angstrom": float(np.linalg.norm(after)),
             }
         )
     return motion
@@ -830,38 +546,23 @@ def _feature_pair(
     config: FeatureMatchConfig,
     *,
     distance: float,
-    distance_gate: float | None = None,
     motion_evidence: bool = True,
 ) -> tuple[float, dict[str, Any]]:
-    """Score one candidate pair; ``motion_evidence=False`` skips supplemental geometry.
+    """Score a compatible pair inside its distance gate, both already checked by the caller.
 
-    Matching scans score many pairs that are never reported, so they skip the
-    bond-critical-point motion evidence and :func:`_direct_feature_edge` adds it to
-    the edges that are.
+    ``motion_evidence=False`` skips supplemental geometry.  Matching scans score many
+    pairs that are never reported, so they skip the bond-critical-point motion evidence
+    and :func:`_direct_feature_edge` adds it to the edges that are.
     """
-
-    kind_match = source.kind == target.kind
-    if not _compatible_kind(source, target, config):
-        return math.inf, {"kind_match": False}
-    semantic_match, semantic_evidence = _semantic_compatibility(source, target)
-    if not semantic_match:
-        return math.inf, {
-            "kind_match": kind_match,
-            "semantic_compatibility": semantic_evidence,
-        }
-    if distance > (config.max_distance if distance_gate is None else distance_gate):
-        return math.inf, {"distance": distance, "kind_match": kind_match}
 
     components: dict[str, tuple[float, float]] = {
         "distance": (distance / config.distance_scale, config.distance_weight)
     }
     evidence: dict[str, Any] = {
         "distance": distance,
-        "kind_match": kind_match,
-        "semantic_compatibility": semantic_evidence,
+        "kind_match": True,
+        "semantic_compatibility": {"compatible": True, "rejection_reasons": []},
     }
-    if not kind_match:
-        components["kind_mismatch"] = (config.kind_mismatch_cost, 1.0)
     if source.charge is not None and target.charge is not None:
         charge_delta = abs(source.charge - target.charge)
         components["charge"] = (charge_delta / config.charge_scale, config.charge_weight)
@@ -869,10 +570,7 @@ def _feature_pair(
     if source.volume is not None and target.volume is not None:
         epsilon = 1.0e-12
         log_ratio = abs(math.log((target.volume + epsilon) / (source.volume + epsilon)))
-        components["volume"] = (
-            log_ratio / config.volume_log_scale,
-            config.volume_weight,
-        )
+        components["volume"] = (log_ratio / config.volume_log_scale, config.volume_weight)
         evidence["volume_log_ratio"] = log_ratio
 
     neighbor_similarity = _neighbor_similarity(source, target, previous, current, atom_mapping)
@@ -885,17 +583,15 @@ def _feature_pair(
             source, target, previous, current, atom_mapping, config
         )
 
-    voxel_similarity = _voxel_similarity(source, target, previous, current)
+    voxel_similarity = _voxel_similarity(source, target)
     if voxel_similarity is not None:
         components["voxels"] = (1.0 - voxel_similarity, config.voxel_weight)
         evidence["voxel_similarity"] = voxel_similarity
 
     descriptor_deltas: dict[str, float] = {}
     for key, scale in config.descriptor_scales.items():
-        left = source.attributes.get(key)
-        right = target.attributes.get(key)
-        left_value = _as_finite_float(left)
-        right_value = _as_finite_float(right)
+        left_value = _as_finite_float(source.attributes.get(key))
+        right_value = _as_finite_float(target.attributes.get(key))
         if left_value is not None and right_value is not None:
             descriptor_deltas[key] = abs(left_value - right_value) / scale
     if descriptor_deltas:
@@ -917,8 +613,7 @@ def _quality_factor(features: Sequence[Feature]) -> tuple[float, dict[str, Any]]
         if feature.attributes.get("grid_converged") is False:
             factor *= 0.7
             reasons.append(f"{feature.id}: grid not converged")
-        uncertainty = feature.attributes.get("uncertainty")
-        uncertainty_value = _as_finite_float(uncertainty)
+        uncertainty_value = _as_finite_float(feature.attributes.get("uncertainty"))
         if uncertainty_value is not None:
             factor *= max(0.0, 1.0 - min(1.0, uncertainty_value))
             reasons.append(f"{feature.id}: uncertainty={uncertainty_value:g}")
@@ -931,48 +626,31 @@ def _conservation_assessment(
     tolerance: float,
 ) -> tuple[float | None, dict[str, Any], str | None]:
     participants = (*sources, *targets)
-    channels = {
-        "charge": "charge_relative_error",
-        "volume": "volume_relative_error",
-    }
+    channels = ("charge", "volume")
     complete = {
-        "charge": all(feature.charge is not None for feature in participants),
-        "volume": all(feature.volume is not None for feature in participants),
+        channel: all(getattr(feature, channel) is not None for feature in participants)
+        for channel in channels
     }
     errors: dict[str, float] = {}
-    if complete["volume"]:
-        left = sum(float(feature.volume) for feature in sources if feature.volume is not None)
-        right = sum(float(feature.volume) for feature in targets if feature.volume is not None)
-        errors["volume_relative_error"] = abs(left - right) / max(abs(left), abs(right), 1.0e-12)
-    if complete["charge"]:
-        left = sum(float(feature.charge) for feature in sources if feature.charge is not None)
-        right = sum(float(feature.charge) for feature in targets if feature.charge is not None)
-        # Signed basin charges can cross zero.  Include a small absolute scale
-        # so tiny charges do not create an unbounded relative error.
-        errors["charge_relative_error"] = abs(left - right) / max(abs(left), abs(right), 0.1)
-    charge_semantics = {
-        key: sorted(
-            {
-                token
-                for feature in participants
-                if (token := _semantic_token(feature.attributes.get(key))) is not None
-            }
-        )
-        for key in ("charge_definition", "charge_convention", "descriptor_producer")
-    }
-    charge_conflicts = {key: values for key, values in charge_semantics.items() if len(values) > 1}
-    incompatible = ("charge",) if complete["charge"] and charge_conflicts else ()
+    # Signed basin charges can cross zero.  Include a small absolute scale
+    # so tiny charges do not create an unbounded relative error.
+    for channel, scale in (("volume", 1.0e-12), ("charge", 0.1)):
+        if complete[channel]:
+            left = sum(getattr(feature, channel) for feature in sources)
+            right = sum(getattr(feature, channel) for feature in targets)
+            errors[channel] = abs(left - right) / max(abs(left), abs(right), scale)
+    charge_conflicts: dict[str, list[str]] = {}
+    for key in ("charge_definition", "charge_convention", "descriptor_producer"):
+        tokens = {_semantic_token(feature.attributes.get(key)) for feature in participants}
+        values = sorted(filter(None, tokens))
+        if len(values) > 1:
+            charge_conflicts[key] = values
+    incompatible = ["charge"] if complete["charge"] and charge_conflicts else []
     if incompatible:
-        errors.pop("charge_relative_error", None)
-    available = tuple(
-        channel
-        for channel, key in channels.items()
-        if complete[channel] and channel not in incompatible and key in errors
-    )
-    missing = tuple(channel for channel in channels if not complete[channel])
-    failed = tuple(channel for channel, key in channels.items() if errors.get(key, 0.0) > tolerance)
+        del errors["charge"]
+    failed = [channel for channel in channels if errors.get(channel, 0.0) > tolerance]
     reason: str | None = None
-    if not available:
+    if not errors:
         reason = (
             "incompatible_conservation_semantics"
             if incompatible
@@ -985,11 +663,11 @@ def _conservation_assessment(
     # evidence vector remains available for auditing.
     error = max(errors.values()) if errors else None
     evidence: dict[str, Any] = {
-        **errors,
-        "available_channels": list(available),
-        "missing_channels": list(missing),
-        "incompatible_channels": list(incompatible),
-        "failed_channels": list(failed),
+        **{f"{channel}_relative_error": value for channel, value in errors.items()},
+        "available_channels": [channel for channel in channels if channel in errors],
+        "missing_channels": [channel for channel in channels if not complete[channel]],
+        "incompatible_channels": incompatible,
+        "failed_channels": failed,
         "tolerance": tolerance,
     }
     if charge_conflicts:
@@ -1007,43 +685,34 @@ def _hyperedge_member_cost(evidence: Mapping[str, Any], config: FeatureMatchConf
     confidence to the very splits and merges the model is intended to detect.
     """
 
-    raw = evidence.get("components", {})
-    if not isinstance(raw, Mapping):
-        return math.inf
     weights = {
         "distance": config.distance_weight,
         "neighbors": config.neighbor_weight,
         "voxels": config.voxel_weight,
         "descriptors": config.descriptor_weight,
-        "kind_mismatch": 1.0,
     }
     components: dict[str, tuple[float, float]] = {}
     for key, weight in weights.items():
-        value = raw.get(key)
-        numeric = _as_finite_float(value)
+        numeric = _as_finite_float(evidence["components"].get(key))
         if numeric is not None:
             components[key] = (numeric, weight)
     return _weighted_cost(components)
 
 
 def _best_group(
-    fixed: Sequence[Feature],
-    base: Sequence[Feature],
-    extras: Sequence[tuple[Feature, float, dict[str, Any]]],
+    source: Feature,
+    target: Feature,
+    extras: Sequence[GroupMember],
     *,
     split: bool,
     config: FeatureMatchConfig,
-) -> tuple[
-    list[tuple[Feature, float, dict[str, Any]]],
-    dict[str, Any],
-    dict[str, Any] | None,
-]:
+) -> tuple[list[GroupMember], dict[str, Any], dict[str, Any] | None]:
     """Select the best structurally plausible, conservation-backed subset."""
 
     limited = sorted(extras, key=lambda item: (item[1], str(item[0].id)))[
         : config.max_group_size - 1
     ]
-    best: list[tuple[Feature, float, dict[str, Any]]] = []
+    best: list[GroupMember] = []
     best_evidence: dict[str, Any] = {}
     best_objective = math.inf
     best_rejection: dict[str, Any] | None = None
@@ -1051,12 +720,9 @@ def _best_group(
     # conserved split/merge case without exponential subset enumeration.
     for size in range(1, len(limited) + 1):
         subset = limited[:size]
-        if split:
-            sources = tuple(fixed)
-            targets = (*base, *(item[0] for item in subset))
-        else:
-            sources = (*base, *(item[0] for item in subset))
-            targets = tuple(fixed)
+        members = tuple(item[0] for item in subset)
+        sources = (source,) if split else (source, *members)
+        targets = (target, *members) if split else (target,)
         error, evidence, rejection_reason = _conservation_assessment(
             sources, targets, config.conservation_tolerance
         )
@@ -1074,7 +740,122 @@ def _best_group(
                 "reason": rejection_reason,
                 "conservation": evidence,
             }
-    return best, best_evidence, best_rejection
+    return best, best_evidence, None if best else best_rejection
+
+
+def _group_candidates(
+    unmatched: set[int],
+    backbone: set[int],
+    distances: FloatArray,
+    previous: Frame,
+    current: Frame,
+    atom_mapping: Mapping[int, int],
+    config: FeatureMatchConfig,
+    *,
+    split: bool,
+) -> dict[int, list[GroupMember]]:
+    """Assign every unmatched feature to its best compatible direct backbone.
+
+    For a split, *unmatched* holds current-frame columns and *backbone* the matched
+    previous-frame rows; for a merge, the reverse.  Pairs beyond the split/merge gate
+    cannot qualify, so they are skipped unscored.
+    """
+
+    features = current.features if split else previous.features
+    candidates: dict[int, list[GroupMember]] = {}
+    for index in unmatched:
+        choices: list[tuple[float, int, dict[str, Any]]] = []
+        for member in backbone:
+            row, column = (member, index) if split else (index, member)
+            if distances[row, column] > config.split_merge_distance:
+                continue
+            cost, evidence = _feature_pair(
+                previous.features[row],
+                current.features[column],
+                previous,
+                current,
+                atom_mapping,
+                config,
+                distance=float(distances[row, column]),
+                motion_evidence=False,
+            )
+            structural_cost = _hyperedge_member_cost(evidence, config)
+            if math.isfinite(cost) and structural_cost <= config.split_merge_max_cost:
+                evidence["one_to_one_cost"] = cost
+                choices.append((structural_cost, member, evidence))
+        if choices:
+            structural_cost, member, evidence = min(choices, key=lambda item: (item[0], item[1]))
+            candidates.setdefault(member, []).append((features[index], structural_cost, evidence))
+    return candidates
+
+
+def _hyperedge(
+    source: Feature,
+    target: Feature,
+    selected_split: Sequence[GroupMember],
+    selected_merge: Sequence[GroupMember],
+    split_evidence: dict[str, Any],
+    merge_evidence: dict[str, Any],
+    direct_cost: float,
+    direct_evidence: Mapping[str, Any],
+    config: FeatureMatchConfig,
+) -> tuple[MatchEdge | None, dict[str, Any] | None]:
+    """Join a direct pair with its selected members: the edge, or why it was rejected."""
+
+    source_members = [source, *(item[0] for item in selected_merge)]
+    target_members = [target, *(item[0] for item in selected_split)]
+    members = (*selected_split, *selected_merge)
+    direct_structural = _hyperedge_member_cost(direct_evidence, config)
+    member_costs = [
+        direct_structural if math.isfinite(direct_structural) else direct_cost,
+        *(item[1] for item in members),
+    ]
+    conservation_error, conservation_evidence, conservation_rejection = _conservation_assessment(
+        source_members, target_members, config.conservation_tolerance
+    )
+    conservation_factor = (
+        math.exp(-2.0 * conservation_error) if conservation_error is not None else 0.0
+    )
+    quality, quality_evidence = _quality_factor((*source_members, *target_members))
+    # A Gaussian-like decay is appropriate for a jointly conserved group;
+    # it is less punitive than multiplying independent child likelihoods.
+    confidence = math.exp(-0.5 * float(np.mean(member_costs))) * conservation_factor * quality
+    if conservation_rejection is None and confidence >= config.min_split_merge_confidence:
+        edge = MatchEdge(
+            source_ids=tuple(feature.id for feature in source_members),
+            target_ids=tuple(feature.id for feature in target_members),
+            cost=float(np.mean(member_costs)),
+            confidence=min(1.0, max(0.0, confidence)),
+            evidence={
+                "member_costs": member_costs,
+                "member_one_to_one_costs": [
+                    direct_cost,
+                    *(item[2]["one_to_one_cost"] for item in members),
+                ],
+                "conservation": conservation_evidence,
+                "split_conservation": split_evidence,
+                "merge_conservation": merge_evidence,
+                **quality_evidence,
+            },
+        )
+        return edge, None
+    if selected_split and selected_merge:
+        relation = "many_to_many"
+    elif selected_split:
+        relation = "split"
+    else:
+        relation = "merge"
+    rejection: dict[str, Any] = {
+        "relation": relation,
+        "source_ids": [feature.id for feature in source_members],
+        "target_ids": [feature.id for feature in target_members],
+        "reason": conservation_rejection or "confidence_below_threshold",
+        "conservation": conservation_evidence,
+    }
+    if conservation_rejection is None:
+        rejection["confidence"] = confidence
+        rejection["minimum_confidence"] = config.min_split_merge_confidence
+    return None, rejection
 
 
 def _augment_hyperedges(
@@ -1089,197 +870,69 @@ def _augment_hyperedges(
     atom_mapping: Mapping[int, int],
     config: FeatureMatchConfig,
 ) -> tuple[list[MatchEdge], set[int], set[int], list[dict[str, Any]]]:
-    if not config.detect_splits_merges or not direct:
-        direct_edges = [
-            _direct_feature_edge(
-                row, column, costs, pair_evidence, previous, current, atom_mapping, config
-            )
-            for row, column in direct
-        ]
-        return direct_edges, unmatched_rows, unmatched_columns, []
-
-    matched_rows = {row for row, _ in direct}
-    matched_columns = {column for _, column in direct}
-    # Assign every unmatched entity to its best compatible direct backbone.
-    # Pairs beyond the split/merge gate cannot qualify, so they are skipped unscored.
-    split_candidates: dict[int, list[tuple[int, float, dict[str, Any]]]] = {}
-    for column in unmatched_columns:
-        choices: list[tuple[float, int, dict[str, Any]]] = []
-        for row in matched_rows:
-            if distances[row, column] > config.split_merge_distance:
-                continue
-            cost, evidence = _feature_pair(
-                previous.features[row],
-                current.features[column],
-                previous,
-                current,
-                atom_mapping,
-                config,
-                distance=float(distances[row, column]),
-                distance_gate=config.split_merge_distance,
-                motion_evidence=False,
-            )
-            structural_cost = _hyperedge_member_cost(evidence, config)
-            if math.isfinite(cost) and structural_cost <= config.split_merge_max_cost:
-                evidence["one_to_one_cost"] = cost
-                choices.append((structural_cost, row, evidence))
-        if choices:
-            cost, row, evidence = min(choices, key=lambda item: (item[0], item[1]))
-            split_candidates.setdefault(row, []).append((column, cost, evidence))
-
-    merge_candidates: dict[int, list[tuple[int, float, dict[str, Any]]]] = {}
-    for row in unmatched_rows:
-        choices = []
-        for column in matched_columns:
-            if distances[row, column] > config.split_merge_distance:
-                continue
-            cost, evidence = _feature_pair(
-                previous.features[row],
-                current.features[column],
-                previous,
-                current,
-                atom_mapping,
-                config,
-                distance=float(distances[row, column]),
-                distance_gate=config.split_merge_distance,
-                motion_evidence=False,
-            )
-            structural_cost = _hyperedge_member_cost(evidence, config)
-            if math.isfinite(cost) and structural_cost <= config.split_merge_max_cost:
-                evidence["one_to_one_cost"] = cost
-                choices.append((structural_cost, column, evidence))
-        if choices:
-            cost, column, evidence = min(choices, key=lambda item: (item[0], item[1]))
-            merge_candidates.setdefault(column, []).append((row, cost, evidence))
+    split_candidates: dict[int, list[GroupMember]] = {}
+    merge_candidates: dict[int, list[GroupMember]] = {}
+    if config.detect_splits_merges:
+        split_candidates = _group_candidates(
+            unmatched_columns,
+            {row for row, _ in direct},
+            distances,
+            previous,
+            current,
+            atom_mapping,
+            config,
+            split=True,
+        )
+        merge_candidates = _group_candidates(
+            unmatched_rows,
+            {column for _, column in direct},
+            distances,
+            previous,
+            current,
+            atom_mapping,
+            config,
+            split=False,
+        )
 
     edges: list[MatchEdge] = []
     rejections: list[dict[str, Any]] = []
-    consumed_rows: set[int] = set()
-    consumed_columns: set[int] = set()
+    consumed_sources: set[Identifier] = set()
+    consumed_targets: set[Identifier] = set()
     for row, column in sorted(direct):
         source = previous.features[row]
         target = current.features[column]
-        split_options = [
-            (current.features[index], cost, evidence)
-            for index, cost, evidence in split_candidates.get(row, [])
-        ]
-        merge_options = [
-            (previous.features[index], cost, evidence)
-            for index, cost, evidence in merge_candidates.get(column, [])
-        ]
-        selected_split, split_evidence, split_rejection = (
-            _best_group((source,), (target,), split_options, split=True, config=config)
-            if split_options
-            else ([], {}, None)
+        selected_split, split_evidence, split_rejection = _best_group(
+            source, target, split_candidates.get(row, []), split=True, config=config
         )
-        selected_merge, merge_evidence, merge_rejection = (
-            _best_group((target,), (source,), merge_options, split=False, config=config)
-            if merge_options
-            else ([], {}, None)
+        selected_merge, merge_evidence, merge_rejection = _best_group(
+            source, target, merge_candidates.get(column, []), split=False, config=config
         )
-        if not selected_split and split_rejection is not None:
-            rejections.append(split_rejection)
-        if not selected_merge and merge_rejection is not None:
-            rejections.append(merge_rejection)
+        rejections.extend(filter(None, (split_rejection, merge_rejection)))
 
-        source_members = [source, *(item[0] for item in selected_merge)]
-        target_members = [target, *(item[0] for item in selected_split)]
-        one_to_one_costs = [
-            float(costs[row, column]),
-            *(float(item[2].get("one_to_one_cost", item[1])) for item in selected_split),
-            *(float(item[2].get("one_to_one_cost", item[1])) for item in selected_merge),
-        ]
-        member_evidence = [
-            pair_evidence[row, column],
-            *(item[2] for item in selected_split),
-            *(item[2] for item in selected_merge),
-        ]
-        member_costs = [
-            structural if math.isfinite(structural) else assignment
-            for structural, assignment in zip(
-                (_hyperedge_member_cost(evidence, config) for evidence in member_evidence),
-                one_to_one_costs,
-                strict=True,
+        edge: MatchEdge | None = None
+        rejection: dict[str, Any] | None = None
+        if selected_split or selected_merge:
+            edge, rejection = _hyperedge(
+                source,
+                target,
+                selected_split,
+                selected_merge,
+                split_evidence,
+                merge_evidence,
+                float(costs[row, column]),
+                pair_evidence[row, column],
+                config,
             )
-        ]
-        conservation_error, conservation_evidence, conservation_rejection = (
-            _conservation_assessment(
-                source_members,
-                target_members,
-                config.conservation_tolerance,
-            )
-        )
-        conservation_factor = (
-            math.exp(-2.0 * conservation_error) if conservation_error is not None else 0.0
-        )
-        quality, quality_evidence = _quality_factor((*source_members, *target_members))
-        # A Gaussian-like decay is appropriate for a jointly conserved group;
-        # it is less punitive than multiplying independent child likelihoods.
-        confidence = math.exp(-0.5 * float(np.mean(member_costs))) * conservation_factor * quality
-        has_hyperedge_members = bool(selected_split or selected_merge)
-        if (
-            has_hyperedge_members
-            and conservation_rejection is None
-            and confidence >= config.min_split_merge_confidence
-        ):
-            selected_split_ids = {item[0].id for item in selected_split}
-            selected_merge_ids = {item[0].id for item in selected_merge}
-            consumed_columns.update(
-                index
-                for index in unmatched_columns
-                if current.features[index].id in selected_split_ids
-            )
-            consumed_rows.update(
-                index
-                for index in unmatched_rows
-                if previous.features[index].id in selected_merge_ids
-            )
-            evidence = {
-                "member_costs": member_costs,
-                "member_one_to_one_costs": one_to_one_costs,
-                "conservation": conservation_evidence,
-                "split_conservation": split_evidence,
-                "merge_conservation": merge_evidence,
-                **quality_evidence,
-            }
-            edges.append(
-                MatchEdge(
-                    source_ids=tuple(feature.id for feature in source_members),
-                    target_ids=tuple(feature.id for feature in target_members),
-                    cost=float(np.mean(member_costs)),
-                    confidence=min(1.0, max(0.0, confidence)),
-                    evidence=evidence,
-                )
+        if edge is None:
+            if rejection is not None:
+                rejections.append(rejection)
+            edge = _direct_feature_edge(
+                row, column, costs, pair_evidence, previous, current, atom_mapping, config
             )
         else:
-            if has_hyperedge_members:
-                relation = (
-                    "many_to_many"
-                    if selected_split and selected_merge
-                    else "split"
-                    if selected_split
-                    else "merge"
-                )
-                rejection: dict[str, Any] = {
-                    "relation": relation,
-                    "source_ids": [feature.id for feature in source_members],
-                    "target_ids": [feature.id for feature in target_members],
-                    "reason": conservation_rejection or "confidence_below_threshold",
-                    "conservation": conservation_evidence,
-                }
-                if conservation_rejection is None:
-                    rejection.update(
-                        {
-                            "confidence": confidence,
-                            "minimum_confidence": config.min_split_merge_confidence,
-                        }
-                    )
-                rejections.append(rejection)
-            edges.append(
-                _direct_feature_edge(
-                    row, column, costs, pair_evidence, previous, current, atom_mapping, config
-                )
-            )
+            consumed_sources.update(edge.source_ids)
+            consumed_targets.update(edge.target_ids)
+        edges.append(edge)
     rejections.sort(
         key=lambda item: (
             str(item["relation"]),
@@ -1290,8 +943,12 @@ def _augment_hyperedges(
     )
     return (
         edges,
-        unmatched_rows - consumed_rows,
-        unmatched_columns - consumed_columns,
+        {row for row in unmatched_rows if previous.features[row].id not in consumed_sources},
+        {
+            column
+            for column in unmatched_columns
+            if current.features[column].id not in consumed_targets
+        },
         rejections,
     )
 
@@ -1319,7 +976,7 @@ def _direct_feature_edge(
         source_ids=(source.id,),
         target_ids=(target.id,),
         cost=float(costs[row, column]),
-        confidence=_pair_confidence(float(costs[row, column])) * quality,
+        confidence=math.exp(-float(costs[row, column])) * quality,
         evidence=evidence,
     )
 
@@ -1327,14 +984,18 @@ def _direct_feature_edge(
 def match_features(
     previous: Frame,
     current: Frame,
-    atom_mapping: MatchResult | Mapping[int, int] | None = None,
+    atom_matches: MatchResult | None = None,
     config: FeatureMatchConfig | None = None,
 ) -> MatchResult:
     """Match electronic features, including supported split/merge hyperedges."""
 
     settings = config or FeatureMatchConfig()
-    mapping = _atom_mapping(atom_mapping)
-    allowed, semantic_rejections = _compatible_pairs(previous.features, current.features, settings)
+    mapping = (
+        {int(source): int(target) for source, target in atom_matches.mapping.items()}
+        if atom_matches is not None
+        else {}
+    )
+    allowed, semantic_rejections = _compatible_pairs(previous.features, current.features)
     distances = _candidate_distances(
         previous.features,
         current.features,

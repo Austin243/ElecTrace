@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 
 class Capability(StrEnum):
@@ -34,36 +33,11 @@ class CommandPlan:
     expected_outputs: tuple[Path, ...] = ()
     stdin: str | None = None
     stdout_path: Path | None = None
-    environment: Mapping[str, str] = field(default_factory=dict)
     notes: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.plugin.strip() or not self.argv:
-            raise ValueError("command plan requires a plugin and argv")
-        object.__setattr__(self, "plugin", self.plugin.strip().lower())
-        object.__setattr__(self, "capability", Capability(self.capability))
-        object.__setattr__(self, "argv", tuple(self.argv))
-        object.__setattr__(self, "cwd", Path(self.cwd))
-        object.__setattr__(self, "required_inputs", tuple(map(Path, self.required_inputs)))
-        object.__setattr__(self, "expected_outputs", tuple(map(Path, self.expected_outputs)))
-        object.__setattr__(self, "environment", dict(self.environment))
-        object.__setattr__(self, "notes", tuple(self.notes))
-        if not self.cwd.is_absolute() or any(
-            not path.is_absolute() for path in (*self.required_inputs, *self.expected_outputs)
-        ):
-            raise ValueError("command-plan paths must be absolute")
 
     @property
     def missing_inputs(self) -> tuple[Path, ...]:
         return tuple(path for path in self.required_inputs if not path.is_file())
-
-    @property
-    def ready(self) -> bool:
-        return (
-            self.cwd.is_dir()
-            and resolve_executable(self.argv[0]) is not None
-            and not self.missing_inputs
-        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,7 +49,7 @@ class CommandPlan:
             "expected_outputs": [str(path) for path in self.expected_outputs],
             "stdin": self.stdin,
             "stdout_path": str(self.stdout_path) if self.stdout_path else None,
-            "environment": dict(self.environment),
+            "environment": {},  # no planner sets one; the plan's JSON keeps the key
             "notes": list(self.notes),
             "missing_inputs": [str(path) for path in self.missing_inputs],
         }
@@ -112,34 +86,16 @@ class DoctorReport:
 
 
 @dataclass(frozen=True, slots=True)
-class FrameCommandPlan:
-    index: int
-    label: str
-    directory: Path
-    command: CommandPlan
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "frame": {"index": self.index, "label": self.label, "directory": str(self.directory)},
-            "command": self.command.to_dict(),
-        }
-
-
-@dataclass(frozen=True, slots=True)
 class FrameDoctorReport:
     index: int
     label: str
     directory: Path
     plugins: tuple[DoctorReport, ...]
 
-    @property
-    def ready(self) -> bool:
-        return all(report.ready for report in self.plugins)
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "frame": {"index": self.index, "label": self.label, "directory": str(self.directory)},
-            "ready": self.ready,
+            "ready": all(report.ready for report in self.plugins),
             "plugins": [report.to_dict() for report in self.plugins],
         }
 
@@ -152,27 +108,3 @@ def resolve_executable(executable: str) -> Path | None:
         )
     found = shutil.which(executable)
     return Path(found).resolve() if found else None
-
-
-class Plugin(Protocol):
-    name: str
-    default_executable: str
-    capabilities: tuple[Capability, ...]
-
-    def doctor(
-        self,
-        frame_directory: str | Path | None = None,
-        *,
-        capability: Capability | str | None = None,
-        executable: str | None = None,
-        **options: Any,
-    ) -> DoctorReport: ...
-
-    def plan(
-        self,
-        frame_directory: str | Path,
-        *,
-        capability: Capability | str | None = None,
-        executable: str | None = None,
-        **options: Any,
-    ) -> CommandPlan: ...

@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from electrace.models import Frame, Sequence
 
 from .descriptors import (
     SPIN_DESCRIPTOR,
-    DescriptorDocument,
     DescriptorError,
     attach_descriptors,
     attach_net_charges,
     attach_spin_populations,
     load_descriptor,
 )
-from .discovery import DiscoveredPath, FrameSource, SeriesKind, discover_path
+from .discovery import FrameSource, discover_path
 from .vasp import read_poscar
 
 _CANONICAL_DESCRIPTOR_ALIASES = ("electrace.features.json", "features.json")
@@ -32,53 +31,13 @@ _NATIVE_DESCRIPTOR_FILENAMES = (
 )
 
 
-_DESCRIPTOR_SOURCES = {"auto", "local", "external", "merge"}
-
-
-def _descriptor_filename(value: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError("descriptor_name must be a string")
-    name = value.strip()
-    if not name or Path(name).name != name or name in {".", ".."}:
-        raise DescriptorError(f"descriptor_name must be a basename, not a path: {value!r}")
-    return name
-
-
-def _descriptor_filenames(descriptor_name: str) -> tuple[str, ...]:
-    name = _descriptor_filename(descriptor_name)
-    candidates = [name]
-    if name in _CANONICAL_DESCRIPTOR_ALIASES:
-        candidates.extend(_CANONICAL_DESCRIPTOR_ALIASES)
-    candidates.extend(_NATIVE_DESCRIPTOR_FILENAMES)
-    return tuple(dict.fromkeys(candidates))
-
-
-def _descriptor_source(
-    value: str,
-    descriptor_root: Path | None,
-) -> str:
-    selected = str(value).strip().lower()
-    if selected not in _DESCRIPTOR_SOURCES:
-        choices = ", ".join(sorted(_DESCRIPTOR_SOURCES))
-        raise DescriptorError(f"unknown descriptor_source {value!r}; expected one of: {choices}")
-    if selected == "auto":
-        return "local" if descriptor_root is None else "external"
-    if selected in {"external", "merge"} and descriptor_root is None:
-        raise DescriptorError(f"descriptor_dir is required for descriptor_source={selected!r}")
-    return selected
+def _descriptor_filenames(name: str) -> tuple[str, ...]:
+    aliases = _CANONICAL_DESCRIPTOR_ALIASES if name in _CANONICAL_DESCRIPTOR_ALIASES else ()
+    return tuple(dict.fromkeys((name, *aliases, *_NATIVE_DESCRIPTOR_FILENAMES)))
 
 
 def _unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
-    result: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        if not path.is_file():
-            continue
-        resolved = path.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            result.append(resolved)
-    return tuple(result)
+    return tuple(dict.fromkeys(path.resolve() for path in paths if path.is_file()))
 
 
 def _descriptor_candidates(
@@ -90,28 +49,23 @@ def _descriptor_candidates(
     descriptor_source: str,
 ) -> tuple[Path, ...]:
     filenames = _descriptor_filenames(descriptor_name)
-    selected = _descriptor_source(descriptor_source, descriptor_root)
-    local = (
-        [source.directory / name for name in filenames] if selected in {"local", "merge"} else []
-    )
-    if selected == "local":
+    local: list[Path] = []
+    if descriptor_source in {"local", "merge"}:
+        local = [source.directory / name for name in filenames]
+    if descriptor_source == "local" or descriptor_root is None:
         return _unique_paths(local)
-    assert descriptor_root is not None
     if descriptor_root.is_file():
         if frame_count != 1:
             raise DescriptorError(
                 "a single descriptor file can only be used with a one-frame static series"
             )
-        external = [descriptor_root.resolve()]
-        return _unique_paths((*local, *external))
+        return _unique_paths((*local, descriptor_root))
     if not descriptor_root.is_dir():
         raise DescriptorError(f"descriptor_dir is not a directory: {descriptor_root}")
 
-    candidates: list[Path] = []
-    candidates.append(descriptor_root / f"{source.label}.json")
-    directory = descriptor_root / source.label
-    candidates.extend(directory / name for name in filenames)
-    return _unique_paths((*local, *candidates))
+    flat = descriptor_root / f"{source.label}.json"
+    mirrored = [descriptor_root / source.label / name for name in filenames]
+    return _unique_paths((*local, flat, *mirrored))
 
 
 def _spin_candidates(
@@ -127,24 +81,51 @@ def _spin_candidates(
     return _unique_paths(candidates)
 
 
-def _load_discovered(
-    discovered: DiscoveredPath,
+def load_path(
+    path: str | Path,
     *,
-    descriptor_dir: str | Path | None,
-    descriptor_name: str,
-    descriptor_source: str,
+    descriptor_dir: Path | None = None,
+    descriptor_name: str = "features.json",
+    descriptor_source: str = "auto",
+    mode: str = "auto",
+    strict: bool = True,
+    prefer_contcar: bool = True,
+    structure_name: str = "CONTCAR",
+    fallback_structure_name: str = "POSCAR",
 ) -> list[Frame]:
-    descriptor_root = (
-        Path(descriptor_dir).expanduser().resolve() if descriptor_dir is not None else None
+    """Discover and load a VASP path into ordered core ``Frame`` objects.
+
+    ``path`` may contain numeric VASP NEB images or named static/pressure
+    calculation directories. ``structure_name`` and ``fallback_structure_name`` must be
+    basenames; ``prefer_contcar`` chooses whether the former or latter is tried first.
+    An external descriptor directory may be flat (``00.json``) or mirror frame directories
+    (``00/features.json``).
+
+    ``descriptor_source`` is ``local``, ``external``, ``merge``, or ``auto``.
+    ``auto`` searches local frame directories when ``descriptor_dir`` is absent
+    and external descriptors only when it is present. ``merge`` combines both
+    sources without precedence: duplicate feature IDs are rejected. Plugin
+    enablement does not affect ingestion of already-produced descriptors, and
+    external science tools are never run while loading.
+    """
+
+    discovered = discover_path(
+        path,
+        mode=mode,
+        strict=strict,
+        prefer_contcar=prefer_contcar,
+        structure_name=structure_name,
+        fallback_structure_name=fallback_structure_name,
     )
-    selected_source = _descriptor_source(descriptor_source, descriptor_root)
+    if descriptor_source == "auto":
+        descriptor_source = "local" if descriptor_dir is None else "external"
     frames: list[Frame] = []
     for source in discovered.frames:
         metadata = {
             "path_root": str(discovered.root),
             "frame_directory": str(source.directory),
-            "series_kind": discovered.kind.value,
-            "descriptor_source_policy": selected_source,
+            "series_kind": discovered.kind,
+            "descriptor_source_policy": descriptor_source,
             "descriptor_sources": [],
             **source.metadata,
         }
@@ -159,20 +140,16 @@ def _load_discovered(
         )
         descriptor_paths = _descriptor_candidates(
             source,
-            descriptor_root,
+            descriptor_dir,
             frame_count=len(discovered.frames),
             descriptor_name=descriptor_name,
-            descriptor_source=selected_source,
+            descriptor_source=descriptor_source,
         )
-        documents: list[DescriptorDocument] = []
-        for descriptor_path in descriptor_paths:
-            documents.append(load_descriptor(descriptor_path, frame=frame))
+        documents = [load_descriptor(candidate, frame=frame) for candidate in descriptor_paths]
         if documents:
             frame = attach_descriptors(frame, documents)
-            updated_metadata = dict(frame.metadata)
-            updated_metadata["descriptor_sources"] = [str(path) for path in descriptor_paths]
-            frame = replace(frame, metadata=updated_metadata)
-        spin_paths = _spin_candidates(source, descriptor_root, selected_source)
+            frame.metadata["descriptor_sources"] = list(map(str, descriptor_paths))
+        spin_paths = _spin_candidates(source, descriptor_dir, descriptor_source)
         if len(spin_paths) > 1:
             raise DescriptorError(
                 f"frame {source.label} has more than one spin population file: "
@@ -184,81 +161,12 @@ def _load_discovered(
     return frames
 
 
-def load_path(
-    path: str | Path,
-    descriptor_dir: str | Path | None = None,
-    prefer_contcar: bool = True,
-    *,
-    mode: str | SeriesKind = "auto",
-    strict: bool = True,
-    structure_name: str = "CONTCAR",
-    fallback_structure_name: str = "POSCAR",
-    descriptor_name: str = "features.json",
-    descriptor_source: str = "auto",
-) -> list[Frame]:
-    """Discover and load a VASP path into ordered core ``Frame`` objects.
-
-    ``path`` may contain numeric VASP NEB images or named static/pressure
-    calculation directories. ``structure_name`` and
-    ``fallback_structure_name`` must be basenames; ``prefer_contcar`` chooses
-    whether the former or latter is tried first. An external descriptor
-    directory may be flat (``00.json``) or mirror frame directories
-    (``00/features.json``).
-
-    ``descriptor_source`` is ``local``, ``external``, ``merge``, or ``auto``.
-    ``auto`` searches local frame directories when ``descriptor_dir`` is absent
-    and external descriptors only when it is present. ``merge`` combines both
-    sources without precedence: duplicate feature IDs are rejected. Plugin
-    enablement does not affect ingestion of already-produced descriptors, and
-    external science tools are never run while loading.
-    """
-
-    discovered = discover_path(
-        path,
-        mode=mode,
-        prefer_contcar=prefer_contcar,
-        structure_name=structure_name,
-        fallback_structure_name=fallback_structure_name,
-        strict=strict,
-    )
-    return _load_discovered(
-        discovered,
-        descriptor_dir=descriptor_dir,
-        descriptor_name=descriptor_name,
-        descriptor_source=descriptor_source,
-    )
-
-
-def load_sequence(
-    path: str | Path,
-    descriptor_dir: str | Path | None = None,
-    prefer_contcar: bool = True,
-    *,
-    mode: str | SeriesKind = "auto",
-    strict: bool = True,
-    label: str | None = None,
-    structure_name: str = "CONTCAR",
-    fallback_structure_name: str = "POSCAR",
-    descriptor_name: str = "features.json",
-    descriptor_source: str = "auto",
-) -> Sequence:
-    """Load a path and wrap it in ElecTrace's core ``Sequence`` model."""
+def load_sequence(path: str | Path, **options: Any) -> Sequence:
+    """Load a path with :func:`load_path` and wrap it in the core ``Sequence`` model."""
 
     root = Path(path).expanduser().resolve()
-    frames = load_path(
-        root,
-        descriptor_dir=descriptor_dir,
-        prefer_contcar=prefer_contcar,
-        mode=mode,
-        strict=strict,
-        structure_name=structure_name,
-        fallback_structure_name=fallback_structure_name,
-        descriptor_name=descriptor_name,
-        descriptor_source=descriptor_source,
-    )
-    series_kind = frames[0].metadata.get("series_kind", "unknown") if frames else "unknown"
+    frames = load_path(root, **options)
     return Sequence(
         frames=tuple(frames),
-        label=label or root.name,
-        metadata={"source_root": str(root), "series_kind": series_kind},
+        metadata={"source_root": str(root), "series_kind": frames[0].metadata["series_kind"]},
     )

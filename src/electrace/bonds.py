@@ -13,10 +13,9 @@ from itertools import pairwise
 from typing import Any
 
 import numpy as np
-import numpy.typing as npt
 
-from electrace.events import _as_finite_float
-from electrace.geometry import minimum_image_displacement
+from electrace.geometry import FloatArray, minimum_image_displacement
+from electrace.matching import _as_finite_float
 from electrace.models import Feature, Sequence
 
 # Values at a bond critical point (critic2, atomic units) and LOBSTER integrals.
@@ -24,7 +23,6 @@ BOND_QUANTITIES = ("field", "laplacian", "icohp", "icobi")
 
 Translation = tuple[int, int, int]
 BondKey = tuple[int, int, Translation]
-FloatArray = npt.NDArray[np.float64]
 
 
 class _UnplacedImageError(ValueError):
@@ -206,11 +204,7 @@ def bond_records(
                     record[name] = next((value for value in values if value is not None), None)
                 record["feature_ids"] = [feature.id for feature in features]
                 record["track_ids"] = sorted(
-                    {
-                        track_of[(frame.index, feature.id)]
-                        for feature in features
-                        if (frame.index, feature.id) in track_of
-                    }
+                    {track_of[(frame.index, feature.id)] for feature in features}
                 )
                 rows.append((number, position, record))
     for reason, skipped in unplaced.items():

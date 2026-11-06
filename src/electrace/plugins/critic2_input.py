@@ -17,18 +17,15 @@ HCN example, and points where it is below 1e-5 a.u. are discarded as vacuum arti
 from __future__ import annotations
 
 import math
-import re
 import textwrap
-from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import numpy.typing as npt
 
 from electrace.geometry import as_cell
-from electrace.io.vasp import parse_poscar
+from electrace.io.vasp import element_symbol, parse_poscar
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -38,20 +35,17 @@ DEFAULT_SEED_POINTS = 20
 DEFAULT_SEED_TRIPLETS = True
 PERIODIC_INPUT_NAME = "critic2.in"
 ALL_ELECTRON_FILES = ("AECCAR0", "AECCAR2")
-_ELEMENT_SYMBOL = re.compile(r"[A-Z][a-z]?")
 
 
-@dataclass(frozen=True, slots=True)
-class PeriodicSeeds:
-    """Seed lines for one structure; ``seeds`` counts the points critic2 starts from."""
+def seed_settings(distance: object, points: object, triplets: object) -> tuple[float, int, bool]:
+    """Fill unset seed options with the defaults and validate the result."""
 
-    pairs: int
-    triplets: int
-    seeds: int
-    lines: tuple[str, ...]
-
-
-def validate_seed_options(distance: object, points: object, triplets: object) -> None:
+    if distance is None:
+        distance = DEFAULT_SEED_DISTANCE
+    if points is None:
+        points = DEFAULT_SEED_POINTS
+    if triplets is None:
+        triplets = DEFAULT_SEED_TRIPLETS
     if (
         isinstance(distance, bool)
         or not isinstance(distance, (int, float))
@@ -63,20 +57,7 @@ def validate_seed_options(distance: object, points: object, triplets: object) ->
         raise ValueError("seed_points must be a positive integer")
     if not isinstance(triplets, bool):
         raise TypeError("seed_triplets must be true or false")
-
-
-def seed_settings(
-    distance: object = None, points: object = None, triplets: object = None
-) -> tuple[float, int, bool]:
-    """Fill unset seed options with the defaults and validate the result."""
-
-    settings = (
-        DEFAULT_SEED_DISTANCE if distance is None else distance,
-        DEFAULT_SEED_POINTS if points is None else points,
-        DEFAULT_SEED_TRIPLETS if triplets is None else triplets,
-    )
-    validate_seed_options(*settings)
-    return float(cast(float, settings[0])), cast(int, settings[1]), cast(bool, settings[2])
+    return float(distance), points, triplets
 
 
 def _periodic_neighbors(
@@ -111,14 +92,9 @@ def _periodic_neighbors(
 
 
 def periodic_seeds(
-    cell: FloatArray,
-    fractional: FloatArray,
-    *,
-    distance: float = DEFAULT_SEED_DISTANCE,
-    points: int = DEFAULT_SEED_POINTS,
-    triplets: bool = DEFAULT_SEED_TRIPLETS,
-) -> PeriodicSeeds:
-    """Return critic2 seed lines for a cell (rows in bohr) and fractional positions.
+    cell: FloatArray, fractional: FloatArray, distance: float, points: int, triplets: bool
+) -> tuple[list[str], int, int]:
+    """Return critic2 seed lines and their pair and triplet counts for a cell (rows in bohr).
 
     Each pair within *distance* gets ``points`` evenly spaced interior points of the
     segment to its image, ``x_i + k / (points + 1) * d`` for k = 1..points, written as one
@@ -129,11 +105,9 @@ def periodic_seeds(
     lattice translation. Positions are wrapped into [0, 1) first.
     """
 
-    validate_seed_options(distance, points, triplets)
     lattice = as_cell(cell)
-    wrapped = np.asarray(fractional, dtype=float)
-    wrapped = wrapped - np.floor(wrapped)
-    neighbors = _periodic_neighbors(lattice, wrapped, float(distance))
+    wrapped = fractional - np.floor(fractional)
+    neighbors = _periodic_neighbors(lattice, wrapped, distance)
     pairs = [(i, j, d) for i, j, d in neighbors if j > i or _first_positive(d)]
     if not pairs:
         raise ValueError(
@@ -148,12 +122,9 @@ def periodic_seeds(
         start = wrapped[i] + d / (points + 1)
         end = wrapped[i] + d * points / (points + 1)
         lines.append(f"  SEED LINE X0 {_point(start)} X1 {_point(end)} NPTS {points}")
-    barycenters = (
-        _triplet_barycenters(lattice, wrapped, neighbors, float(distance)) if triplets else []
-    )
+    barycenters = _triplet_barycenters(lattice, wrapped, neighbors, distance) if triplets else []
     lines.extend(f"  SEED POINT X0 {_point(point)}" for point in barycenters)
-    count = len(barycenters)
-    return PeriodicSeeds(len(pairs), count, len(pairs) * points + count, tuple(lines))
+    return lines, len(pairs), len(barycenters)
 
 
 def _point(values: FloatArray) -> str:
@@ -212,24 +183,16 @@ def _triplet_barycenters(
     return result
 
 
-def element_symbols(labels: tuple[str, ...]) -> tuple[str, ...]:
-    """Reduce POSCAR species labels such as ``Fe_pv``, ``H.75``, or ``C/1a2b`` to elements."""
-
-    return tuple(
-        match.group(0) if (match := _ELEMENT_SYMBOL.match(label)) else label for label in labels
-    )
-
-
 def periodic_critic2_input(
     structure: str | Path,
     *,
-    distance: float = DEFAULT_SEED_DISTANCE,
-    points: int = DEFAULT_SEED_POINTS,
-    triplets: bool = DEFAULT_SEED_TRIPLETS,
-    report_file: str = "critic2.features.json",
-    graph: bool = True,
-) -> tuple[str, PeriodicSeeds]:
-    """Return the input text and seeds for the structure a VASP single point ran on.
+    distance: float,
+    points: int,
+    triplets: bool,
+    report_file: str,
+    graph: bool,
+) -> str:
+    """Return the input text for the structure a VASP single point ran on.
 
     critic2 reads the crystal from the AECCAR0 header, so the seeds are placed from
     *structure*, the POSCAR or CONTCAR of the same calculation; their positions agree
@@ -241,14 +204,13 @@ def periodic_critic2_input(
 
     data = parse_poscar(structure)
     cell = np.asarray(data.cell, dtype=float) / BOHR_ANGSTROM
-    seeds = periodic_seeds(
-        cell,
-        np.asarray(data.fractional_positions, dtype=float),
-        distance=distance,
-        points=points,
-        triplets=triplets,
+    fractional = np.asarray(data.fractional_positions, dtype=float)
+    lines, pair_count, triplet_count = periodic_seeds(cell, fractional, distance, points, triplets)
+    species = (
+        ""
+        if data.symbols_inferred
+        else " " + " ".join(element_symbol(label) for label in data.species)
     )
-    species = "" if data.symbols_inferred else " " + " ".join(element_symbols(data.species))
     triplet_note = (
         f", and the barycenter of each atom triplet within {distance:g} bohr" if triplets else ""
     )
@@ -256,10 +218,11 @@ def periodic_critic2_input(
         "QTAIM critical points of the all-electron density AECCAR0 + AECCAR2, written by "
         f"ElecTrace from {Path(structure).name}. Seeds: one line of {points} points per atom "
         f"pair within {distance:g} bohr, counting periodic images{triplet_note} "
-        f"({seeds.pairs} pairs, {seeds.triplets} triplets, {seeds.seeds} seeds)."
+        f"({pair_count} pairs, {triplet_count} triplets, "
+        f"{pair_count * points + triplet_count} seeds)."
     )
     cpreport = f"CPREPORT {report_file}" + (" GRAPH" if graph else "")
-    text = (
+    return (
         "".join(f"# {line}\n" for line in textwrap.wrap(description, 86))
         + f"CRYSTAL AECCAR0{species}\n"
         + "LOAD AECCAR0\n"
@@ -268,23 +231,6 @@ def periodic_critic2_input(
         + "REFERENCE rhoae\n\n"
         + "# Ignore numerical stationary points in the vacuum region.\n"
         + 'AUTO DISCARD "$rhoae < 1e-5" \\\n'
-        + " \\\n".join(seeds.lines)
+        + " \\\n".join(lines)
         + f"\n{cpreport}\nEND\n"
     )
-    return text, seeds
-
-
-__all__ = [
-    "ALL_ELECTRON_FILES",
-    "BOHR_ANGSTROM",
-    "DEFAULT_SEED_DISTANCE",
-    "DEFAULT_SEED_POINTS",
-    "DEFAULT_SEED_TRIPLETS",
-    "PERIODIC_INPUT_NAME",
-    "PeriodicSeeds",
-    "element_symbols",
-    "periodic_critic2_input",
-    "periodic_seeds",
-    "seed_settings",
-    "validate_seed_options",
-]

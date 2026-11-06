@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from itertools import pairwise
+from itertools import count, pairwise
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,6 @@ from electrace.bonds import bond_records
 from electrace.config import ElecTraceConfig, load_config
 from electrace.events import (
     EventDetectionConfig,
-    _as_finite_float,
     critical_point_fields,
     track_sequence,
     weak_critical_point_kind,
@@ -37,12 +36,24 @@ from electrace.focus import (
     auto_focus_record,
     check_atom_order,
     noise_floor,
+    ratio_to_floor,
     select_focus_atoms,
+    track_lineages,
+    track_value,
 )
-from electrace.groups import GROUP_QUANTITIES, atom_groups, ratio_to_floor
+from electrace.groups import GROUP_QUANTITIES, atom_groups
 from electrace.io import load_sequence
-from electrace.matching import AtomMatchConfig, FeatureMatchConfig
-from electrace.models import Feature, Frame, MatchRelation, MatchResult, Sequence
+from electrace.matching import AtomMatchConfig, FeatureMatchConfig, _as_finite_float
+from electrace.models import (
+    Event,
+    Feature,
+    Frame,
+    Identifier,
+    MatchRelation,
+    MatchResult,
+    Sequence,
+    _json_value,
+)
 from electrace.provenance import environment_record, fingerprint_files, sha256_file
 from electrace.report import render_html_report
 
@@ -56,11 +67,9 @@ class AnalysisArtifacts:
     files: tuple[Path, ...]
 
 
-def _resolve(base: Path, value: str | None) -> Path | None:
-    if value is None:
-        return None
-    path = Path(value).expanduser()
-    return path.resolve() if path.is_absolute() else (base / path).resolve()
+def _resolve(base: Path, value: str | Path) -> Path:
+    # Joining an absolute path replaces the base.
+    return (base / Path(value).expanduser()).resolve()
 
 
 def _matching_configs(config: ElecTraceConfig) -> tuple[AtomMatchConfig, FeatureMatchConfig]:
@@ -92,12 +101,7 @@ def _event_config(config: ElecTraceConfig) -> EventDetectionConfig:
         descriptor_thresholds=settings.descriptor_thresholds,
         min_event_confidence=settings.minimum_event_confidence,
         min_persistence=settings.minimum_persistence,
-        include_transient=True,
     )
-
-
-def _cell_volume(frame: Frame) -> float:
-    return abs(float(np.linalg.det(np.asarray(frame.cell, dtype=float))))
 
 
 def _frame_record(frame: Frame) -> dict[str, Any]:
@@ -107,61 +111,34 @@ def _frame_record(frame: Frame) -> dict[str, Any]:
         "atom_count": len(frame.atoms),
         "feature_count": len(frame.features),
         "feature_kinds": dict(sorted(kinds.items())),
-        "cell_volume": _cell_volume(frame),
+        "cell_volume": abs(float(np.linalg.det(np.asarray(frame.cell, dtype=float)))),
     }
 
 
-def _source_files(sequence: Sequence, config_path: Path | None) -> list[Path]:
-    files: list[Path] = []
-    if config_path is not None:
-        files.append(config_path)
+def _source_files(sequence: Sequence, config_path: Path) -> list[Path]:
+    files = [config_path]
     for frame in sequence.frames:
-        structure = frame.metadata.get("structure_source")
-        if isinstance(structure, str):
-            files.append(Path(structure))
-        for descriptor in frame.metadata.get("descriptor_sources", []):
-            if isinstance(descriptor, str):
-                files.append(Path(descriptor))
-        energy_name = frame.metadata.get("energy_source")
-        directory = frame.metadata.get("frame_directory")
-        if isinstance(energy_name, str) and isinstance(directory, str):
-            files.append(Path(directory) / energy_name)
+        files.append(Path(frame.metadata["structure_source"]))
+        files.extend(Path(descriptor) for descriptor in frame.metadata["descriptor_sources"])
+        if "energy_source" in frame.metadata:
+            files.append(Path(frame.metadata["frame_directory"]) / frame.metadata["energy_source"])
     return files
 
 
-def _descriptor_provenance(
-    sequence: Sequence,
-) -> tuple[list[dict[str, Any]], list[str]]:
+def _descriptor_provenance(sequence: Sequence) -> tuple[list[dict[str, Any]], list[str]]:
     """Collect deterministic per-frame descriptor records and parser warnings."""
 
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
     for frame in sequence.frames:
-        raw_documents = frame.metadata.get("descriptor_documents", [])
-        if not isinstance(raw_documents, list):
-            continue
-        for raw_document in raw_documents:
-            if not isinstance(raw_document, Mapping):
-                continue
-            document = dict(raw_document)
-            records.append(
-                {
-                    "frame": {"index": frame.index, "label": frame.label},
-                    **document,
-                }
-            )
-            producer = document.get("producer", {})
-            producer_name = (
-                str(producer.get("name", "unknown")) if isinstance(producer, Mapping) else "unknown"
-            )
-            document_metadata = document.get("metadata", {})
-            if not isinstance(document_metadata, Mapping):
-                continue
-            raw_warnings = document_metadata.get("warnings", [])
+        for document in frame.metadata.get("descriptor_documents", []):
+            records.append({"frame": {"index": frame.index, "label": frame.label}, **document})
+            # Canonical JSON can carry any metadata, so its warnings are checked.
+            raw_warnings = document["metadata"].get("warnings", [])
             if not isinstance(raw_warnings, list):
                 continue
             warnings.extend(
-                f"Descriptor warning ({frame.label}, {producer_name}): {warning}"
+                f"Descriptor warning ({frame.label}, {document['producer']['name']}): {warning}"
                 for warning in raw_warnings
                 if isinstance(warning, str)
             )
@@ -179,8 +156,7 @@ def _critic2_counts(document: Mapping[str, Any]) -> dict[str, Any] | None:
     recomputed rather than read.
     """
 
-    metadata = document.get("metadata")
-    record = metadata.get("critical_point_counts") if isinstance(metadata, Mapping) else None
+    record = document["metadata"].get("critical_point_counts")
     if not isinstance(record, Mapping):
         return None
     counts: dict[str, int] = {}
@@ -210,13 +186,10 @@ def _critical_point_counts(sequence: Sequence) -> tuple[list[dict[str, Any]], li
 
     entries: list[dict[str, Any]] = []
     for frame in sequence.frames:
-        raw_documents = frame.metadata.get("descriptor_documents", [])
         documents = [
             document
-            for document in (raw_documents if isinstance(raw_documents, list) else [])
-            if isinstance(document, Mapping)
-            and isinstance(document.get("producer"), Mapping)
-            and document["producer"].get("name") == "critic2"
+            for document in frame.metadata.get("descriptor_documents", [])
+            if document["producer"]["name"] == "critic2"
         ]
         frame_key = {"frame": frame.index, "frame_label": frame.label}
         blank = dict.fromkeys((*_COUNT_KEYS, "morse_sum", "expected_morse_sum"))
@@ -269,11 +242,6 @@ def _critical_point_counts(sequence: Sequence) -> tuple[list[dict[str, Any]], li
     return entries, warnings
 
 
-def _new_track(counter: list[int]) -> str:
-    counter[0] += 1
-    return f"T{counter[0]:05d}"
-
-
 def _observation(
     track_id: str,
     frame: Frame,
@@ -306,80 +274,48 @@ def _observation(
 
 
 def _build_tracks(
-    sequence: Sequence, feature_matches: Iterable[Any]
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Build deterministic lineage observations from adjacent-frame hyperedges."""
+    sequence: Sequence, feature_matches: Iterable[MatchResult]
+) -> list[dict[str, Any]]:
+    """Build deterministic lineage observations from adjacent-frame hyperedges.
+
+    The matcher gives each target feature at most one incoming edge, and every source
+    of an edge is a feature of the previous frame, so all of them have active tracks.
+    """
 
     frames = sequence.frames
-    if not frames:
-        return [], []
-    warnings: list[str] = []
-    counter = [0]
-    active: dict[str, str] = {}
+    numbers = count(1)
+    active: dict[Identifier, str] = {}
     observations: list[dict[str, Any]] = []
     for feature in sorted(frames[0].features, key=lambda item: item.id):
-        track = _new_track(counter)
+        track = f"T{next(numbers):05d}"
         active[feature.id] = track
         observations.append(_observation(track, frames[0], feature, confidence=1.0))
 
     for transition_index, result in enumerate(feature_matches):
         current = frames[transition_index + 1]
-        next_active: dict[str, str] = {}
-        incoming_confidence: dict[str, float] = {}
-        incoming_parents: dict[str, set[str]] = {}
-        candidates: dict[str, list[tuple[float, str, tuple[str, ...]]]] = {}
-
+        next_active: dict[Identifier, str] = {}
+        incoming: dict[Identifier, tuple[float, str, tuple[str, ...]]] = {}
         for edge in result.edges:
-            parent_tracks = tuple(
-                sorted({active[str(source)] for source in edge.source_ids if str(source) in active})
-            )
+            parent_tracks = tuple(sorted({active[source] for source in edge.source_ids}))
             for target in edge.target_ids:
-                target_id = str(target)
-                if edge.relation is MatchRelation.ONE_TO_ONE and len(parent_tracks) == 1:
-                    candidate_track = parent_tracks[0]
-                    parents: tuple[str, ...] = ()
+                if edge.relation is MatchRelation.ONE_TO_ONE:
+                    incoming[target] = (edge.confidence, parent_tracks[0], ())
                 else:
                     # A split or merge starts a new lineage node and retains
                     # explicit parentage instead of pretending identity is unique.
-                    candidate_track = ""
-                    parents = parent_tracks
-                candidates.setdefault(target_id, []).append(
-                    (edge.confidence, candidate_track, parents)
-                )
+                    incoming[target] = (edge.confidence, "", parent_tracks)
 
         for feature in sorted(current.features, key=lambda item: item.id):
-            options = sorted(candidates.get(feature.id, []), key=lambda item: (-item[0], item[1]))
-            if options:
-                confidence, candidate_track, parents = options[0]
-                if len(options) > 1:
-                    warnings.append(
-                        f"Frame {current.label} feature {feature.id} had multiple incoming lineage candidates; the highest-confidence edge was used."
-                    )
-                track = candidate_track or _new_track(counter)
-                incoming_confidence[feature.id] = confidence
-                incoming_parents[feature.id] = set(parents)
-            else:
-                track = _new_track(counter)
-                incoming_confidence[feature.id] = 0.75
-                incoming_parents[feature.id] = set()
+            confidence, candidate_track, parents = incoming.get(feature.id, (0.75, "", ()))
+            track = candidate_track or f"T{next(numbers):05d}"
             next_active[feature.id] = track
             observations.append(
                 _observation(
-                    track,
-                    current,
-                    feature,
-                    confidence=incoming_confidence[feature.id],
-                    parent_track_ids=incoming_parents[feature.id],
+                    track, current, feature, confidence=confidence, parent_track_ids=parents
                 )
             )
         active = next_active
-    return observations, warnings
-
-
-def _track_value(observation: Mapping[str, Any], quantity: str) -> float | None:
-    if quantity in ("charge", "volume"):
-        return _as_finite_float(observation[quantity])
-    return _as_finite_float(observation["attributes"].get(quantity))
+    return observations
 
 
 def _change_summary(values: list[tuple[int, float | None]]) -> dict[str, Any]:
@@ -417,13 +353,9 @@ def _summarize_tracks(
     This is reporting only: it applies no thresholds and creates no events.
     """
 
-    lineages: dict[str, list[Mapping[str, Any]]] = {}
-    # _build_tracks emits observations frame by frame, so each lineage is ordered.
-    for observation in tracks:
-        lineages.setdefault(str(observation["track_id"]), []).append(observation)
     path = (sequence.frames[0].index, sequence.frames[-1].index)
     summary: list[dict[str, Any]] = []
-    for track_id, observations in lineages.items():
+    for track_id, observations in track_lineages(tracks).items():
         first, last = observations[0], observations[-1]
         summary.append(
             {
@@ -436,7 +368,7 @@ def _summarize_tracks(
                 "parent_track_ids": list(first["parent_track_ids"]),
                 "changes": {
                     name: _change_summary(
-                        [(int(item["frame"]), _track_value(item, name)) for item in observations]
+                        [(int(item["frame"]), track_value(item, name)) for item in observations]
                     )
                     for name in quantities
                 },
@@ -595,54 +527,42 @@ def _focus_view(
 
 
 def _normalize_events(
-    events: Iterable[Any],
-    minimum_persistence: int,
-    *,
-    medium_confidence_threshold: float = 0.55,
-    high_confidence_threshold: float = 0.80,
+    events: Iterable[Event], medium_threshold: float, high_threshold: float
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for number, event in enumerate(events, start=1):
-        record = event.to_dict()
-        status = str(record.get("metadata", {}).get("persistence_status", "unknown"))
-        persistence = int(record.get("persistence", 1))
-        confidence = float(record.get("confidence", 0.0))
-        if confidence >= high_confidence_threshold:
+        status = event.metadata["persistence_status"]
+        if event.confidence >= high_threshold:
             confidence_label = "high"
-        elif confidence >= medium_confidence_threshold:
+        elif event.confidence >= medium_threshold:
             confidence_label = "medium"
         else:
             confidence_label = "low"
-        start = int(record["frame_after"])
-        end = int(record.get("metadata", {}).get("persistence_end_frame", start))
         normalized.append(
             {
                 "event_id": f"E{number:05d}",
-                "type": record["type"],
-                "start_frame": start,
-                "end_frame": end,
-                "frame_before": record["frame_before"],
-                "frame_after": record["frame_after"],
-                "source_ids": [str(item) for item in record.get("source_ids", [])],
-                "target_ids": [str(item) for item in record.get("target_ids", [])],
-                "confidence": confidence,
+                "type": event.event_type.value,
+                "start_frame": event.frame_after,
+                "end_frame": event.metadata["persistence_end_frame"],
+                "frame_before": event.frame_before,
+                "frame_after": event.frame_after,
+                "source_ids": list(event.source_ids),
+                "target_ids": list(event.target_ids),
+                "confidence": event.confidence,
                 "confidence_label": confidence_label,
-                "persistence": persistence,
+                "persistence": event.persistence,
                 "persistence_status": status,
                 "persistent": status == "confirmed",
-                "description": record.get("description", ""),
-                "evidence": record.get("evidence", {}),
-                "metadata": record.get("metadata", {}),
+                "description": event.description,
+                "evidence": _json_value(event.evidence),
+                "metadata": _json_value(event.metadata),
             }
         )
     return normalized
 
 
 def analyze_sequence(
-    sequence: Sequence,
-    config: ElecTraceConfig,
-    *,
-    config_path: str | Path | None = None,
+    sequence: Sequence, config: ElecTraceConfig, config_path: Path
 ) -> dict[str, Any]:
     """Run matching, event detection, lineage construction, and provenance."""
 
@@ -654,9 +574,8 @@ def analyze_sequence(
     else:
         _check_focus_atoms(sequence, configured_focus)
     atom_config, feature_config = _matching_configs(config)
-    event_config = _event_config(config)
-    tracking = track_sequence(sequence, atom_config, feature_config, event_config)
-    tracks, track_warnings = _build_tracks(sequence, tracking.feature_matches)
+    tracking = track_sequence(sequence, atom_config, feature_config, _event_config(config))
+    tracks = _build_tracks(sequence, tracking.feature_matches)
     configured = {*config.events.descriptor_thresholds, *config.matching.descriptor_scales}
     descriptors = sorted(configured - {"charge", "net_charge", "volume"})
     net_charges = "net_charge" in configured or any(
@@ -695,7 +614,7 @@ def analyze_sequence(
         )
         _summarize_groups(groups)
 
-    warnings = [*track_warnings, *descriptor_warnings, *bond_warnings]
+    warnings = [*descriptor_warnings, *bond_warnings]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
     if missing_features:
         warnings.append(
@@ -708,8 +627,7 @@ def analyze_sequence(
         if any(_as_finite_float(item.attributes.get("spin")) is not None for item in frame.features)
     }
     missing_spin = [frame.label for frame in sequence.frames if frame.label not in spin_frames]
-    spin_configured = "spin" in descriptors
-    if missing_spin and (spin_frames or spin_configured):
+    if missing_spin and (spin_frames or "spin" in descriptors):
         warnings.append(
             "No spin populations (spin/ACF.dat) were loaded for frame(s): "
             + ", ".join(missing_spin)
@@ -737,54 +655,40 @@ def analyze_sequence(
         )
     if selection is not None:
         warnings.extend(selection.warnings)
-    if focus_atoms:
-        warnings.extend(
-            _identity_warnings(
-                sequence, tracking.atom_matches, focus_atoms, "focus", "the focus uses"
-            )
-        )
     warnings.extend(
-        _identity_warnings(
-            sequence,
-            tracking.atom_matches,
-            (index for item in bonds for index in (item["atom_a"], item["atom_b"])),
-            "bond",
-            "bond rows use",
-        )
+        _identity_warnings(sequence, tracking.atom_matches, focus_atoms, "focus", "the focus uses")
+    )
+    bond_atoms = (index for item in bonds for index in (item["atom_a"], item["atom_b"]))
+    warnings.extend(
+        _identity_warnings(sequence, tracking.atom_matches, bond_atoms, "bond", "bond rows use")
     )
     if groups is not None:
         warnings.extend(group_warnings)
+        group_atoms = (atom for item in groups["groups"] for atom in item["atoms"])
         warnings.extend(
             _identity_warnings(
-                sequence,
-                tracking.atom_matches,
-                (atom for item in groups["groups"] for atom in item["atoms"]),
-                "group",
-                "group sums use",
+                sequence, tracking.atom_matches, group_atoms, "group", "group sums use"
             )
         )
 
-    path = Path(config_path).resolve() if config_path is not None else None
-    sources = fingerprint_files(_source_files(sequence, path))
-    transitions = []
-    for atom_matches, feature_matches in zip(
-        tracking.atom_matches, tracking.feature_matches, strict=True
-    ):
-        transitions.append(
-            {
-                "frame_before": atom_matches.previous_frame_index,
-                "frame_after": atom_matches.current_frame_index,
-                "atom_matches": atom_matches.to_dict(),
-                "feature_matches": feature_matches.to_dict(),
-            }
+    sources = fingerprint_files(_source_files(sequence, config_path))
+    transitions = [
+        {
+            "frame_before": atom_matches.previous_frame_index,
+            "frame_after": atom_matches.current_frame_index,
+            "atom_matches": atom_matches.to_dict(),
+            "feature_matches": feature_matches.to_dict(),
+        }
+        for atom_matches, feature_matches in zip(
+            tracking.atom_matches, tracking.feature_matches, strict=True
         )
+    ]
     events = _normalize_events(
         tracking.events,
-        event_config.min_persistence,
-        medium_confidence_threshold=config.events.medium_confidence_threshold,
-        high_confidence_threshold=config.events.high_confidence_threshold,
+        config.events.medium_confidence_threshold,
+        config.events.high_confidence_threshold,
     )
-    series_kind = str(sequence.metadata.get("series_kind", config.series_kind))
+    series_kind = sequence.metadata["series_kind"]
     barrier = _locate_barrier(sequence, series_kind)
     for event in events:
         event["barrier_position"] = _barrier_position(event, barrier["frames"])
@@ -823,9 +727,7 @@ def analyze_sequence(
         },
         "configuration": config.to_dict(),
         "provenance": {
-            "environment": environment_record(
-                project_directory=path.parent if path is not None else Path.cwd()
-            ),
+            "environment": environment_record(project_directory=config_path.parent),
             "source_files": sources,
             "source_root": sequence.metadata.get("source_root"),
             "descriptor_producers": sorted(
@@ -875,31 +777,19 @@ def load_and_analyze(
 
     path = Path(config_path).expanduser().resolve()
     config = load_config(path)
-    input_root = _resolve(path.parent, config.inputs.root)
-    if input_root is None:  # pragma: no cover - dataclass invariant
-        raise ValueError("inputs.root is required")
-    descriptor_dir = _resolve(path.parent, config.inputs.descriptor_dir)
+    descriptor_dir = config.inputs.descriptor_dir
     sequence = load_sequence(
-        input_root,
-        descriptor_dir=descriptor_dir,
+        _resolve(path.parent, config.inputs.root),
+        descriptor_dir=None if descriptor_dir is None else _resolve(path.parent, descriptor_dir),
         prefer_contcar=config.inputs.prefer_contcar,
         mode=config.series_kind,
         strict=strict,
-        label=config.project_name,
         structure_name=config.inputs.structure_name,
         fallback_structure_name=config.inputs.fallback_structure_name,
         descriptor_name=config.inputs.descriptor_name,
         descriptor_source=config.inputs.descriptor_source,
     )
-    return analyze_sequence(sequence, config, config_path=path), config
-
-
-def _prepare_output(directory: Path, overwrite: bool) -> None:
-    if directory.exists() and any(directory.iterdir()) and not overwrite:
-        raise FileExistsError(
-            f"Output directory is not empty: {directory}. Use overwrite=True to replace known artifacts."
-        )
-    directory.mkdir(parents=True, exist_ok=True)
+    return analyze_sequence(sequence, config, path), config
 
 
 def _without_match_details(analysis: Mapping[str, Any]) -> dict[str, Any]:
@@ -914,11 +804,13 @@ def _without_match_details(analysis: Mapping[str, Any]) -> dict[str, Any]:
     def without(record: Mapping[str, Any], key: str) -> dict[str, Any]:
         return {name: value for name, value in record.items() if name != key}
 
-    configuration = dict(analysis.get("configuration", {}))
-    configuration["outputs"] = {**configuration.get("outputs", {}), "match_details": False}
+    configuration = analysis["configuration"]
     return {
         **analysis,
-        "configuration": configuration,
+        "configuration": {
+            **configuration,
+            "outputs": {**configuration["outputs"], "match_details": False},
+        },
         "frames": [without(frame, "features") for frame in analysis["frames"]],
         "transitions": [
             {
@@ -948,30 +840,28 @@ _KNOWN_BUNDLE_ARTIFACTS = frozenset(
 def write_analysis_bundle(
     analysis: Mapping[str, Any],
     config: ElecTraceConfig,
-    output_directory: str | Path,
-    *,
-    overwrite: bool = False,
+    directory: Path,
+    overwrite: bool,
 ) -> AnalysisArtifacts:
     """Write selected JSON, CSV, and HTML products plus an integrity manifest."""
 
-    directory = Path(output_directory).expanduser().resolve()
-    _prepare_output(directory, overwrite)
+    if directory.exists() and any(directory.iterdir()) and not overwrite:
+        raise FileExistsError(
+            f"Output directory is not empty: {directory}. Use overwrite=True to replace known artifacts."
+        )
+    directory.mkdir(parents=True, exist_ok=True)
     # The CSV files hold no frame feature lists or match edges; callers keep the full analysis.
     document = analysis if config.outputs.match_details else _without_match_details(analysis)
     written: list[Path] = []
     if config.outputs.json:
         written.append(write_json(document, directory / "analysis.json"))
     if config.outputs.csv:
-        written.append(write_events_csv(analysis.get("events", []), directory / "events.csv"))
+        written.append(write_events_csv(analysis["events"], directory / "events.csv"))
+        written.append(write_tracks_csv(analysis["tracks"], directory / "feature_tracks.csv"))
         written.append(
-            write_tracks_csv(analysis.get("tracks", []), directory / "feature_tracks.csv")
+            write_track_summary_csv(analysis["track_summary"], directory / "track_summary.csv")
         )
-        written.append(
-            write_track_summary_csv(
-                analysis.get("track_summary", []), directory / "track_summary.csv"
-            )
-        )
-        written.append(write_bonds_csv(analysis.get("bonds", []), directory / "bonds.csv"))
+        written.append(write_bonds_csv(analysis["bonds"], directory / "bonds.csv"))
         if "atom_groups" in analysis:
             written.append(
                 write_atom_groups_csv(
@@ -1000,8 +890,7 @@ def write_analysis_bundle(
         manifest_path, json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n"
     )
     written.append(manifest_path)
-    files = tuple(written)
-    return AnalysisArtifacts(dict(analysis), directory, files)
+    return AnalysisArtifacts(dict(analysis), directory, tuple(written))
 
 
 def run_project(
@@ -1016,9 +905,5 @@ def run_project(
     path = Path(config_path).expanduser().resolve()
     analysis, config = load_and_analyze(path, strict=strict)
     configured_output = Path(config.outputs.directory).expanduser()
-    output = (
-        Path(output_directory).expanduser() if output_directory is not None else configured_output
-    )
-    if not output.is_absolute():
-        output = path.parent / output
-    return write_analysis_bundle(analysis, config, output, overwrite=overwrite)
+    output = configured_output if output_directory is None else output_directory
+    return write_analysis_bundle(analysis, config, _resolve(path.parent, output), overwrite)

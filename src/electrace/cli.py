@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import platform
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Never, cast
 
@@ -16,19 +17,19 @@ from rich.table import Table
 
 from electrace import __version__
 from electrace.cli_output import failure, serialize, success
-from electrace.config import load_config, write_default_config
+from electrace.config import ElecTraceConfig, load_config, write_default_config
 from electrace.demo import generate_demo
 from electrace.figure import parse_limits, write_path_figure
 from electrace.io import load_sequence
+from electrace.io.discovery import FrameSource, discover_path
 from electrace.pipeline import load_and_analyze, run_project
-from electrace.plugins import (
-    DEFAULT_REGISTRY,
-    DoctorReport,
-    FrameDoctorReport,
+from electrace.plugins.base import DoctorReport, FrameDoctorReport
+from electrace.plugins.builtin import PLUGINS
+from electrace.plugins.registry import (
     doctor_plugins,
-    doctor_plugins_path,
+    doctor_plugins_frames,
     plan_plugin,
-    plan_plugin_path,
+    plan_plugin_frames,
 )
 from electrace.volume import read_vasp_grid, split_spin_density, sum_density_grids
 from electrace.workflow import dump_starter_manifest, validate_workflow
@@ -46,14 +47,12 @@ from electrace.workflow.operations import (
 from electrace.workflow.staging import stage_workflow
 
 app = typer.Typer(
-    name="electrace",
     help="Track electronic features across periodic VASP paths.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
     pretty_exceptions_show_locals=False,
 )
 workflow_app = typer.Typer(
-    name="workflow",
     help="Stage, run, submit, collect, and analyze external calculations.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
@@ -93,18 +92,15 @@ def main(
     """ElecTrace tracks electronic features across ordered periodic paths."""
 
 
-def _emit_json(
-    command: str,
-    data: object,
-    *,
-    warnings: Sequence[str] = (),
-) -> None:
+def _emit_json(command: str, data: object, *, warnings: Sequence[str] = ()) -> None:
     sys.stdout.write(serialize(success(command, data, warnings=warnings)))
 
 
-def _finish(command: str, data: object, as_json: bool, *messages: str) -> None:
+def _finish(
+    command: str, data: object, as_json: bool, *messages: str, warnings: Sequence[str] = ()
+) -> None:
     if as_json:
-        _emit_json(command, data)
+        _emit_json(command, data, warnings=warnings)
     else:
         for message in messages:
             console.print(message)
@@ -134,36 +130,35 @@ def _exception_code(exc: BaseException) -> str:
 
 
 def _fail(
+    command: str,
+    as_json: bool,
     message: str,
     *,
     code: int = 2,
-    as_json: bool = False,
-    command: str = "electrace",
     error_code: str = "invalid_input",
     details: object | None = None,
 ) -> Never:
     if as_json:
         sys.stdout.write(serialize(failure(command, error_code, message, details=details)))
-        raise typer.Exit(code=code)
-    error_console.print(f"[bold red]Error:[/bold red] {escape(message)}")
+    else:
+        error_console.print(f"[bold red]Error:[/bold red] {escape(message)}")
     raise typer.Exit(code=code)
 
 
-def _fail_exception(
-    exc: BaseException,
-    *,
-    command: str,
-    as_json: bool,
-    code: int = 2,
-) -> Never:
+def _fail_exception(exc: BaseException, command: str, as_json: bool) -> Never:
     message = str(exc).strip() or type(exc).__name__
-    _fail(
-        message,
-        code=code,
-        as_json=as_json,
-        command=command,
-        error_code=_exception_code(exc),
-    )
+    _fail(command, as_json, message, error_code=_exception_code(exc))
+
+
+@contextmanager
+def _report_errors(command: str, as_json: bool, *also: type[Exception]) -> Iterator[None]:
+    """Turn the input and file errors of the enclosed block into the command's failure."""
+
+    expected: tuple[type[Exception], ...] = (OSError, TypeError, ValueError, *also)
+    try:
+        yield
+    except expected as exc:
+        _fail_exception(exc, command, as_json)
 
 
 def _analysis_summary(analysis: dict[str, Any], source: Path) -> dict[str, Any]:
@@ -181,6 +176,16 @@ def _analysis_summary(analysis: dict[str, Any], source: Path) -> dict[str, Any]:
 
 def _analysis_warnings(analysis: dict[str, Any]) -> tuple[str, ...]:
     return tuple(str(item) for item in analysis.get("warnings", []))
+
+
+def _discover_frames(root: Path, settings: ElecTraceConfig) -> tuple[FrameSource, ...]:
+    return discover_path(
+        root,
+        mode=settings.series_kind,
+        prefer_contcar=settings.inputs.prefer_contcar,
+        structure_name=settings.inputs.structure_name,
+        fallback_structure_name=settings.inputs.fallback_structure_name,
+    ).frames
 
 
 def _doctor_row(report: DoctorReport) -> tuple[str, str]:
@@ -203,10 +208,8 @@ def init(
 ) -> None:
     """Create a reviewed starter configuration for an existing VASP path."""
 
-    try:
+    with _report_errors("init", as_json):
         output = write_default_config(config, input_root=images, overwrite=force)
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="init", as_json=as_json)
     _finish(
         "init",
         {"configuration": str(output.resolve()), "images": str(images.resolve())},
@@ -223,32 +226,24 @@ def doctor(
 ) -> None:
     """Check the Python runtime, plugins, and configured frame inputs."""
 
-    try:
-        loaded = load_config(config) if config is not None else None
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="doctor", as_json=as_json)
-    plugin_config = loaded.plugins if loaded is not None else None
     frame_reports: tuple[FrameDoctorReport, ...] = ()
     reports: tuple[DoctorReport, ...] = ()
     configured_root: Path | None = None
     discovery_error: str | None = None
-    if loaded is not None and config is not None:
+    if config is None:
+        reports = doctor_plugins()
+    else:
+        with _report_errors("doctor", as_json):
+            loaded = load_config(config)
         configured_root = Path(loaded.inputs.root).expanduser()
         if not configured_root.is_absolute():
             configured_root = config.parent / configured_root
         try:
-            frame_reports = doctor_plugins_path(
-                configured_root,
-                configuration=plugin_config,
-                mode=loaded.series_kind,
-                prefer_contcar=loaded.inputs.prefer_contcar,
-                structure_name=loaded.inputs.structure_name,
-                fallback_structure_name=loaded.inputs.fallback_structure_name,
+            frame_reports = doctor_plugins_frames(
+                _discover_frames(configured_root, loaded), configuration=loaded.plugins
             )
         except (OSError, TypeError, ValueError) as exc:
             discovery_error = str(exc)
-    else:
-        reports = doctor_plugins(configuration=plugin_config)
     payload = {
         "electrace_version": __version__,
         "python": platform.python_version(),
@@ -294,11 +289,9 @@ def demo(
 ) -> None:
     """Generate a deterministic synthetic path and optionally analyze it."""
 
-    try:
+    with _report_errors("demo", as_json):
         config_path = generate_demo(output, overwrite=force)
         artifacts = run_project(config_path, overwrite=force) if analyze else None
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="demo", as_json=as_json)
     if as_json:
         data: dict[str, Any] = {
             "output_directory": str(output.resolve()),
@@ -307,11 +300,8 @@ def demo(
         }
         warnings: Sequence[str] = ()
         if artifacts is not None:
-            data["analysis"] = _analysis_summary(
-                artifacts.analysis,
-                artifacts.output_directory,
-            )
-            warnings = tuple(str(item) for item in artifacts.analysis.get("warnings", []))
+            data["analysis"] = _analysis_summary(artifacts.analysis, artifacts.output_directory)
+            warnings = _analysis_warnings(artifacts.analysis)
         _emit_json("demo", data, warnings=warnings)
         return
     console.print(f"[green]Generated demo[/green] at {output.resolve()}")
@@ -332,31 +322,19 @@ def analyze(
 ) -> None:
     """Run periodic correspondence, event detection, and report generation."""
 
-    try:
-        artifacts = run_project(
-            config,
-            output_directory=output,
-            strict=strict,
-            overwrite=force,
-        )
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="analyze", as_json=as_json)
+    with _report_errors("analyze", as_json):
+        artifacts = run_project(config, output_directory=output, strict=strict, overwrite=force)
     analysis = artifacts.analysis
-    if as_json:
-        warnings = tuple(str(item) for item in analysis.get("warnings", []))
-        _emit_json(
-            "analyze",
-            _analysis_summary(analysis, artifacts.output_directory),
-            warnings=warnings,
-        )
-        return
-    console.print(f"[green]Analysis complete[/green]: {artifacts.output_directory}")
-    console.print(
+    _finish(
+        "analyze",
+        _analysis_summary(analysis, artifacts.output_directory),
+        as_json,
+        f"[green]Analysis complete[/green]: {artifacts.output_directory}",
         f"{len(analysis['frames'])} frames · {len(analysis['tracks'])} feature observations · "
-        f"{len(analysis['events'])} events · {len(analysis['warnings'])} warnings"
+        f"{len(analysis['events'])} events · {len(analysis['warnings'])} warnings",
+        *(f"  [dim]{item.name}[/dim]" for item in artifacts.files),
+        warnings=_analysis_warnings(analysis),
     )
-    for item in artifacts.files:
-        console.print(f"  [dim]{item.name}[/dim]")
 
 
 def _read_analysis(target: Path) -> dict[str, Any] | None:
@@ -394,34 +372,24 @@ def inspect(
     """Summarize a configuration, source series, or analysis bundle read-only."""
 
     kind = "analysis"
-    try:
+    with _report_errors("inspect", as_json):
         analysis = _read_analysis(target)
         if analysis is None and target.is_file() and target.suffix.lower() == ".toml":
             analysis, _ = load_and_analyze(target)
             kind = "configuration"
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="inspect", as_json=as_json)
     if analysis is not None:
-        try:
+        with _report_errors("inspect", as_json):
             summary = _analysis_summary(analysis, target)
             warnings = _analysis_warnings(analysis)
-        except (OSError, TypeError, ValueError) as exc:
-            _fail_exception(exc, command="inspect", as_json=as_json)
         if as_json:
             _emit_json("inspect", {"kind": kind, **summary}, warnings=warnings)
         else:
             _print_analysis_summary(analysis)
         return
     if not target.is_dir():
-        _fail(
-            "Expected electrace.toml, analysis.json, or an input directory",
-            as_json=as_json,
-            command="inspect",
-        )
-    try:
+        _fail("inspect", as_json, "Expected electrace.toml, analysis.json, or an input directory")
+    with _report_errors("inspect", as_json):
         sequence = load_sequence(target)
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="inspect", as_json=as_json)
     if as_json:
         _emit_json(
             "inspect",
@@ -481,11 +449,7 @@ def figure(
     try:
         analysis = _read_analysis(target)
         if analysis is None:
-            _fail(
-                "Expected analysis.json or a result directory holding one",
-                as_json=as_json,
-                command="figure",
-            )
+            _fail("figure", as_json, "Expected analysis.json or a result directory holding one")
         payload = write_path_figure(
             analysis,
             output,
@@ -495,9 +459,9 @@ def figure(
             overwrite=force,
         )
     except ImportError as exc:
-        _fail(str(exc), as_json=as_json, command="figure", error_code="missing_dependency")
+        _fail("figure", as_json, str(exc), error_code="missing_dependency")
     except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="figure", as_json=as_json)
+        _fail_exception(exc, "figure", as_json)
     warnings = payload.pop("warnings")
     if as_json:
         _emit_json("figure", payload, warnings=warnings)
@@ -510,7 +474,7 @@ def figure(
 
 @app.command()
 def plan(
-    plugin: str = typer.Argument(..., help=f"Plugin name: {', '.join(DEFAULT_REGISTRY.names())}."),
+    plugin: str = typer.Argument(..., help=f"Plugin name: {', '.join(PLUGINS)}."),
     frame: Path = typer.Argument(...),
     capability: str | None = typer.Option(None, "--capability", "-c"),
     config: Path | None = typer.Option(None, "--config"),
@@ -519,43 +483,25 @@ def plan(
 ) -> None:
     """Print an external-tool command plan without executing it."""
 
-    try:
-        loaded = load_config(config) if config is not None else None
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="plan", as_json=as_json)
+    with _report_errors("plan", as_json):
+        settings = load_config(config) if config is not None else ElecTraceConfig()
     plugin_name = plugin.strip().lower()
-    plugin_config = loaded.plugins.get(plugin_name, {}) if loaded is not None else None
-    try:
+    plugin_config = settings.plugins.get(plugin_name, {})
+    with _report_errors("plan", as_json, KeyError):
         if all_frames:
-            commands = plan_plugin_path(
+            commands = plan_plugin_frames(
                 plugin_name,
-                frame,
+                _discover_frames(frame, settings),
                 capability=capability,
                 configuration=plugin_config,
-                mode=loaded.series_kind if loaded is not None else "auto",
-                prefer_contcar=(loaded.inputs.prefer_contcar if loaded is not None else True),
-                structure_name=(loaded.inputs.structure_name if loaded is not None else "CONTCAR"),
-                fallback_structure_name=(
-                    loaded.inputs.fallback_structure_name if loaded is not None else "POSCAR"
-                ),
             )
-            payload = {
-                "plugin": plugin_name,
-                "path": str(frame),
-                "plans": [command.to_dict() for command in commands],
-            }
+            payload = {"plugin": plugin_name, "path": str(frame), "plans": commands}
         else:
-            if loaded is not None and plugin_name == "critic2":
-                plugin_config = dict(plugin_config or {})
-                plugin_config.setdefault("structure_file", loaded.inputs.structure_name)
+            if plugin_name == "critic2":
+                plugin_config = {"structure_file": settings.inputs.structure_name, **plugin_config}
             payload = plan_plugin(
-                plugin_name,
-                frame,
-                capability=capability,
-                configuration=plugin_config,
+                plugin_name, frame, capability=capability, configuration=plugin_config
             ).to_dict()
-    except (KeyError, OSError, ValueError, TypeError) as exc:
-        _fail_exception(exc, command="plan", as_json=as_json)
     if as_json:
         _emit_json("plan", payload)
     else:
@@ -564,12 +510,10 @@ def plan(
 
 def _fractional_coordinate(value: str) -> tuple[float, float, float]:
     try:
-        fields = tuple(float(item.strip()) for item in value.split(","))
+        x, y, z = (float(item.strip()) for item in value.split(","))
     except ValueError as exc:
         raise ValueError("--sample must be three comma-separated numbers") from exc
-    if len(fields) != 3:
-        raise ValueError("--sample must be three comma-separated numbers")
-    return fields
+    return x, y, z
 
 
 @app.command()
@@ -602,14 +546,12 @@ def volume(
     if add is not None:
         if split_spin or sample is not None or dataset:
             _fail(
+                "volume",
+                as_json,
                 "--add cannot be combined with --split-spin, --dataset, or --sample",
-                as_json=as_json,
-                command="volume",
             )
-        try:
+        with _report_errors("volume", as_json):
             payload = sum_density_grids(path, add, output_dir, overwrite=force)
-        except (OSError, TypeError, ValueError) as exc:
-            _fail_exception(exc, command="volume", as_json=as_json)
         _finish(
             "volume",
             payload,
@@ -620,15 +562,9 @@ def volume(
         return
     if split_spin:
         if sample is not None or dataset:
-            _fail(
-                "--split-spin cannot be combined with --dataset or --sample",
-                as_json=as_json,
-                command="volume",
-            )
-        try:
+            _fail("volume", as_json, "--split-spin cannot be combined with --dataset or --sample")
+        with _report_errors("volume", as_json):
             payload = split_spin_density(path, output_dir, overwrite=force)
-        except (OSError, TypeError, ValueError) as exc:
-            _fail_exception(exc, command="volume", as_json=as_json)
         written = cast(list[str], payload["written"])
         _finish(
             "volume",
@@ -640,12 +576,8 @@ def volume(
         )
         return
     if output_dir is not None or force:
-        _fail(
-            "--output-dir and --force apply only to --split-spin and --add",
-            as_json=as_json,
-            command="volume",
-        )
-    try:
+        _fail("volume", as_json, "--output-dir and --force apply only to --split-spin and --add")
+    with _report_errors("volume", as_json):
         grid = read_vasp_grid(path, dataset=dataset)
         payload = grid.summary()
         if sample is not None:
@@ -654,8 +586,6 @@ def volume(
                 "fractional_position": list(coordinate),
                 "value": grid.sample(coordinate),
             }
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="volume", as_json=as_json)
     if as_json:
         _emit_json("volume", payload)
         return
@@ -688,10 +618,8 @@ def workflow_init(
 ) -> None:
     """Create a reviewed YAML workflow with explicit executable settings."""
 
-    try:
+    with _report_errors("workflow.init", as_json):
         output = dump_starter_manifest(manifest, root=str(images), overwrite=force)
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="workflow.init", as_json=as_json)
     _finish(
         "workflow.init",
         {"manifest": str(output.resolve()), "images": str(images)},
@@ -711,28 +639,18 @@ def workflow_validate(
     try:
         validation = validate_workflow(manifest)
     except (KeyError, OSError, TypeError, ValueError) as exc:
-        _fail(
-            str(exc),
-            as_json=as_json,
-            command="workflow.validate",
-            error_code="validation_failed",
-        )
-    payload = validation.to_dict()
-    if as_json:
-        _emit_json(
-            "workflow.validate",
-            payload,
-            warnings=validation.warnings,
-        )
-        return
-    console.print(
+        _fail("workflow.validate", as_json, str(exc), error_code="validation_failed")
+    _finish(
+        "workflow.validate",
+        validation.to_dict(),
+        as_json,
         f"[green]Workflow valid[/green]: {len(validation.resolved_jobs)} jobs across "
-        f"{len(validation.selected_frames)} selected frames"
+        f"{len(validation.selected_frames)} selected frames",
+        f"Workspace: {validation.workspace}",
+        f"Scheduler: {validation.scheduler.kind}",
+        *(f"[yellow]Warning:[/yellow] {escape(warning)}" for warning in validation.warnings),
+        warnings=validation.warnings,
     )
-    console.print(f"Workspace: {validation.workspace}")
-    console.print(f"Scheduler: {validation.scheduler.kind}")
-    for warning in validation.warnings:
-        console.print(f"[yellow]Warning:[/yellow] {escape(warning)}")
 
 
 @workflow_app.command("stage")
@@ -743,10 +661,8 @@ def workflow_stage(
 ) -> None:
     """Select frames and stage auditable jobs without executing anything."""
 
-    try:
+    with _report_errors("workflow.stage", as_json, KeyError):
         staged = stage_workflow(manifest, overwrite=force)
-    except (OSError, TypeError, ValueError, KeyError) as exc:
-        _fail_exception(exc, command="workflow.stage", as_json=as_json)
     _finish(
         "workflow.stage",
         staged.to_dict(),
@@ -766,15 +682,13 @@ def workflow_run(
 ) -> None:
     """Execute a staged local DAG; external commands require ``--yes``."""
 
-    try:
+    with _report_errors("workflow.run", as_json):
         results = run_staged_workflow(
             manifest,
             confirmed=confirmed,
             max_parallel=max_parallel,
             stop_on_error=not keep_going,
         )
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="workflow.run", as_json=as_json)
     failures = [result for result in results if not result.succeeded]
     payload = {
         "jobs": [result.to_dict() for result in results],
@@ -787,10 +701,10 @@ def workflow_run(
     if as_json:
         if failures:
             _fail(
+                "workflow.run",
+                as_json,
                 f"{len(failures)} workflow job(s) failed",
                 code=1,
-                as_json=True,
-                command="workflow.run",
                 error_code="workflow_jobs_failed",
                 details=payload,
             )
@@ -820,20 +734,18 @@ def workflow_submit(
     try:
         if not confirmed:
             scripts = prepare_slurm_scripts(manifest, job_name=job_name, overwrite=force)
-            if as_json:
-                _emit_json(
-                    "workflow.submit",
-                    {
-                        "submitted": False,
-                        "job_name": job_name,
-                        "scripts": [str(path) for path in scripts],
-                    },
-                )
-                return
-            console.print(f"[green]Prepared[/green] {len(scripts)} Slurm scripts")
-            for script_path in scripts:
-                console.print(f"  [dim]{script_path}[/dim]")
-            console.print("Review the scripts, then repeat with --yes to submit them.")
+            _finish(
+                "workflow.submit",
+                {
+                    "submitted": False,
+                    "job_name": job_name,
+                    "scripts": [str(path) for path in scripts],
+                },
+                as_json,
+                f"[green]Prepared[/green] {len(scripts)} Slurm scripts",
+                *(f"  [dim]{script_path}[/dim]" for script_path in scripts),
+                "Review the scripts, then repeat with --yes to submit them.",
+            )
             return
         submissions = submit_staged_workflow(
             manifest,
@@ -851,15 +763,15 @@ def workflow_submit(
             "record_path": str(exc.record_path),
         }
         _fail(
+            "workflow.submit",
+            as_json,
             str(exc),
             code=1,
-            as_json=as_json,
-            command="workflow.submit",
             error_code="slurm_submission_failed",
             details=details,
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="workflow.submit", as_json=as_json)
+        _fail_exception(exc, "workflow.submit", as_json)
     if as_json:
         record_path = Path(next(iter(submissions))).parent / "submissions.json"
         _emit_json(
@@ -884,10 +796,8 @@ def workflow_status_command(
 ) -> None:
     """Report which staged inputs and expected outputs currently exist."""
 
-    try:
+    with _report_errors("workflow.status", as_json):
         payload = workflow_status(manifest)
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="workflow.status", as_json=as_json)
     if as_json:
         _emit_json("workflow.status", payload)
         return
@@ -902,10 +812,8 @@ def workflow_collect(
 ) -> None:
     """Validate and collect every selected descriptor output for analysis."""
 
-    try:
+    with _report_errors("workflow.collect", as_json):
         collected = collect_workflow_outputs(manifest, overwrite=force)
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="workflow.collect", as_json=as_json)
     _finish(
         "workflow.collect",
         {
@@ -929,27 +837,17 @@ def workflow_analyze(
 ) -> None:
     """Collect completed outputs, track changes, and generate the result bundle."""
 
-    try:
-        artifacts = analyze_collected_workflow(
-            manifest,
-            strict=strict,
-            overwrite=force,
-        )
-    except (OSError, TypeError, ValueError) as exc:
-        _fail_exception(exc, command="workflow.analyze", as_json=as_json)
+    with _report_errors("workflow.analyze", as_json):
+        artifacts = analyze_collected_workflow(manifest, strict=strict, overwrite=force)
     analysis = artifacts.analysis
-    if as_json:
-        warnings = tuple(str(item) for item in analysis.get("warnings", []))
-        _emit_json(
-            "workflow.analyze",
-            _analysis_summary(analysis, artifacts.output_directory),
-            warnings=warnings,
-        )
-        return
-    console.print(f"[green]Workflow analysis complete[/green]: {artifacts.output_directory}")
-    console.print(
+    _finish(
+        "workflow.analyze",
+        _analysis_summary(analysis, artifacts.output_directory),
+        as_json,
+        f"[green]Workflow analysis complete[/green]: {artifacts.output_directory}",
         f"{len(analysis['frames'])} frames · {len(analysis['tracks'])} feature observations · "
-        f"{len(analysis['events'])} events · {len(analysis['warnings'])} warnings"
+        f"{len(analysis['events'])} events · {len(analysis['warnings'])} warnings",
+        warnings=_analysis_warnings(analysis),
     )
 
 

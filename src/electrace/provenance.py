@@ -12,14 +12,11 @@ from pathlib import Path
 from typing import Any
 
 
-def sha256_file(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
+def sha256_file(path: str | Path) -> str:
     """Return a streaming SHA-256 digest for *path*."""
 
-    digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 def fingerprint_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
@@ -30,11 +27,10 @@ def fingerprint_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
     for item in sorted({Path(path).resolve() for path in paths}, key=str):
         if not item.is_file():
             continue
-        stat = item.stat()
         records.append(
             {
                 "path": str(item),
-                "size_bytes": stat.st_size,
+                "size_bytes": item.stat().st_size,
                 "sha256": sha256_file(item),
             }
         )
@@ -67,10 +63,9 @@ def _git_revision(directory: Path) -> str | None:
     return revision or None
 
 
-def environment_record(*, project_directory: str | Path | None = None) -> dict[str, Any]:
+def environment_record(*, project_directory: Path) -> dict[str, Any]:
     """Return a compact execution-environment audit record."""
 
-    root = Path(project_directory or Path.cwd()).resolve()
     packages = {
         name: value
         for name in ("electrace", "numpy", "scipy", "ase", "typer", "rich")
@@ -82,5 +77,5 @@ def environment_record(*, project_directory: str | Path | None = None) -> dict[s
         "python_implementation": platform.python_implementation(),
         "platform": platform.platform(),
         "packages": packages,
-        "git_revision": _git_revision(root),
+        "git_revision": _git_revision(project_directory.resolve()),
     }

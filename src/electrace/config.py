@@ -29,6 +29,9 @@ _ROOT_KEYS = frozenset(
 _PROJECT_KEYS = frozenset({"name", "series_kind"})
 _ELEMENT = re.compile(r"[A-Z][a-z]{0,2}")
 _MOLECULE_ID = re.compile(r"M\d+")
+# Bounds for _number: a strictly positive value, or a fraction between 0 and 1.
+_POSITIVE: dict[str, Any] = {"minimum": 0.0, "minimum_inclusive": False}
+_FRACTION: dict[str, Any] = {"minimum": 0.0, "maximum": 1.0}
 
 # Covalent bond cutoffs (angstrom) for focus_atoms = "auto", keyed by bond_pair().
 DEFAULT_BOND_CUTOFFS: dict[str, float] = {
@@ -83,20 +86,19 @@ def _number(
     return result
 
 
+def _check_numbers(settings: object, section: str, names: tuple[str, ...], **bounds: Any) -> None:
+    """Validate the named number fields of a settings object, in order, and store them."""
+
+    for name in names:
+        setattr(settings, name, _number(getattr(settings, name), f"{section}.{name}", **bounds))
+
+
 def _integer(value: Any, name: str, *, minimum: int) -> int:
     if type(value) is not int:
         raise TypeError(f"{name} must be an integer")
-    result = value
-    if result < minimum:
+    if value < minimum:
         raise ValueError(f"{name} must be at least {minimum}")
-    return result
-
-
-def _validate_json(value: Any) -> None:
-    try:
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise ValueError("configuration must contain finite JSON-compatible values") from exc
+    return value
 
 
 def _input_filename(value: str, field_name: str) -> str:
@@ -111,7 +113,6 @@ def _input_filename(value: str, field_name: str) -> str:
         or any(ord(character) < 32 or ord(character) == 127 for character in name)
         or "/" in name
         or "\\" in name
-        or Path(name).is_absolute()
     ):
         raise ValueError(f"inputs.{field_name} must be a basename, not a path: {value!r}")
     return name
@@ -133,11 +134,8 @@ class InputConfig:
         self.root = _string(self.root, "inputs.root")
         if self.descriptor_dir is not None:
             self.descriptor_dir = _string(self.descriptor_dir, "inputs.descriptor_dir")
-        self.structure_name = _input_filename(self.structure_name, "structure_name")
-        self.fallback_structure_name = _input_filename(
-            self.fallback_structure_name, "fallback_structure_name"
-        )
-        self.descriptor_name = _input_filename(self.descriptor_name, "descriptor_name")
+        for name in ("structure_name", "fallback_structure_name", "descriptor_name"):
+            setattr(self, name, _input_filename(getattr(self, name), name))
         if not isinstance(self.descriptor_source, str):
             raise TypeError("inputs.descriptor_source must be a string")
         self.descriptor_source = self.descriptor_source.strip().lower()
@@ -178,56 +176,35 @@ class MatchingSettings:
             raise ValueError(
                 f"matching.atom_identity must be one of {choices}; got {self.atom_identity!r}"
             )
-        for name in (
-            "max_atom_displacement",
-            "max_feature_displacement",
-            "match_threshold",
-        ):
-            setattr(
-                self,
-                name,
-                _number(
-                    getattr(self, name),
-                    f"matching.{name}",
-                    minimum=0.0,
-                    minimum_inclusive=False,
-                ),
-            )
-        for name in (
-            "position_weight",
-            "charge_weight",
-            "volume_weight",
-            "neighbor_weight",
-            "overlap_weight",
-            "descriptor_weight",
-        ):
-            setattr(
-                self,
-                name,
-                _number(getattr(self, name), f"matching.{name}", minimum=0.0),
-            )
+        _check_numbers(
+            self,
+            "matching",
+            ("max_atom_displacement", "max_feature_displacement", "match_threshold"),
+            **_POSITIVE,
+        )
+        _check_numbers(
+            self,
+            "matching",
+            (
+                "position_weight",
+                "charge_weight",
+                "volume_weight",
+                "neighbor_weight",
+                "overlap_weight",
+                "descriptor_weight",
+            ),
+            minimum=0.0,
+        )
         if not isinstance(self.descriptor_scales, dict):
             raise TypeError("matching.descriptor_scales must be a table")
         self.descriptor_scales = {
             _string(key, "matching.descriptor_scales key"): _number(
-                value,
-                f"matching.descriptor_scales.{key}",
-                minimum=0.0,
-                minimum_inclusive=False,
+                value, f"matching.descriptor_scales.{key}", **_POSITIVE
             )
             for key, value in self.descriptor_scales.items()
         }
-        self.split_merge_threshold = _number(
-            self.split_merge_threshold,
-            "matching.split_merge_threshold",
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.conservation_tolerance = _number(
-            self.conservation_tolerance,
-            "matching.conservation_tolerance",
-            minimum=0.0,
-            maximum=1.0,
+        _check_numbers(
+            self, "matching", ("split_merge_threshold", "conservation_tolerance"), **_FRACTION
         )
 
 
@@ -266,56 +243,28 @@ class EventSettings:
                     "events.critical_point_min_field keys must be "
                     f"{', '.join(_CRITICAL_POINT_KINDS)}; got {key!r}"
                 )
-            cutoffs[kind] = _number(
-                value,
-                f"events.critical_point_min_field.{kind}",
-                minimum=0.0,
-                minimum_inclusive=False,
-            )
+            cutoffs[kind] = _number(value, f"events.critical_point_min_field.{kind}", **_POSITIVE)
         self.critical_point_min_field = cutoffs
         self.minimum_persistence = _integer(
             self.minimum_persistence, "events.minimum_persistence", minimum=1
         )
-        self.minimum_event_confidence = _number(
-            self.minimum_event_confidence,
-            "events.minimum_event_confidence",
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.charge_change_threshold = _number(
-            self.charge_change_threshold,
-            "events.charge_change_threshold",
-            minimum=0.0,
-            minimum_inclusive=False,
-        )
-        self.volume_change_fraction = _number(
-            self.volume_change_fraction,
-            "events.volume_change_fraction",
-            minimum=0.0,
-            minimum_inclusive=False,
+        _check_numbers(self, "events", ("minimum_event_confidence",), **_FRACTION)
+        _check_numbers(
+            self, "events", ("charge_change_threshold", "volume_change_fraction"), **_POSITIVE
         )
         if not isinstance(self.descriptor_thresholds, dict):
             raise TypeError("events.descriptor_thresholds must be a table")
         self.descriptor_thresholds = {
             _string(key, "events.descriptor_thresholds key"): _number(
-                value,
-                f"events.descriptor_thresholds.{key}",
-                minimum=0.0,
-                minimum_inclusive=False,
+                value, f"events.descriptor_thresholds.{key}", **_POSITIVE
             )
             for key, value in self.descriptor_thresholds.items()
         }
-        self.high_confidence_threshold = _number(
-            self.high_confidence_threshold,
-            "events.high_confidence_threshold",
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.medium_confidence_threshold = _number(
-            self.medium_confidence_threshold,
-            "events.medium_confidence_threshold",
-            minimum=0.0,
-            maximum=1.0,
+        _check_numbers(
+            self,
+            "events",
+            ("high_confidence_threshold", "medium_confidence_threshold"),
+            **_FRACTION,
         )
         if self.medium_confidence_threshold > self.high_confidence_threshold:
             raise ValueError(
@@ -401,9 +350,7 @@ class OutputConfig:
                 )
             if pair in cutoffs:
                 raise ValueError(f"outputs.focus_bond_cutoffs lists the {pair} pair twice")
-            cutoffs[pair] = _number(
-                value, f"outputs.focus_bond_cutoffs.{key}", minimum=0.0, minimum_inclusive=False
-            )
+            cutoffs[pair] = _number(value, f"outputs.focus_bond_cutoffs.{key}", **_POSITIVE)
         self.focus_bond_cutoffs = cutoffs
 
     def bond_cutoffs(self) -> dict[str, float]:
@@ -431,19 +378,9 @@ class ElecTraceConfig:
         if self.series_kind not in _SERIES_KINDS:
             choices = ", ".join(sorted(_SERIES_KINDS))
             raise ValueError(f"project.series_kind must be one of {choices}")
-        for name, value, expected in (
-            ("inputs", self.inputs, InputConfig),
-            ("matching", self.matching, MatchingSettings),
-            ("events", self.events, EventSettings),
-            ("outputs", self.outputs, OutputConfig),
-        ):
-            if not isinstance(value, expected):
-                raise TypeError(f"configuration.{name} must be a {expected.__name__}")
         plugins: dict[str, dict[str, Any]] = {}
         for name, options in self.plugins.items():
             normalized_name = _string(name, "plugin name", normalize=True)
-            if not isinstance(options, dict):
-                raise TypeError(f"[plugins.{normalized_name}] must be a TOML table")
             if "enabled" in options:
                 _boolean(options["enabled"], f"plugins.{normalized_name}.enabled")
             for key in ("executable", "capability"):
@@ -451,29 +388,24 @@ class ElecTraceConfig:
                     _string(options[key], f"plugins.{normalized_name}.{key}")
             plugins[normalized_name] = dict(options)
         self.plugins = plugins
-        if not isinstance(self.metadata, dict):
-            raise TypeError("[metadata] must be a TOML table")
-        self.metadata = dict(self.metadata)
-        _validate_json(asdict(self))
+        document = asdict(self)
+        try:
+            json.dumps(document, allow_nan=False)
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ValueError("configuration must contain finite JSON-compatible values") from exc
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable nested mapping."""
 
         result = asdict(self)
         # At their defaults, record the configuration exactly as before these options existed.
-        if not self.outputs.focus_atoms:
-            del result["outputs"]["focus_atoms"]
-        if not self.outputs.focus_bond_cutoffs:
-            del result["outputs"]["focus_bond_cutoffs"]
+        for name in ("focus_atoms", "focus_bond_cutoffs", "atom_groups", "molecule_groups"):
+            if not result["outputs"][name]:
+                del result["outputs"][name]
         if self.outputs.match_details:
             del result["outputs"]["match_details"]
-        if not self.outputs.atom_groups:
-            del result["outputs"]["atom_groups"]
-        if not self.outputs.molecule_groups:
-            del result["outputs"]["molecule_groups"]
         if not self.events.critical_point_min_field:
             del result["events"]["critical_point_min_field"]
-        _validate_json(result)
         return result
 
 

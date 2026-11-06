@@ -22,15 +22,14 @@ from typing import Any
 
 import numpy as np
 
-from electrace.events import _as_finite_float
 from electrace.focus import _PERCENTILES, _bonds, check_atom_order
+from electrace.matching import _as_finite_float
 from electrace.models import Feature, FeatureKind, Frame, Sequence
 
 GROUP_QUANTITIES = ("charge", "net_charge", "spin")
 # A fixed group's net charge and population change by the same amount, so the floor
 # of population steps also serves net charges.
 FLOOR_QUANTITIES = ("charge", "spin")
-_SETTING = "outputs.atom_groups and outputs.molecule_groups need"
 
 Producer = str | None
 
@@ -72,8 +71,7 @@ def _sums(
     for atom in atoms:
         found = charges.get((producer, atom), [])
         if len(found) != 1:
-            empty = dict.fromkeys(GROUP_QUANTITIES)
-            return empty, f"atom {atom} has {len(found)} charge features"
+            return dict.fromkeys(GROUP_QUANTITIES), f"atom {atom} has {len(found)} charge features"
         features.append(found[0])
     values: dict[str, float | None] = {}
     for quantity in GROUP_QUANTITIES:
@@ -104,7 +102,7 @@ def _components(atoms: Iterable[int], bonds: Iterable[tuple[int, int]]) -> list[
 
 
 def _molecules(
-    sequence: Sequence, cutoffs: Mapping[str, float], focus: set[int]
+    sequence: Sequence, cutoffs: Mapping[str, float], focus: set[int], element: Mapping[int, str]
 ) -> tuple[dict[str, Any], list[list[int]], list[list[int]], set[tuple[int, int]] | None]:
     """Find the first frame's molecules and the spectators among them.
 
@@ -124,14 +122,12 @@ def _molecules(
         )
         return {"cutoffs": dict(sorted(cutoffs.items())), "reason": reason}, [], [], None
     bonds = [pairs for pairs, _ in graphs]
-    first = sequence.frames[0]
-    molecules = _components((atom.index for atom in first.atoms), bonds[0])
+    molecules = _components(element, bonds[0])
     changed = bonds[0].union(*bonds[1:]) - bonds[0].intersection(*bonds[1:])
     touched = focus | {atom for pair in changed for atom in pair}
     spectators = [members for members in molecules if not touched.intersection(members)]
-    element = {atom.index: atom.element for atom in first.atoms}
     record: dict[str, Any] = {
-        "frame": first.index,
+        "frame": sequence.frames[0].index,
         "cutoffs": dict(sorted(cutoffs.items())),
         "count": len(molecules),
         "formulas": dict(
@@ -189,17 +185,14 @@ def _floor(
         for quantity in FLOOR_QUANTITIES:
             if not steps[quantity]:
                 continue
-            percentiles = np.percentile(steps[quantity], [value for _, value in _PERCENTILES])
+            percentiles = np.percentile(steps[quantity], list(_PERCENTILES.values()))
             entries.append(
                 {
                     "producer": producer,
                     "quantity": quantity,
                     "molecules": len(contributors[quantity]),
                     "steps": len(steps[quantity]),
-                    **{
-                        name: float(value)
-                        for (name, _), value in zip(_PERCENTILES, percentiles, strict=True)
-                    },
+                    **dict(zip(_PERCENTILES, percentiles.tolist(), strict=True)),
                 }
             )
     return entries
@@ -221,23 +214,22 @@ def atom_groups(
     one. The whole-path changes are added by the caller.
     """
 
-    check_atom_order(sequence, _SETTING)
+    check_atom_order(sequence, "outputs.atom_groups and outputs.molecule_groups need")
     first = sequence.frames[0]
-    known = {atom.index for atom in first.atoms}
+    element = {atom.index: atom.element for atom in first.atoms}
     for name, atoms in configured.items():
-        absent = sorted(set(atoms) - known)
+        absent = sorted(set(atoms) - element.keys())
         if absent:
             raise ValueError(
                 f"outputs.atom_groups.{name} lists {absent}, which are not 0-based atom "
                 f"indices of frame {first.label}, which has {len(first.atoms)} atoms"
             )
     focus = set(focus_atoms)
-    record, molecules, spectators, first_bonds = _molecules(sequence, bond_cutoffs, focus)
+    record, molecules, spectators, first_bonds = _molecules(sequence, bond_cutoffs, focus, element)
     charges = [_atom_charges(frame) for frame in sequence.frames]
     producers: list[Producer] = sorted(
         {producer for found in charges for producer, _ in found}, key=lambda item: item or ""
     )
-    element = {atom.index: atom.element for atom in first.atoms}
     warnings: list[str] = []
     if not producers:
         warnings.append("Atom groups have no atom charges to sum in any frame.")
@@ -279,14 +271,3 @@ def atom_groups(
         warnings.append(f"Atom groups: {record['reason']}")
     floor = _floor(sequence, charges, producers, spectators)
     return {"molecules": record, "noise_floor": floor, "groups": groups}, warnings
-
-
-def ratio_to_floor(delta: float, entry: Mapping[str, Any] | None) -> dict[str, float | None] | None:
-    """Give |delta| as multiples of each floor percentile; a zero percentile gives None."""
-
-    if entry is None:
-        return None
-    return {name: abs(delta) / entry[name] if entry[name] > 0 else None for name, _ in _PERCENTILES}
-
-
-__all__ = ["FLOOR_QUANTITIES", "GROUP_QUANTITIES", "atom_groups", "formula", "ratio_to_floor"]
