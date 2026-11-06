@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -31,6 +32,8 @@ from .selection import parse_frame_selection
 WORKSPACE_SCHEMA_VERSION = "electrace.workspace.v1"
 WORKSPACE_RECORD = ".electrace-workspace.json"
 _INCAR_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# A quoted value, a comment, a line continuation, a statement's end, or anything else.
+_INCAR_TOKEN = re.compile(r'"[^"]*"|[#!][^\n]*|\\[ \t]*\n|[;\n]|[^"#!;\\\n]+|["\\]')
 _SAFE_LABEL = re.compile(r"[^A-Za-z0-9_.-]+")
 _LOBSTER_BOND_REQUEST = re.compile(r"(?im)^\s*(?:cohpgenerator|cohpbetween)\b")
 _LOBSTER_SKIP_COBI = re.compile(r"(?im)^\s*skipcobi\b")
@@ -159,6 +162,53 @@ def _replace_file(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def _rewrite_incar(text: str, overrides: Mapping[str, str]) -> tuple[str, set[str]]:
+    """Set every statement of an overridden tag and keep all other text as written.
+
+    Follows the INCAR syntax in the VASP wiki: a semicolon separates statements on a line,
+    ``#`` and ``!`` start a comment, a backslash continues a statement on the next line,
+    and double quotes hold a value across lines. A value with a brace is a nested tag
+    block's and is left alone. A line holding only an overridden statement becomes
+    ``TAG = value``, without its comment, which may describe the old value. Returns the
+    text and the tags it set.
+    """
+
+    applied: set[str] = set()
+
+    def replacement(statement: str) -> str | None:
+        tag, equals, value = statement.partition("=")
+        key = tag.strip().upper()
+        if not equals or key not in overrides or "{" in value or "}" in value:
+            return None
+        applied.add(key)
+        return f"{key} = {overrides[key]}"
+
+    def rewrite_line(statements: list[str], comment: str) -> str:
+        new = [replacement(item) for item in statements]
+        if any(new) and sum(bool(item.strip()) for item in statements) == 1:
+            return next(item for item in new if item)
+        kept = (
+            item if value is None else item.replace(item.strip(), value, 1)
+            for item, value in zip(statements, new, strict=True)
+        )
+        return ";".join(kept) + comment
+
+    lines: list[str] = []
+    statements, comment = [""], ""
+    for token in _INCAR_TOKEN.findall(text):
+        if token == "\n":
+            lines.append(rewrite_line(statements, comment))
+            statements, comment = [""], ""
+        elif token == ";":
+            statements.append("")
+        elif token[0] in "#!":
+            comment = token
+        else:
+            statements[-1] += token
+    lines.append(rewrite_line(statements, comment))
+    return "\n".join(lines), applied
+
+
 def _apply_incar_overrides(path: Path, raw: JSONValue | None) -> None:
     if raw is None:
         return
@@ -171,13 +221,10 @@ def _apply_incar_overrides(path: Path, raw: JSONValue | None) -> None:
         overrides[key.upper()] = (
             ".TRUE." if value is True else ".FALSE." if value is False else str(value)
         )
-    result: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        content = line.split("!", 1)[0].split("#", 1)[0]
-        key = content.split("=", 1)[0].strip().upper() if "=" in content else ""
-        result.append(f"{key} = {overrides.pop(key)}" if key in overrides else line)
-    result.extend(f"{key} = {value}" for key, value in overrides.items())
-    atomic_write_text(path, "\n".join(result).rstrip() + "\n")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    text, applied = _rewrite_incar("\n".join(lines), overrides)
+    added = [f"{key} = {value}" for key, value in overrides.items() if key not in applied]
+    atomic_write_text(path, "\n".join(([text] if lines else []) + added).rstrip() + "\n")
 
 
 def _plugin_options(step: WorkflowStep) -> dict[str, JSONValue]:

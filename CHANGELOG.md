@@ -270,3 +270,12 @@ These change results on inputs that used to run without complaint.
   A producer present in both frames of a step still reports its births and deaths, and
   a run with no gap is unchanged. A frame's critic2 warning is replaced by the general
   one. `missing_descriptors` is a new optional key under the same schema version.
+- `incar_overrides` no longer damages an `INCAR`. An override replaced the whole line
+  whose first statement it named, so `ENCUT = 520; ISPIN = 2` with an `ENCUT` override
+  lost `ISPIN = 2` and would have run without spin polarization. It missed a tag later
+  on a line (`ISPIN = 2; ENCUT = 520` kept 520 and added a second `ENCUT` at the end),
+  left repeats of a tag unchanged, and left the continuation lines of a replaced
+  `MAGMOM` behind. Each statement is now set in place, with every repeat, and other
+  tags, continuation lines, quoted values, and comments stay as written. Lines holding
+  one statement come out as before. Workflows staged earlier from templates with
+  semicolons or repeated tags should have their staged `INCAR` files checked.

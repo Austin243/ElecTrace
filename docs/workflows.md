@@ -548,7 +548,10 @@ earlier steps; see [All-electron density analysis](#all-electron-density-analysi
 Each step points to an executable entry and may declare a template directory,
 dependencies, expected outputs, environment variables, and plugin options. VASP
 templates normally provide `INCAR`, `KPOINTS`, and `POTCAR`; ElecTrace places the
-selected structure at `POSCAR`. Descriptor steps can consume files from dependency
+selected structure at `POSCAR`. A VASP step's `incar_overrides` sets a tag wherever the
+template states it, including on a line it shares with other tags (`ENCUT = 520;
+ISPIN = 2`) and in every repeat of the tag, and adds it at the end otherwise; all other
+tags and comments stay as written. Descriptor steps can consume files from dependency
 steps with `options.input_links`.
 
 VASP pairs `POSCAR` species with `POTCAR` entries by position, so validation and
