@@ -290,3 +290,7 @@ These change results on inputs that used to run without complaint.
   replaces a workspace where nothing ran. Removing a step or frame from the manifest
   of an unrun workflow also asks for `--discard-results`, because its staged files
   cannot be told from results.
+- The report's timeline labels each event with the step it happened on. It showed
+  `frame_after` to the end of the event's lineage, so a change on step 04→05 read
+  "frame 5→6" while the same report's track table said 04→05, and it mixed frame
+  indices with labels. Property-change and rearrangement badges now have a color.

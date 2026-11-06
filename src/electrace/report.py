@@ -71,7 +71,7 @@ _HTML = """<!doctype html>
     .event { display: grid; grid-template-columns: 6.5rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
     .event:first-child { border-top: 0; }
     .badge { border: 1px solid currentColor; border-radius: 999px; padding: .2rem .55rem; width: fit-content; font: 700 .7rem ui-monospace, monospace; text-transform: uppercase; }
-    .birth { color: var(--green); } .death { color: var(--red); } .split, .merge { color: var(--violet); } .change, .descriptor_change, .connectivity_change { color: var(--amber); }
+    .birth { color: var(--green); } .death { color: var(--red); } .split, .merge, .rearrangement { color: var(--violet); } .change, .property_change, .connectivity_change { color: var(--amber); }
     .confidence { height: 5px; background: #1b3040; border-radius: 10px; overflow: hidden; margin-top: .25rem; }
     .confidence i { display:block; height:100%; background: var(--cyan); }
     .muted { color: var(--muted); }
@@ -243,12 +243,14 @@ _HTML = """<!doctype html>
       const type=String(e.type||"change").toLowerCase(), confidence=Math.max(0,Math.min(1,Number(e.confidence||0)));
       const confidenceLabel=String(e.confidence_label||"unclassified").toLowerCase();
       const frameLabel = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
-      const span=type === "connectivity_change" ? `${frameLabel(e.frame_before)}→${frameLabel(e.frame_after)}` : (e.end_frame!=null && e.end_frame!==e.start_frame ? `${e.start_frame}→${e.end_frame}` : String(e.start_frame ?? "—"));
+      // The step the change happened on; a matched connectivity change makes no claim past it.
+      const span=`${frameLabel(e.frame_before)}→${frameLabel(e.frame_after)}`;
+      const holds=type !== "connectivity_change" && e.end_frame!=null && e.end_frame!==e.frame_after ? `<br><small>holds through ${esc(frameLabel(e.end_frame))}</small>` : "";
       const badge=type === "connectivity_change" ? "connectivity" : type;
       const evidence=type === "connectivity_change" ? connectivityEvidence(e) : `<div class="confidence"><i style="width:${confidence*100}%"></i></div>`;
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
       const place=placeLabels[e.barrier_position] ? `<br><small>${esc(placeLabels[e.barrier_position])}</small>` : "";
-      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
+      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${holds}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>');
 
     function noiseNote(e) {

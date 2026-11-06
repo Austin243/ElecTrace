@@ -49,6 +49,11 @@ motion cutoff. For NEB images and other paths that keep one atom order, set
 with an error if the element sequences differ, and records each displacement without
 letting it lower match confidence; `max_atom_displacement` is not used.
 
+Each event in `events.csv` and `analysis.json` gives its step as `frame_before` and
+`frame_after`, which is what the report's timeline shows. `start_frame` repeats
+`frame_after`, and `end_frame` is the last frame its lineage reaches, shown in the
+timeline as "holds through".
+
 Events compare adjacent frames only. `track_summary.csv`, `track_summary` in
 `analysis.json`, and the report's whole-path table give one row per feature track:
 its first and last frames, whether it spans the path, and the net change, max − min,
