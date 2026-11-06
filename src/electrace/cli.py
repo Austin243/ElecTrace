@@ -480,6 +480,8 @@ def figure(
         )
     except ImportError as exc:
         _fail("figure", as_json, str(exc), error_code="missing_dependency")
+    except KeyError as exc:
+        _fail("figure", as_json, f"the analysis has a record without {exc}")
     except (OSError, TypeError, ValueError) as exc:
         _fail_exception(exc, "figure", as_json)
     warnings = payload.pop("warnings")

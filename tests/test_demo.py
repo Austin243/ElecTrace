@@ -7,6 +7,7 @@ import pytest
 from electrace.config import load_config
 from electrace.demo import generate_demo
 from electrace.io import load_sequence
+from electrace.pipeline import run_project
 
 
 def test_demo_generates_a_complete_loadable_sequence(tmp_path: Path) -> None:
@@ -29,3 +30,12 @@ def test_demo_refuses_to_replace_nonempty_directory(tmp_path: Path) -> None:
 
     with pytest.raises(FileExistsError):
         generate_demo(destination)
+
+
+def test_demo_bond_critical_points_give_the_density_that_bond_rows_read(tmp_path: Path) -> None:
+    analysis = run_project(generate_demo(tmp_path / "demo")).analysis
+
+    fields = {row["frame_label"]: row["field"] for row in analysis["bonds"]}
+    assert fields == pytest.approx({"02": 0.06, "03": 0.085, "04": 0.11, "05": 0.135})
+    # One row per frame: the density is not given twice for the pair.
+    assert len(analysis["bonds"]) == 4

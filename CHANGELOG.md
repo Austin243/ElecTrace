@@ -299,3 +299,10 @@ These change results on inputs that used to run without complaint.
   no events, and the starter configuration shows the two lines, commented out. No
   thresholds or events change: the HCN frames under a starter configuration still give
   10 events, and 20 with the two lines added.
+- `electrace demo` writes bond-critical-point densities as `field`, which bond rows read,
+  so its bond rows have densities and its figure has a density panel. Its events are
+  unchanged. It is a regression fixture, not a result.
+- `electrace figure` stops with a clear message, and writes nothing, when a bond row, the
+  barrier record, or an event names a frame the analysis does not have. Those, a
+  `bond_id` whose atom is not in every frame, and records lacking a field gave uncaught
+  tracebacks, the event case after writing its files.
