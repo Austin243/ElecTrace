@@ -257,3 +257,16 @@ These change results on inputs that used to run without complaint.
   series named by pressure stays one under `auto` and `ordered`. Numeric directories
   under `auto` or `neb` are unaffected. `discover_static_series` takes `mode` in place
   of `require_pressure`.
+- A descriptor file missing from some frames no longer gives false births and deaths.
+  Removing `03/ACF.dat` from the HCN example gave 3 deaths and 3 births at confidence
+  0.75, confirmed, and no warning named the file; a charge change on the step before
+  the gap also lost half its confidence and was marked transient, as if it had
+  reverted. Those births and deaths are now left out of events and counted in
+  `missing_descriptors` in `analysis.json`, a warning names the producer, the file,
+  and the frames, the report says so above its timeline and stops marking bonds as
+  beginning or ending beside the gap, and an event whose persistence the gap cuts
+  short is `right_censored`. The features are unknown in those frames, not absent, so
+  the tracks still stop and restart there and a change across the gap is not reported.
+  A producer present in both frames of a step still reports its births and deaths, and
+  a run with no gap is unchanged. A frame's critic2 warning is replaced by the general
+  one. `missing_descriptors` is a new optional key under the same schema version.

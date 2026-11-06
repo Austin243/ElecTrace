@@ -328,6 +328,15 @@ themselves. Per-atom spin populations are read from `spin/ACF.dat` in a frame
 directory, or from `descriptors/<label>/spin/ACF.dat` in a mirrored external
 directory.
 
+An output that some frames have and others lack, such as one frame without `ACF.dat`,
+is missing evidence, not a change. A warning names the producer, the file, and the
+frames, and `missing_descriptors` in `analysis.json` records them. Births and deaths
+that only the missing output explains are left out of events and counted there. The
+features' tracks stop and restart at those frames, so a change across them is not
+reported, and an event whose persistence the gap cuts short is `right_censored`, as at
+the end of a path. A document with an empty feature list is not missing: it says the
+tool looked and found nothing.
+
 A LOBSTER list gives one bond feature per atom-pair row. Orbital-resolved rows,
 whose labels name an orbital (`Na1_3s`, `Fe1_3d_z^2`), split the atom-pair row above
 them by orbital. They are checked against that row, skipped, and counted as

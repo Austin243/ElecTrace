@@ -30,6 +30,10 @@ on it. Frames keep the natural order of their directory names; a warning says wh
 numbers in the names do not set that order (`IS`, `TS`, `FS`), and only
 `series_kind = "pressure"` sorts frames by `OUTCAR` stress.
 
+`missing_descriptors` in `analysis.json` names any output that some frames lack, with
+the births and deaths left out for it. Tell the user which analysis to run or repair;
+nothing is known about those features in those frames.
+
 For NEB images and other paths that keep one atom order, set
 `[matching] atom_identity = "index"`; the default `"geometric"` re-matches atoms by
 element and distance at every step. Events compare adjacent frames only, so also read

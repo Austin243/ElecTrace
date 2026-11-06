@@ -231,7 +231,15 @@ _HTML = """<!doctype html>
       parts.push("The counts use every critical point, before any density cutoff or focus.");
       return `<p class="muted">${parts.join(" ")}</p>`;
     })() : "";
-    document.getElementById("timeline").innerHTML = cpNote + suppressedNote + (events.length ? events.map(e=>{
+    // Births and deaths at frames without a producer's output are left out of events.
+    const gaps = data.missing_descriptors || [];
+    const gapFrames = new Set(gaps.flatMap(g => g.frames || []));
+    const gapNote = gaps.map(g => {
+      const left = [["death", g.events_left_out?.death], ["birth", g.events_left_out?.birth]].filter(([, n]) => n).map(([kind, n]) => `${n} ${kind}${n === 1 ? "" : "s"}`).join(" and ");
+      const output = `${g.producer} output${g.file ? ` ${g.file}` : ""}`;
+      return `<p class="muted">${esc(`${output} is missing from frame ${(g.frame_labels || []).join(", ")}, so its features are unknown there, not absent, and a change across that frame is not reported.${left ? ` Not listed: ${left} there.` : ""}`)}</p>`;
+    }).join("");
+    document.getElementById("timeline").innerHTML = gapNote + cpNote + suppressedNote + (events.length ? events.map(e=>{
       const type=String(e.type||"change").toLowerCase(), confidence=Math.max(0,Math.min(1,Number(e.confidence||0)));
       const confidenceLabel=String(e.confidence_label||"unclassified").toLowerCase();
       const frameLabel = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
@@ -319,11 +327,13 @@ _HTML = """<!doctype html>
       const heads = {field: "Field", laplacian: "Laplacian", icohp: "ICOHP (eV)", icobi: "ICOBI"};
       const shown = Object.keys(heads).filter(q => bonds.some(b => b[q] != null));
       // A row begins or ends where the neighboring frame has no row for that bond.
+      // A frame missing a producer's output cannot show that a bond began or ended.
       const present = new Set(bonds.map(b => `${b.bond_id}@${position(b.frame)}`));
+      const absent = (b, i) => !present.has(`${b.bond_id}@${i}`) && !gapFrames.has(frames[i].index);
       const last = frames.length - 1;
       const body = bonds.map(b => {
         const i = position(b.frame);
-        const marks = [i > 0 && !present.has(`${b.bond_id}@${i-1}`) ? "begins" : "", i < last && !present.has(`${b.bond_id}@${i+1}`) ? "ends" : ""].filter(Boolean).join(", ");
+        const marks = [i > 0 && absent(b, i-1) ? "begins" : "", i < last && absent(b, i+1) ? "ends" : ""].filter(Boolean).join(", ");
         return `<tr><td>${esc(b.element_a)}[${esc(b.atom_a)}]–${esc(b.element_b)}[${esc(b.atom_b)}] <small class="muted">${esc(b.bond_id)}</small></td><td>${esc(frameName(b.frame))}${marks ? ` <small class="muted">${marks}</small>` : ""}</td><td>${fmt(b.distance)}</td>${shown.map(q => `<td>${fmt(b[q], 4)}</td>`).join("")}<td>${esc((b.track_ids || []).join(", "))}</td></tr>`;
       }).join("");
       return `<p class="muted">One row per atom pair, periodic image, and frame for each feature tied to exactly two atoms, such as a critic2 bond critical point or a LOBSTER bond; features on one pair and image are joined. Atoms are 0-based POSCAR indices. Distance is the minimum image unless the feature names a lattice translation. Field and Laplacian are critic2's values at the critical point in its units; ICOHP is in eV. Rows begin or end where no feature ties a pair, so a bond that forms or breaks, or a critical point that moves to another pair, starts or stops rows; rows are never joined across pairs, although one feature track can cross several.</p><div class="scroll"><table><thead><tr><th>Atoms</th><th>Frame</th><th>Distance (Å)</th>${shown.map(q => `<th>${heads[q]}</th>`).join("")}<th>Tracks</th></tr></thead><tbody>${body}</tbody></table></div>`;

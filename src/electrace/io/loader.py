@@ -10,6 +10,7 @@ from electrace.models import Frame, Sequence
 
 from .descriptors import (
     SPIN_DESCRIPTOR,
+    DescriptorDocument,
     DescriptorError,
     attach_descriptors,
     attach_net_charges,
@@ -81,6 +82,23 @@ def _spin_candidates(
     return _unique_paths(candidates)
 
 
+def _frame_evidence(
+    paths: Iterable[Path], documents: Iterable[DescriptorDocument]
+) -> dict[tuple[str, str | None], tuple[str, ...]]:
+    """Return the features of one frame by the output that holds them.
+
+    An output is a producer and, for a native file, its name, so LOBSTER's two lists
+    count separately. Other names can vary from frame to frame, as ``00.json`` does.
+    """
+
+    evidence: dict[tuple[str, str | None], tuple[str, ...]] = {}
+    for path, document in zip(paths, documents, strict=True):
+        name = path.name if path.name in _NATIVE_DESCRIPTOR_FILENAMES else None
+        held = evidence.get((document.producer, name), ())
+        evidence[(document.producer, name)] = (*held, *(item.id for item in document.features))
+    return evidence
+
+
 def load_sequence(
     path: str | Path,
     *,
@@ -121,6 +139,7 @@ def load_sequence(
     if descriptor_source == "auto":
         descriptor_source = "local" if descriptor_dir is None else "external"
     frames: list[Frame] = []
+    evidence: list[dict[tuple[str, str | None], tuple[str, ...]]] = []
     for source in discovered.frames:
         metadata = {
             "path_root": str(discovered.root),
@@ -147,6 +166,7 @@ def load_sequence(
             descriptor_source=descriptor_source,
         )
         documents = [load_descriptor(candidate, frame=frame) for candidate in descriptor_paths]
+        evidence.append(_frame_evidence(descriptor_paths, documents))
         if documents:
             frame = attach_descriptors(frame, documents)
             frame.metadata["descriptor_sources"] = list(map(str, descriptor_paths))
@@ -165,6 +185,7 @@ def load_sequence(
             "source_root": str(root),
             "series_kind": discovered.kind,
             "discovery_warnings": list(discovered.warnings),
+            "descriptor_evidence": evidence,
         },
     )
 

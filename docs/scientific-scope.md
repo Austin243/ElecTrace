@@ -56,6 +56,12 @@ spread and largest step of each quantity. It applies no threshold, creates no
 events, and inherits the frame sampling and feature matching; a track that starts or
 ends mid-path covers only that segment.
 
+A frame without a producer's output says nothing about that producer's features, so
+ElecTrace does not report them as dying or being born there. It also does not follow
+them across the frame: nothing joins their tracks on either side of it, and a real
+change within the gap goes unreported. Compare the frames around a gap yourself, or run
+the missing analysis.
+
 A bond row records that a feature ties two atoms in a sampled frame; it is not a
 bond test. LOBSTER lists every pair within its configured distance range, so a
 LOBSTER row can continue where no critical point exists. A row that begins or ends
