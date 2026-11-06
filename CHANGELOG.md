@@ -178,6 +178,12 @@
 
 ### Changed
 
+- Without SciPy, `analyze` on a 288-atom band takes about 8 s rather than about 400 s,
+  because the bundled solver skips work that cannot change its choice. Assignments
+  were the same in every comparison at the costs a run uses. `analysis.json` is
+  streamed to disk, which lowers peak memory by about a quarter to a third on that
+  band, and garbage collection runs less often, which saves about a seventh of the CPU
+  time. Outputs are unchanged.
 - Removed about 2,570 lines of source that repeated checks or forwarded calls through
   extra layers. Commands, options, output formats, and file formats are unchanged.
   About 90 public Python names are gone, mostly package re-exports such as
