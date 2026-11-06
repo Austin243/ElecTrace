@@ -178,6 +178,12 @@
 
 ### Changed
 
+- Removed about 2,570 lines of source that repeated checks or forwarded calls through
+  extra layers. Commands, options, output formats, and file formats are unchanged.
+  About 90 public Python names are gone, mostly package re-exports such as
+  `electrace.plugins.DEFAULT_REGISTRY`, and some functions and dataclasses lost
+  parameters or validation that no command reaches. The CLI and its files are the
+  documented interface.
 - Matching is much faster for large cells; assignments, confidences, diagnostics,
   events, and outputs are unchanged. Only pairs that can match are scored: a
   vectorized lower bound on the minimum-image distance skips pairs beyond the
