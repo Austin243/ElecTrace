@@ -99,10 +99,23 @@ def test_bond_id_with_an_atom_absent_from_a_frame_stops_cleanly(
     assert not isinstance(result.exception, KeyError)
 
 
-def test_record_lacking_a_field_stops_cleanly(
-    tmp_path: Path, demo_analysis: dict[str, Any]
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        (lambda analysis: analysis["bonds"][0].pop("bond_id"), "bond_id"),
+        (lambda analysis: analysis["bonds"][0].pop("frame"), "frame"),
+        (lambda analysis: analysis["events"][0].pop("frame_after"), "frame_after"),
+        (lambda analysis: analysis["bonds"].__setitem__(0, "not a row"), "string indices"),
+        (lambda analysis: analysis["events"].__setitem__(0, 7), "not subscriptable"),
+    ],
+)
+def test_damaged_record_stops_cleanly(
+    tmp_path: Path,
+    demo_analysis: dict[str, Any],
+    damage: Callable[[dict[str, Any]], object],
+    message: str,
 ) -> None:
-    del demo_analysis["bonds"][0]["bond_id"]
+    damage(demo_analysis)
     path = tmp_path / "analysis.json"
     path.write_text(json.dumps(demo_analysis), encoding="utf-8")
 
@@ -111,5 +124,6 @@ def test_record_lacking_a_field_stops_cleanly(
     )
 
     assert result.exit_code == 2
-    assert "bond_id" in Text.from_ansi(result.output).plain
-    assert not isinstance(result.exception, KeyError)
+    assert message in Text.from_ansi(result.output).plain
+    assert isinstance(result.exception, SystemExit)
+    assert list(tmp_path.glob("figure*")) == []

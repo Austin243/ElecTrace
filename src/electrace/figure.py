@@ -471,12 +471,12 @@ def _check_record_frames(analysis: Mapping[str, Any], position: Mapping[int, int
 
     barrier = analysis.get("barrier")
     records = (
-        ("a bond row", [row.get("frame") for row in analysis.get("bonds") or []]),
+        ("a bond row", [row["frame"] for row in analysis.get("bonds") or []]),
         ("the barrier record", barrier.get("frames", []) if isinstance(barrier, Mapping) else []),
         (
             "an event",
             [
-                event.get(key)
+                event[key]
                 for event in analysis.get("events", [])
                 for key in ("frame_before", "frame_after")
             ],

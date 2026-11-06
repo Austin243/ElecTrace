@@ -1,4 +1,7 @@
+import shutil
 from pathlib import Path
+
+import yaml
 
 from electrace.workflow.collection import analyze_collected_workflow, collect_workflow_outputs
 from electrace.workflow.operations import run_staged_workflow
@@ -91,3 +94,37 @@ def test_collected_analysis_keeps_the_staged_order_despite_outcar_stress(
 
     assert [frame["label"] for frame in analysis["frames"]] == ["000000-00", "000001-01"]
     assert analysis["project"]["series_kind"] == "static"
+
+
+def test_workflow_named_by_pressure_stays_a_pressure_series(tmp_path, workflow_manifest):
+    """The counterexample: "ordered" in the collected config does not lose a pressure series."""
+
+    bader = _executable(
+        tmp_path / "bader.py",
+        "from pathlib import Path\n"
+        "Path('ACF.dat').write_text('# X Y Z CHARGE MIN DIST ATOMIC VOL\\n1 0 0 0 1.0 0 10\\n')\n",
+    )
+    manifest = workflow_manifest(
+        executables={"bader": str(bader)},
+        steps=[
+            {
+                "id": "charges",
+                "kind": "bader",
+                "executable": "bader",
+                "options": {"input_links": {"CHGCAR": "source:structure"}},
+            }
+        ],
+    )
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payload["project"]["series_kind"] = "pressure"
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    shutil.move(tmp_path / "images/00", tmp_path / "images/5GPa")
+    shutil.move(tmp_path / "images/01", tmp_path / "images/10GPa")
+
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    analysis = analyze_collected_workflow(manifest).analysis
+
+    assert [frame["label"] for frame in analysis["frames"]] == ["000000-5GPa", "000001-10GPa"]
+    assert analysis["project"]["series_kind"] == "pressure"
+    assert analysis["barrier"]["frames"] == []
