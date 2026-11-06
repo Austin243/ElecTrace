@@ -2,6 +2,7 @@ import shutil
 
 import pytest
 import yaml
+from rich.text import Text
 from typer.testing import CliRunner
 
 from electrace.cli import app
@@ -313,5 +314,5 @@ def test_stage_force_on_the_command_line_after_a_local_run(tmp_path, workflow_ma
     assert replaced.exit_code == 0, replaced.output
     assert not any(path.exists() for path in density)
 
-    help_text = " ".join(runner.invoke(app, ["workflow", "stage", "--help"]).output.split())
+    help_text = Text.from_ansi(runner.invoke(app, ["workflow", "stage", "--help"]).output).plain
     assert "--discard-results" in help_text

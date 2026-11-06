@@ -29,7 +29,7 @@ Events compare adjacent frames, so the frame order decides what is reported. `an
 prints the order it used, and `[project] series_kind` sets it:
 
 | `series_kind` | Frame order | Series kind in the results |
-|---|---|---|
+| --- | --- | --- |
 | `neb` | numeric directories, by number; other names stop with an error | `neb` |
 | `ordered` | natural order of the directory names, so `image_2` before `image_10` | `pressure` when every name states one, otherwise `static` |
 | `static` | the same | `static` |
