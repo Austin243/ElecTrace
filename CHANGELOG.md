@@ -279,3 +279,6 @@ These change results on inputs that used to run without complaint.
   tags, continuation lines, quoted values, and comments stay as written. Lines holding
   one statement come out as before. Workflows staged earlier from templates with
   semicolons or repeated tags should have their staged `INCAR` files checked.
+- A stray numeric directory such as `20261105123000` under a NEB root now stops with the
+  usual "not contiguous" error instead of an uncaught `MemoryError` or `OverflowError`.
+  Gaps of more than 100 images are given as ranges.

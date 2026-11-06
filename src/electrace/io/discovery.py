@@ -51,6 +51,7 @@ class DiscoveredPath:
 
 
 _NUMERIC_DIRECTORY = re.compile(r"^[0-9]+$")
+_MOST_MISSING_LISTED = 100
 _PRESSURE_PATTERNS = (
     re.compile(
         r"(?i)(?<![a-z0-9])(?:p(?:ressure)?[_=-]?)?"
@@ -148,6 +149,19 @@ def pressure_from_outcar(source: Path) -> float | None:
     return last
 
 
+def _check_contiguous(indices: list[int]) -> None:
+    """Stop on missing image numbers, without building a range a stray number makes huge."""
+
+    gaps = [(low + 1, high - 1) for low, high in pairwise(indices) if high - low > 1]
+    if not gaps:
+        return
+    if sum(high - low + 1 for low, high in gaps) <= _MOST_MISSING_LISTED:
+        missing = str([index for low, high in gaps for index in range(low, high + 1)])
+    else:
+        missing = ", ".join(f"{low} to {high}" for low, high in gaps)
+    raise DiscoveryError(f"NEB image indices are not contiguous; missing {missing}")
+
+
 def discover_neb(
     root: str | Path,
     *,
@@ -204,10 +218,7 @@ def discover_neb(
         raise DiscoveryError("a NEB path requires at least two usable numeric image directories")
     ordered_indices = sorted(by_index)
     if strict:
-        expected = list(range(ordered_indices[0], ordered_indices[-1] + 1))
-        if ordered_indices != expected:
-            missing = sorted(set(expected) - set(ordered_indices))
-            raise DiscoveryError(f"NEB image indices are not contiguous; missing {missing}")
+        _check_contiguous(ordered_indices)
 
     frames = tuple(
         _frame_source(canonical_index, *by_index[directory_index], directory_index=directory_index)

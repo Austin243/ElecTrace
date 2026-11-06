@@ -255,6 +255,36 @@ def test_neb_refuses_other_names_and_points_to_ordered(tmp_path: Path) -> None:
         discover_path(tmp_path, mode="neb")
 
 
+@pytest.mark.parametrize("stray", ["20261105123000", "1" + "0" * 30])
+def test_stray_numeric_folder_gives_a_clean_error(tmp_path: Path, stray: str) -> None:
+    for label in ("00", "01", "02", stray):
+        _write_frame(tmp_path / label)
+
+    with pytest.raises(DiscoveryError) as caught:
+        discover_path(tmp_path)
+
+    assert str(caught.value) == (
+        f"NEB image indices are not contiguous; missing 3 to {int(stray) - 1}"
+    )
+
+
+def test_small_gap_lists_every_missing_image(tmp_path: Path) -> None:
+    for label in ("00", "01", "05", "07"):
+        _write_frame(tmp_path / label)
+
+    with pytest.raises(DiscoveryError) as caught:
+        discover_path(tmp_path)
+
+    assert str(caught.value) == "NEB image indices are not contiguous; missing [2, 3, 4, 6]"
+
+
+def test_permissive_discovery_keeps_a_stray_numeric_folder(tmp_path: Path) -> None:
+    for label in ("00", "01", "20261105123000"):
+        _write_frame(tmp_path / label)
+
+    assert _labels(discover_path(tmp_path, strict=False)) == ["00", "01", "20261105123000"]
+
+
 def test_canonical_descriptor_round_trip_and_validation(tmp_path: Path) -> None:
     document = descriptor_from_dict(_canonical_feature())
     loaded = load_descriptor(dump_descriptor(document, tmp_path / "features.json"))
