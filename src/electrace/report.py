@@ -233,7 +233,6 @@ _HTML = """<!doctype html>
     })() : "";
     // Births and deaths at frames without a producer's output are left out of events.
     const gaps = data.missing_descriptors || [];
-    const gapFrames = new Set(gaps.flatMap(g => g.frames || []));
     const gapNote = gaps.map(g => {
       const left = [["death", g.events_left_out?.death], ["birth", g.events_left_out?.birth]].filter(([, n]) => n).map(([kind, n]) => `${n} ${kind}${n === 1 ? "" : "s"}`).join(" and ");
       const output = `${g.producer} output${g.file ? ` ${g.file}` : ""}`;
@@ -329,9 +328,11 @@ _HTML = """<!doctype html>
       const heads = {field: "Field", laplacian: "Laplacian", icohp: "ICOHP (eV)", icobi: "ICOBI"};
       const shown = Object.keys(heads).filter(q => bonds.some(b => b[q] != null));
       // A row begins or ends where the neighboring frame has no row for that bond.
-      // A frame missing a producer's output cannot show that a bond began or ended.
+      // A frame missing the output behind a row cannot show that its bond began or ended.
       const present = new Set(bonds.map(b => `${b.bond_id}@${position(b.frame)}`));
-      const absent = (b, i) => !present.has(`${b.bond_id}@${i}`) && !gapFrames.has(frames[i].index);
+      const producers = new Map(gaps.length ? tracks.map(t => [`${t.frame}@${t.feature_id}`, t.attributes?.descriptor_producer]) : []);
+      const unseen = (b, i) => gaps.some(g => (g.frames || []).includes(frames[i].index) && (b.feature_ids || []).some(id => producers.get(`${b.frame}@${id}`) === g.producer));
+      const absent = (b, i) => !present.has(`${b.bond_id}@${i}`) && !unseen(b, i);
       const last = frames.length - 1;
       const body = bonds.map(b => {
         const i = position(b.frame);

@@ -57,6 +57,13 @@ def test_timeline_labels_each_event_with_its_step() -> None:
     assert "frameLabel(e.frame_before)" in timeline and "frameLabel(e.frame_after)" in timeline
 
 
+def test_bond_marks_consider_only_the_row_features_own_producer() -> None:
+    table = _HTML[_HTML.index("function bondTable()") : _HTML.index('getElementById("bonds")')]
+
+    assert "g.producer" in table
+    assert "descriptor_producer" in table
+
+
 def test_report_says_what_a_missing_descriptor_left_out(tmp_path: Path) -> None:
     document = render_html_report(
         {

@@ -284,6 +284,78 @@ def test_flat_external_descriptors_are_compared_by_producer(tmp_path: Path) -> N
     assert analysis["missing_descriptors"][0]["frame_labels"] == ["02"]
 
 
+def test_changing_file_layout_along_the_path_is_not_a_gap(tmp_path: Path) -> None:
+    """One producer in every frame, under a flat name early and a native name later."""
+
+    root = _frames(tmp_path / "frames")
+    for label in LABELS:
+        (root / label / "ACF.dat").unlink()
+    external = tmp_path / "external"
+    external.mkdir()
+    for label in ("00", "01"):
+        _tool(external, "kept", "lost", name=f"{label}.json")
+    for label in ("02", "03", "04"):
+        (external / label).mkdir()
+        _tool(external / label, "kept", name="critic2.features.json")
+
+    analysis = _analyze(root, descriptor_dir=str(external))
+
+    assert "missing_descriptors" not in analysis
+    assert _events(analysis, "death") == [("death", 1, 2, "lost")]
+    assert _warnings(analysis, "is missing from") == []
+
+
+def test_warning_names_the_native_file_other_frames_used(tmp_path: Path) -> None:
+    root = _frames(tmp_path / "frames")
+    for label in ("00", "01", "03", "04"):
+        _tool(root / label, "kept", name="critic2.features.json")
+
+    analysis = _analyze(root)
+
+    assert analysis["missing_descriptors"][0]["producer"] == "tool"
+    assert analysis["missing_descriptors"][0]["file"] == "critic2.features.json"
+
+
+def test_death_before_a_gap_is_censored_like_a_death_before_the_path_ends(tmp_path: Path) -> None:
+    gapped = _frames(tmp_path / "gapped")
+    for label, features in (
+        ("00", ("kept", "lost")),
+        ("01", ("kept", "lost")),
+        ("02", ("kept",)),
+        ("04", ("kept",)),
+    ):
+        _tool(gapped / label, *features)
+
+    death = next(item for item in _analyze(gapped)["events"] if item["source_ids"] == ["lost"])
+
+    assert death["type"] == "death"
+    assert death["persistence_status"] == "right_censored"
+    assert death["confidence"] == pytest.approx(0.75 * 0.85)
+    assert death["end_frame"] == 2
+    assert death["persistence"] == 1
+
+
+def test_death_with_frames_to_confirm_it_stays_confirmed(tmp_path: Path) -> None:
+    """The counterexample: with the producer present afterwards, the death is confirmed."""
+
+    root = _frames(tmp_path / "frames")
+    for label, features in (
+        ("00", ("kept", "lost")),
+        ("01", ("kept", "lost")),
+        ("02", ("kept",)),
+        ("03", ("kept",)),
+        ("04", ("kept",)),
+    ):
+        _tool(root / label, *features)
+
+    death = next(item for item in _analyze(root)["events"] if item["source_ids"] == ["lost"])
+
+    assert death["persistence_status"] == "confirmed"
+    assert death["confidence"] == pytest.approx(0.75)
+    assert death["end_frame"] == 4
+    assert death["persistence"] == 3
+
+
 def test_producer_absent_from_every_frame_is_not_a_gap(tmp_path: Path) -> None:
     root = _frames(tmp_path / "frames", charges={"02": 1.5})
 

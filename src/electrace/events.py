@@ -433,13 +433,19 @@ def _unseen_source(
 def _observable_end(
     event: Event, transition_index: int, last: int, source_of: list[dict[str, _Source]], gaps: _Gaps
 ) -> int:
-    """Return the last frame position where an event's target features can be followed."""
+    """Return the last frame position where an event's outcome can be followed.
+
+    The outcome is its target features or, for a death, the absence of its source feature.
+    """
 
     after = transition_index + 1
+    followed = [(after, item) for item in event.target_ids] or [
+        (transition_index, item) for item in event.source_ids
+    ]
     later = [
         position
-        for target in event.target_ids
-        for position in gaps.get(source_of[after].get(str(target)), ())
+        for frame, item in followed
+        for position in gaps.get(source_of[frame].get(str(item)), ())
         if position > after
     ]
     return min(later) - 1 if later else last
@@ -462,7 +468,7 @@ def _next_lineage(ids: set[str], result: MatchResult) -> set[str]:
 def _consecutive_persistence(
     event: Event,
     transition_index: int,
-    frames: TypingSequence[Frame],
+    observable_end: int,
     matches: TypingSequence[MatchResult],
 ) -> tuple[int, int]:
     """Count consecutive frames with a surviving target or absent source lineage."""
@@ -481,7 +487,7 @@ def _consecutive_persistence(
 
     # Feature identifiers are frame-local, so a later reuse of the same label is
     # not evidence that the ended lineage reappeared.
-    return len(frames) - transition_index - 1, len(frames) - 1
+    return observable_end - transition_index, observable_end
 
 
 def _annotate_persistence(
@@ -499,11 +505,11 @@ def _annotate_persistence(
     annotated: list[Event] = []
     for event in events:
         transition_index = transition_by_frames[event.frame_before, event.frame_after]
-        persistence, end_position = _consecutive_persistence(
-            event, transition_index, frames, matches
-        )
         # A frame missing the features' output ends what can be observed, as the path's end does.
         observable_end = _observable_end(event, transition_index, len(frames) - 1, source_of, gaps)
+        persistence, end_position = _consecutive_persistence(
+            event, transition_index, observable_end, matches
+        )
         maximum_observable = observable_end - transition_index
         metadata = dict(event.metadata)
         evidence = dict(event.evidence)

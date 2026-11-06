@@ -10,7 +10,6 @@ from electrace.models import Frame, Sequence
 
 from .descriptors import (
     SPIN_DESCRIPTOR,
-    DescriptorDocument,
     DescriptorError,
     attach_descriptors,
     attach_net_charges,
@@ -30,6 +29,7 @@ _NATIVE_DESCRIPTOR_FILENAMES = (
     "DDEC6_even_tempered_net_atomic_charges.xyz",
     "ACF.dat",
 )
+_SEPARATE_LISTS = frozenset({"ICOHPLIST.lobster", "ICOBILIST.lobster"})
 
 
 def _descriptor_filenames(name: str) -> tuple[str, ...]:
@@ -82,20 +82,35 @@ def _spin_candidates(
     return _unique_paths(candidates)
 
 
-def _frame_evidence(
-    paths: Iterable[Path], documents: Iterable[DescriptorDocument]
-) -> dict[tuple[str, str | None], tuple[str, ...]]:
-    """Return the features of one frame by the output that holds them.
+def _descriptor_evidence(
+    documents_by_frame: Iterable[list[tuple[str, str, tuple[str, ...]]]],
+) -> list[dict[tuple[str, str | None], tuple[str, ...]]]:
+    """Return each frame's feature IDs by descriptor output, from (producer, file, IDs).
 
-    An output is a producer and, for a native file, its name, so LOBSTER's two lists
-    count separately. Other names can vary from frame to frame, as ``00.json`` does.
+    An output is a producer, whatever its files are called, because frames can use
+    different layouts (``00.json``, ``00/critic2.features.json``). Only LOBSTER's two
+    lists count separately, since one can exist without the other. An output is named by
+    its native file when the frames use just one.
     """
 
-    evidence: dict[tuple[str, str | None], tuple[str, ...]] = {}
-    for path, document in zip(paths, documents, strict=True):
-        name = path.name if path.name in _NATIVE_DESCRIPTOR_FILENAMES else None
-        held = evidence.get((document.producer, name), ())
-        evidence[(document.producer, name)] = (*held, *(item.id for item in document.features))
+    frames = list(documents_by_frame)
+    natives: dict[tuple[str, str], set[str]] = {}
+
+    def output(producer: str, name: str) -> tuple[str, str]:
+        return producer, name if name in _SEPARATE_LISTS else ""
+
+    for documents in frames:
+        for producer, name, _ in documents:
+            if name in _NATIVE_DESCRIPTOR_FILENAMES:
+                natives.setdefault(output(producer, name), set()).add(name)
+    evidence: list[dict[tuple[str, str | None], tuple[str, ...]]] = []
+    for documents in frames:
+        held: dict[tuple[str, str | None], tuple[str, ...]] = {}
+        for producer, name, features in documents:
+            names = natives.get(output(producer, name), set())
+            key = (producer, next(iter(names)) if len(names) == 1 else None)
+            held[key] = (*held.get(key, ()), *features)
+        evidence.append(held)
     return evidence
 
 
@@ -139,7 +154,7 @@ def load_sequence(
     if descriptor_source == "auto":
         descriptor_source = "local" if descriptor_dir is None else "external"
     frames: list[Frame] = []
-    evidence: list[dict[tuple[str, str | None], tuple[str, ...]]] = []
+    loaded: list[list[tuple[str, str, tuple[str, ...]]]] = []
     for source in discovered.frames:
         metadata = {
             "path_root": str(discovered.root),
@@ -166,7 +181,12 @@ def load_sequence(
             descriptor_source=descriptor_source,
         )
         documents = [load_descriptor(candidate, frame=frame) for candidate in descriptor_paths]
-        evidence.append(_frame_evidence(descriptor_paths, documents))
+        loaded.append(
+            [
+                (document.producer, candidate.name, tuple(item.id for item in document.features))
+                for candidate, document in zip(descriptor_paths, documents, strict=True)
+            ]
+        )
         if documents:
             frame = attach_descriptors(frame, documents)
             frame.metadata["descriptor_sources"] = list(map(str, descriptor_paths))
@@ -185,7 +205,7 @@ def load_sequence(
             "source_root": str(root),
             "series_kind": discovered.kind,
             "discovery_warnings": list(discovered.warnings),
-            "descriptor_evidence": evidence,
+            "descriptor_evidence": _descriptor_evidence(loaded),
         },
     )
 
