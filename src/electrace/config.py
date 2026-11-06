@@ -447,7 +447,11 @@ def load_config(path: str | Path) -> ElecTraceConfig:
 DEFAULT_CONFIG = """# ElecTrace 0.1 configuration
 [project]
 name = "ElecTrace analysis"
-series_kind = "auto"  # auto, neb, pressure, or ordered
+# How frames are ordered. neb: numeric directories, by number. ordered or static: the
+# natural order of the directory names. pressure: by pressure, from each name or OUTCAR.
+# auto: neb for numeric directories, pressure when every name states one (5GPa, p20),
+# otherwise the natural order of the names. An OUTCAR's stress alone never sorts frames.
+series_kind = "auto"
 
 [inputs]
 root = "."

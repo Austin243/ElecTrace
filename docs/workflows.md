@@ -25,6 +25,23 @@ critic2 `CPREPORT` JSON, LOBSTER integrated bond lists, Chargemol/DDEC charges, 
 per-atom spin populations from spin-polarized runs.
 `analysis.json` is the canonical result; CSV and HTML files are derived views.
 
+Events compare adjacent frames, so the frame order decides what is reported. `analyze`
+prints the order it used, and `[project] series_kind` sets it:
+
+| `series_kind` | Frame order | Series kind in the results |
+|---|---|---|
+| `neb` | numeric directories, by number; other names stop with an error | `neb` |
+| `ordered` | natural order of the directory names, so `image_2` before `image_10` | `pressure` when every name states one, otherwise `static` |
+| `static` | the same | `static` |
+| `pressure` | by pressure, from each name or else the last `external pressure` in `OUTCAR`; a frame without one stops with an error | `pressure` |
+| `auto` | as `neb` for two or more numeric directories; by pressure when every name states one (`5GPa`, `p20`, `100kbar`); otherwise the natural order of the names | as that order |
+
+An `OUTCAR`'s stress alone never sorts frames, because every VASP run prints one. A
+warning says when the order differs from the names' order, and when numbers in the
+names do not set it: `IS`, `TS`, and `FS` come out as `FS`, `IS`, `TS`, and no rule can
+tell. Name or link such directories `00`, `01`, ... to set the order. A pressure series
+places no event on a barrier.
+
 By default, atoms are re-matched at every step by element and minimum-image distance
 (`[matching] atom_identity = "geometric"`), with `max_atom_displacement` as the
 motion cutoff. For NEB images and other paths that keep one atom order, set

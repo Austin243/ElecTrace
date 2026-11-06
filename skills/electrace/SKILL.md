@@ -25,6 +25,11 @@ electrace analyze electrace.toml --json
 Use `analysis.json` as the canonical result. Report warnings, missing frames, and
 provenance. Do not silently add `--permissive` to relax frame discovery.
 
+Check the frame order that `analyze` prints against the path, since every event depends
+on it. Frames keep the natural order of their directory names; a warning says when
+numbers in the names do not set that order (`IS`, `TS`, `FS`), and only
+`series_kind = "pressure"` sorts frames by `OUTCAR` stress.
+
 For NEB images and other paths that keep one atom order, set
 `[matching] atom_identity = "index"`; the default `"geometric"` re-matches atoms by
 element and distance at every step. Events compare adjacent frames only, so also read

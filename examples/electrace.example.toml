@@ -1,7 +1,9 @@
 # ElecTrace example for an ordered VASP NEB or static pressure series.
 [project]
 name = "Electronic rearrangement along a VASP path"
-series_kind = "auto" # auto, neb, pressure, or static
+# neb, ordered, static, or pressure; auto picks neb for numeric directories, pressure when
+# every name states one, and otherwise the natural order of the names.
+series_kind = "auto"
 
 [inputs]
 root = "."

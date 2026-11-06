@@ -55,3 +55,39 @@ def test_stage_run_collect_analyze_end_to_end(tmp_path, workflow_manifest):
     assert len(list(collected.descriptor_root.rglob("ACF.dat"))) == 2
     assert len(artifacts.analysis["frames"]) == 2
     assert (artifacts.output_directory / "analysis.json").is_file()
+
+
+def test_collected_analysis_keeps_the_staged_order_despite_outcar_stress(
+    tmp_path, workflow_manifest
+):
+    # An OUTCAR is collected as the ZVAL source when a frame has no POTCAR, and its stress
+    # must not sort the collected frames.
+    bader = _executable(
+        tmp_path / "bader.py",
+        "from pathlib import Path\n"
+        "Path('ACF.dat').write_text('# X Y Z CHARGE MIN DIST ATOMIC VOL\\n1 0 0 0 1.0 0 10\\n')\n",
+    )
+    manifest = workflow_manifest(
+        executables={"bader": str(bader)},
+        steps=[
+            {
+                "id": "charges",
+                "kind": "bader",
+                "executable": "bader",
+                "options": {
+                    "input_links": {"CHGCAR": "source:structure"},
+                },
+            }
+        ],
+    )
+    for label, stress in (("00", 50.0), ("01", -50.0)):
+        (tmp_path / "images" / label / "OUTCAR").write_text(
+            f"  external pressure = {stress} kB  Pullay stress = 0.00 kB\n", encoding="utf-8"
+        )
+
+    stage_workflow(manifest)
+    assert all(result.succeeded for result in run_staged_workflow(manifest, confirmed=True))
+    analysis = analyze_collected_workflow(manifest).analysis
+
+    assert [frame["label"] for frame in analysis["frames"]] == ["000000-00", "000001-01"]
+    assert analysis["project"]["series_kind"] == "static"

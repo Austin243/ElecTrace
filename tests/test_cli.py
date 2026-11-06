@@ -179,6 +179,50 @@ structure_name = "CONTCAR\\nEND"
     assert "CPREPORT" not in result.output
 
 
+def _named_frames(root: Path, labels: tuple[str, ...]) -> Path:
+    for label in labels:
+        frame = root / "frames" / label
+        frame.mkdir(parents=True)
+        (frame / "POSCAR").write_text(
+            "H\n1\n5 0 0\n0 5 0\n0 0 5\nH\n1\nDirect\n0 0 0\n", encoding="utf-8"
+        )
+        (frame / "ACF.dat").write_text("1 0 0 0 1.0 0 10\n", encoding="utf-8")
+    config = root / "electrace.toml"
+    assert (
+        runner.invoke(app, ["init", str(config), "--images", str(root / "frames")]).exit_code == 0
+    )
+    return config
+
+
+def test_analyze_and_inspect_show_a_frame_order_that_may_be_wrong(tmp_path: Path) -> None:
+    config = _named_frames(tmp_path, ("IS", "TS", "FS"))
+
+    analyzed = runner.invoke(app, ["analyze", str(config)])
+    assert analyzed.exit_code == 0, analyzed.output
+    text = " ".join(_plain(analyzed.output).split())
+    assert "Frame order: FS, IS, TS" in text
+    assert "Warning: Frames are in the natural order of their names (FS, IS, TS)" in text
+
+    as_json = runner.invoke(app, ["analyze", str(config), "--force", "--json"])
+    assert any("natural order" in item for item in json.loads(as_json.stdout)["warnings"])
+
+    inspected = runner.invoke(app, ["inspect", str(tmp_path / "frames")])
+    assert "Warning: Frames are in the natural order" in " ".join(_plain(inspected.output).split())
+    as_json = runner.invoke(app, ["inspect", str(tmp_path / "frames"), "--json"])
+    assert any("natural order" in item for item in json.loads(as_json.stdout)["warnings"])
+
+
+def test_numbered_frames_get_the_order_line_and_no_order_warning(tmp_path: Path) -> None:
+    config = _named_frames(tmp_path, ("image_1", "image_2", "image_10"))
+
+    analyzed = runner.invoke(app, ["analyze", str(config)])
+
+    assert analyzed.exit_code == 0, analyzed.output
+    text = " ".join(_plain(analyzed.output).split())
+    assert "Frame order: image_1, image_2, image_10" in text
+    assert "natural order" not in text
+
+
 def test_parse_errors_use_normal_cli_output() -> None:
     result = runner.invoke(app, ["doctor", "--unknown", "--json"])
 

@@ -234,3 +234,26 @@
   HDF5-wrapped JSON, exhaustive alternative-assignment enumeration, and topology-
   specific hysteresis.
 - Supported and tested Python versions are 3.11–3.13.
+
+### Fixed
+
+These change results on inputs that used to run without complaint.
+
+- Frame order no longer changes silently. Frames keep the natural order of their
+  directory names unless `series_kind = "pressure"` asks for pressure order or every
+  name states a pressure. Before, a series with an `external pressure` line in every
+  `OUTCAR` was sorted by that residual stress and called a pressure series, which also
+  removed its barrier labels. This happened under `auto` for non-numeric names, under
+  `static` and `ordered` for any names, and in `workflow analyze` whenever an `OUTCAR`
+  was collected as the ZVAL source, whatever the manifest said. On the HCN example's
+  frames named `image_0` to `image_6`, with stresses added, the order was 1, 6, 5, 0,
+  4, 2, 3, with 19 events and no barrier; it is now 0 to 6, with 10 events and the
+  barrier at frame 3, as with numeric names. `analyze` and `workflow analyze` print
+  the frame order and the text of every warning, and a warning says when the order
+  differs from the names' order or when numbers in the names do not set it (`IS`,
+  `TS`, `FS` still come out as `FS`, `IS`, `TS`; number such directories to set the
+  order). `workflow validate` and `workflow stage` give the same warning. A series
+  whose pressures appear only in `OUTCAR` now needs `series_kind = "pressure"`, and a
+  series named by pressure stays one under `auto` and `ordered`. Numeric directories
+  under `auto` or `neb` are unaffected. `discover_static_series` takes `mode` in place
+  of `require_pressure`.

@@ -81,7 +81,7 @@ def _spin_candidates(
     return _unique_paths(candidates)
 
 
-def load_path(
+def load_sequence(
     path: str | Path,
     *,
     descriptor_dir: Path | None = None,
@@ -92,8 +92,8 @@ def load_path(
     prefer_contcar: bool = True,
     structure_name: str = "CONTCAR",
     fallback_structure_name: str = "POSCAR",
-) -> list[Frame]:
-    """Discover and load a VASP path into ordered core ``Frame`` objects.
+) -> Sequence:
+    """Discover and load a VASP path into an ordered core ``Sequence``.
 
     ``path`` may contain numeric VASP NEB images or named static/pressure
     calculation directories. ``structure_name`` and ``fallback_structure_name`` must be
@@ -109,8 +109,9 @@ def load_path(
     external science tools are never run while loading.
     """
 
+    root = Path(path).expanduser().resolve()
     discovered = discover_path(
-        path,
+        root,
         mode=mode,
         strict=strict,
         prefer_contcar=prefer_contcar,
@@ -158,15 +159,17 @@ def load_path(
         if spin_paths:
             frame = attach_spin_populations(frame, spin_paths[0])
         frames.append(attach_net_charges(frame, source.directory))
-    return frames
-
-
-def load_sequence(path: str | Path, **options: Any) -> Sequence:
-    """Load a path with :func:`load_path` and wrap it in the core ``Sequence`` model."""
-
-    root = Path(path).expanduser().resolve()
-    frames = load_path(root, **options)
     return Sequence(
         frames=tuple(frames),
-        metadata={"source_root": str(root), "series_kind": frames[0].metadata["series_kind"]},
+        metadata={
+            "source_root": str(root),
+            "series_kind": discovered.kind,
+            "discovery_warnings": list(discovered.warnings),
+        },
     )
+
+
+def load_path(path: str | Path, **options: Any) -> list[Frame]:
+    """Load a path with :func:`load_sequence` and return its frames."""
+
+    return list(load_sequence(path, **options).frames)

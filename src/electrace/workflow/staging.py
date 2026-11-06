@@ -128,6 +128,7 @@ class StagedWorkflow:
     workspace: Path
     frames: tuple[StagedFrame, ...]
     jobs: tuple[JobSpec, ...]
+    warnings: tuple[str, ...] = ()
 
     @property
     def record_path(self) -> Path:
@@ -609,15 +610,18 @@ def load_project(manifest_path: str | Path) -> tuple[Path, WorkflowManifest, Pat
 
 def _selected_frames(
     manifest: WorkflowManifest, source_root: Path, workspace: Path
-) -> tuple[StagedFrame, ...]:
-    sources = discover_path(
+) -> tuple[tuple[StagedFrame, ...], tuple[str, ...]]:
+    """Return the selected frames and any warning about the order they were found in."""
+
+    discovered = discover_path(
         source_root,
         mode=manifest.project.series_kind,
         structure_name=manifest.project.structure,
         fallback_structure_name=manifest.project.fallback,
-    ).frames
+    )
+    sources = discovered.frames
     selected = (sources[index] for index in parse_frame_selection(manifest.frames, len(sources)))
-    return tuple(
+    frames = tuple(
         StagedFrame(
             source.index,
             source.label,
@@ -629,6 +633,7 @@ def _selected_frames(
         )
         for order, source in enumerate(selected)
     )
+    return frames, discovered.warnings
 
 
 def _workspace_is_managed(path: Path) -> bool:
@@ -667,7 +672,7 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
         raise FileNotFoundError(f"workflow project root is not a directory: {source_root}")
     if workspace.exists() and (not overwrite or not _workspace_is_managed(workspace)):
         raise ValueError(f"refusing existing or unmarked workflow workspace: {workspace}")
-    frames = _selected_frames(manifest, source_root, workspace)
+    frames, warnings = _selected_frames(manifest, source_root, workspace)
     templates = {step.id: _template_files(step, source_manifest.parent) for step in manifest.steps}
     for step in manifest.steps:
         _check_vasp_species(step, templates[step.id], frames)
@@ -685,7 +690,14 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
                 jobs.append(_rebase_job(job, temporary, workspace))
                 prior[step.id] = step
         result = StagedWorkflow(
-            manifest, source_manifest, manifest_hash, source_root, workspace, frames, tuple(jobs)
+            manifest,
+            source_manifest,
+            manifest_hash,
+            source_root,
+            workspace,
+            frames,
+            tuple(jobs),
+            warnings,
         )
         atomic_write_json(
             temporary / WORKSPACE_RECORD,
@@ -721,7 +733,7 @@ def load_staged_workflow(manifest_path: str | Path) -> StagedWorkflow:
     )
     if recorded != expected:
         raise ValueError("staged workflow no longer matches its manifest")
-    frames = _selected_frames(manifest, source_root, workspace)
+    frames, warnings = _selected_frames(manifest, source_root, workspace)
     jobs = tuple(
         _build_job(
             manifest, source_manifest.parent, frame, step, frame.workspace_directory / step.id
@@ -730,7 +742,7 @@ def load_staged_workflow(manifest_path: str | Path) -> StagedWorkflow:
         for step in manifest.steps
     )
     return StagedWorkflow(
-        manifest, source_manifest, manifest_hash, source_root, workspace, frames, jobs
+        manifest, source_manifest, manifest_hash, source_root, workspace, frames, jobs, warnings
     )
 
 

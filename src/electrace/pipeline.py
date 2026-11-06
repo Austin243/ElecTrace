@@ -614,7 +614,11 @@ def analyze_sequence(
         )
         _summarize_groups(groups)
 
-    warnings = [*descriptor_warnings, *bond_warnings]
+    warnings = [
+        *sequence.metadata.get("discovery_warnings", ()),
+        *descriptor_warnings,
+        *bond_warnings,
+    ]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
     if missing_features:
         warnings.append(

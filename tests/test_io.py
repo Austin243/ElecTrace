@@ -17,6 +17,7 @@ from electrace.io import (
     read_poscar,
     read_vasp_energy,
 )
+from electrace.io.discovery import DiscoveredPath, DiscoveryError, discover_path
 
 
 def _poscar(*, x: float = 0.0, cartesian: bool = False) -> str:
@@ -103,8 +104,155 @@ def test_discovery_orders_neb_and_pressure_series(tmp_path: Path) -> None:
     pressure = tmp_path / "pressure"
     for label in ("p20", "5GPa", "100kbar"):
         _write_frame(pressure / label)
-    series = discover_static_series(pressure, require_pressure=True)
+    series = discover_static_series(pressure, mode="pressure")
     assert [frame.pressure_gpa for frame in series.frames] == [5.0, 10.0, 20.0]
+
+
+def _with_stress(root: Path, labels: list[str], stresses: list[float]) -> None:
+    for label, stress in zip(labels, stresses, strict=True):
+        _write_frame(root / label)
+        (root / label / "OUTCAR").write_text(
+            f"  external pressure = {stress} kB  Pullay stress = 0.00 kB\n", encoding="utf-8"
+        )
+
+
+def _labels(found: DiscoveredPath) -> list[str]:
+    return [frame.label for frame in found.frames]
+
+
+_STRESSES = [12.31, -4.2, 33.1, 58.7, 21.45, 7.02, -1.5]
+
+
+@pytest.mark.parametrize("mode", ["auto", "static", "ordered"])
+def test_outcar_stress_does_not_reorder_named_frames(tmp_path: Path, mode: str) -> None:
+    # Every VASP run prints a residual stress, so it says nothing about the path order.
+    labels = [f"image_{number}" for number in range(7)]
+    _with_stress(tmp_path, labels, _STRESSES)
+
+    found = discover_path(tmp_path, mode=mode)
+
+    assert _labels(found) == labels
+    assert found.kind == "static"
+    assert found.warnings == ()
+    assert found.frames[0].pressure_gpa == pytest.approx(1.231)
+
+
+def test_series_kind_static_keeps_numeric_names_in_order(tmp_path: Path) -> None:
+    labels = [f"{number:02d}" for number in range(7)]
+    _with_stress(tmp_path, labels, _STRESSES)
+
+    found = discover_path(tmp_path, mode="static")
+    assert (_labels(found), found.kind, found.warnings) == (labels, "static", ())
+
+    # The counterexample: numeric names under auto were always a safe NEB.
+    found = discover_path(tmp_path)
+    assert (_labels(found), found.kind, found.warnings) == (labels, "neb", ())
+
+
+def test_explicit_pressure_series_sorts_by_stress_and_says_so(tmp_path: Path) -> None:
+    _with_stress(tmp_path, ["a", "b", "c"], [300.0, 100.0, 200.0])
+
+    found = discover_path(tmp_path, mode="pressure")
+
+    assert _labels(found) == ["b", "c", "a"]
+    assert found.kind == "pressure"
+    assert len(found.warnings) == 1
+    assert "b, c, a" in found.warnings[0] and "a, b, c" in found.warnings[0]
+
+
+def test_explicit_pressure_series_requires_every_pressure(tmp_path: Path) -> None:
+    _with_stress(tmp_path, ["a", "b"], [300.0, 100.0])
+    _write_frame(tmp_path / "c")
+
+    with pytest.raises(DiscoveryError, match="pressure is missing for static frames: c"):
+        discover_path(tmp_path, mode="pressure")
+
+
+def test_names_stating_a_pressure_stay_a_pressure_series(tmp_path: Path) -> None:
+    labels = ["5GPa", "10GPa", "200kbar"]
+    for label in labels:
+        _write_frame(tmp_path / label)
+
+    for mode in ("auto", "pressure"):
+        found = discover_path(tmp_path, mode=mode)
+        assert (_labels(found), found.kind, found.warnings) == (labels, "pressure", ())
+    found = discover_path(tmp_path, mode="ordered")
+    assert (_labels(found), found.kind, found.warnings) == (labels, "pressure", ())
+    found = discover_path(tmp_path, mode="static")
+    assert (_labels(found), found.kind, found.warnings) == (labels, "static", ())
+
+
+def test_pressure_order_that_differs_from_the_names_is_warned(tmp_path: Path) -> None:
+    for label in ("-5GPa", "5GPa", "10GPa"):
+        _write_frame(tmp_path / label)
+
+    found = discover_path(tmp_path)
+    assert _labels(found) == ["-5GPa", "5GPa", "10GPa"]
+    assert found.kind == "pressure"
+    assert len(found.warnings) == 1
+    assert "-5GPa, 5GPa, 10GPa" in found.warnings[0]
+    assert "5GPa, 10GPa, -5GPa" in found.warnings[0]
+
+    # series_kind says which order wins, and the name order is still not set by numbers alone.
+    found = discover_path(tmp_path, mode="ordered")
+    assert _labels(found) == ["5GPa", "10GPa", "-5GPa"]
+    assert found.kind == "pressure"
+    assert len(found.warnings) == 1
+
+
+@pytest.mark.parametrize(
+    ("labels", "order"),
+    [
+        (["IS", "TS", "FS"], ["FS", "IS", "TS"]),
+        (["reactant", "ts", "product"], ["product", "reactant", "ts"]),
+        (["before", "after"], ["after", "before"]),
+        (["img_-1", "img_0", "img_1"], ["img_0", "img_1", "img_-1"]),
+        (["a1", "a2", "b1"], ["a1", "a2", "b1"]),
+        (["strain0.25", "strain0.5", "strain0.75"], ["strain0.5", "strain0.25", "strain0.75"]),
+    ],
+)
+def test_order_that_numbers_do_not_set_is_warned(
+    tmp_path: Path, labels: list[str], order: list[str]
+) -> None:
+    for label in labels:
+        _write_frame(tmp_path / label)
+
+    found = discover_path(tmp_path)
+
+    assert _labels(found) == order
+    assert found.kind == "static"
+    assert len(found.warnings) == 1
+    assert ", ".join(order) in found.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ["image_1", "image_2", "image_10"],
+        ["00_start", "01_ts", "02_end"],
+        ["neb-1", "neb-2", "neb-3"],
+        ["run.1", "run.2", "run.10"],
+        ["strain0.90", "strain0.95", "strain1.00"],
+        ["Image1", "image2"],
+        ["only"],
+    ],
+)
+def test_numbered_names_need_no_order_warning(tmp_path: Path, labels: list[str]) -> None:
+    for label in labels:
+        _write_frame(tmp_path / label)
+
+    found = discover_path(tmp_path)
+
+    assert _labels(found) == labels
+    assert found.warnings == ()
+
+
+def test_neb_refuses_other_names_and_points_to_ordered(tmp_path: Path) -> None:
+    for label in ("image_0", "image_1"):
+        _write_frame(tmp_path / label)
+
+    with pytest.raises(DiscoveryError, match='series_kind = "ordered"'):
+        discover_path(tmp_path, mode="neb")
 
 
 def test_canonical_descriptor_round_trip_and_validation(tmp_path: Path) -> None:
