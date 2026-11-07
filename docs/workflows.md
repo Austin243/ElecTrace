@@ -146,6 +146,37 @@ the peak and counts the events on each step. Events are not placed when a frame 
 an energy, as NEB endpoint directories without `OUTCAR` or `OSZICAR` do, or for a
 pressure series.
 
+An energy difference is a barrier at constant pressure only if the cell stays fixed.
+For a variable-cell path at one pressure, such as a solid-state NEB, state the pressure
+in GPa (VASP's `PSTRESS` is in kB):
+
+```toml
+[project]
+pressure_gpa = 35.0
+```
+
+`barrier`, `barrier_position`, and the report then use the enthalpy H = E + PV, with V
+from each frame's cell and PV = P × V / 160.21766208 eV for P in GPa and V in Å³. The
+highest frame can change. In a 288-atom acetonitrile band at 20 GPa, it moves from image
+5 (ΔE = 1.35 eV) to image 6 (ΔH = 0.84 eV), and 43 of 207 events change label. `barrier`
+then also records `quantity` and `pressure_gpa`, and each frame with an energy records
+`enthalpy`. A workflow manifest takes the same key under `project`; set it before
+staging, because a changed manifest no longer matches its workspace. A pressure series
+refuses the setting, because each of its frames has its own pressure.
+
+Without a pressure, energies are compared as before, and a warning says when frame
+volumes differ by more than one part in 10⁶. A barrier's pressure is always the one you
+state. ElecTrace does not take it from a calculation, where each image has its own
+computed pressure and, under `PSTRESS`, `external pressure` in `OUTCAR` is the residual,
+not the target.
+
+The energy must not already include PV. Under `PSTRESS`, `free energy TOTEN` in `OUTCAR`
+leaves it out, while `F` and `E0` in `OSZICAR` include it. ElecTrace takes a frame's
+energy from `OUTCAR` when it has one, so keep the `OUTCAR` of such runs. A warning lists
+the frames whose energy comes from `OSZICAR`, because ElecTrace cannot tell whether those
+runs set `PSTRESS`. `TOTEN` is the free energy and `E0` the sigma → 0 energy, so for a
+metallic path the two files also differ by the smearing term.
+
 ## Focus on the reacting atoms
 
 In a large cell, most features belong to spectator molecules. List the atoms of
@@ -474,9 +505,9 @@ electrace figure electrace-results \
 
 The panels, top to bottom:
 
-- **A**: the energy relative to the first frame. A dashed line through every panel
-  marks the highest-energy frame from `barrier`, labelled with its rise above the
-  first frame.
+- **A**: the energy relative to the first frame, or with a pressure the enthalpy. A
+  dashed line through every panel marks the highest frame of that profile, labelled
+  with its rise above the first frame.
 - **B**: the density at each chosen bond's critical point (`field`, a.u. for
   critic2), over the bond's interatomic distance.
 - **C**: each chosen atom's net charge, over its spin. The net charge is ZVAL minus
@@ -518,8 +549,25 @@ electrace figure electrace-results --bond C14-N262 --atom N254 \
   --ylim rho=0:0.4 --ylim spin=-0.2:1 --output T0206_p20
 ```
 
-The quantities are `energy`, `rho`, `distance`, `charge`, and `spin`. The figure uses
-Arial where it is installed, and each series is a named group in the SVG.
+The quantities are `energy` (also for a ΔH panel), `rho`, `distance`, `charge`, and
+`spin`. The figure uses Arial where it is installed, and each series is a named group
+in the SVG.
+
+An analysis made with `pressure_gpa` draws ΔH. To draw ΔH from an analysis made
+without one, give the pressure in GPa:
+
+```bash
+electrace figure electrace-results --bond C41-H227 --atom H227 --pressure 35 \
+  --output E10dir501_p35
+```
+
+The profile, the dashed line, its rise, and each event's `barrier_position` in `--json`
+then come from the frames' energies and cells in `analysis.json`, and `--json` names
+`quantity` and `pressure_gpa` under `energy` and `barrier`. A `--pressure` that differs
+from the analysis's replaces it, with a warning. If the peak differs from the one in the
+analysis, a warning says that `analysis.json`, `events.csv`, and the report keep their
+labels until the analysis runs with that pressure. Without any pressure the panel reads
+ΔE, and a warning says when frame volumes differ.
 
 ## Select frames and stage calculations
 
@@ -716,7 +764,9 @@ features across frames, and writes the same result bundle used for existing evid
 For [net charges](#net-atomic-charges), each frame's collection also holds the
 `POTCAR` its VASP step used or, when that step has none, the source frame's own
 `POTCAR` or `OUTCAR`. A VASP step's `OUTCAR` is not collected, because its energy
-would replace the source frame's.
+would replace the source frame's. A frame's energy is kept under the name of the
+`OUTCAR` or `OSZICAR` it was read from, usually as a file holding only that energy, so
+the warning about `OSZICAR` energies describes the source frame.
 
 ## Scientific boundaries
 

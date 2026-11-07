@@ -1,12 +1,14 @@
 """Path figures drawn from an ElecTrace analysis.
 
-One figure stacks, on a shared frame axis, the energy profile; the density at the
-critical points of chosen bonds over their interatomic distances; and the net charges
-over the spins of chosen atoms. A dashed line marks the highest-energy frame, and a
-filled dot between two frames marks a step on which ElecTrace reports an event for that
-bond or atom and quantity. Reporting only: values are read from ``analysis.json`` as
-written, and a value missing from a frame is a gap, never zero. Drawing needs the
-optional matplotlib dependency (``electrace[plot]``).
+One figure stacks, on a shared frame axis, the energy profile, or with a pressure the
+enthalpy profile; the density at the critical points of chosen bonds over their
+interatomic distances; and the net charges over the spins of chosen atoms. A dashed line
+marks the highest frame of that profile, and a filled dot between two frames marks a step
+on which ElecTrace reports an event for that bond or atom and quantity. Reporting only:
+values are read from ``analysis.json`` as written, except that a pressure recomputes the
+profile, its peak, and each event's place from the frames' energies and cells. A value
+missing from a frame is a gap, never zero. Drawing needs the optional matplotlib
+dependency (``electrace[plot]``).
 """
 
 from __future__ import annotations
@@ -24,9 +26,17 @@ import numpy as np
 from electrace import __version__
 from electrace._files import atomic_output_path
 from electrace.bonds import _unwrapping_shifts
+from electrace.config import _number
 from electrace.geometry import minimum_image_displacement
 from electrace.matching import _as_finite_float
 from electrace.models import Frame, Sequence
+from electrace.pipeline import (
+    _barrier_basis,
+    _barrier_position,
+    _barrier_warnings,
+    _locate_barrier,
+    _profile,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -41,6 +51,8 @@ AXIS_LABELS = {
     "charge": "Net charge (e)",
     "spin": r"Spin ($\mu_\mathrm{B}$)",
 }
+# The energy panel's label with a pressure; --ylim still calls the panel energy.
+ENTHALPY_LABEL = r"$\Delta H$ (eV)"
 # Panel groups, top to bottom: the energy, the chosen bonds, and the chosen atoms.
 GROUPS = (("energy",), ("rho", "distance"), ("charge", "spin"))
 OWNER = {"rho": "bond", "distance": "bond", "charge": "atom", "spin": "atom"}
@@ -50,7 +62,7 @@ WIDTH = 3.42  # inches: one PNAS column, 8.7 cm
 COLORS = ("#e8251f", "#2e8b57", "#f28e1c", "#2747c8", "#8e44ad", "#00a3b4", "#8c564b", "#7f7f7f")
 MARKERS = ("o", "s", "^", "D", "v", "p", "h", "<")
 Style = dict[str, Any]
-# The energy profile, and the dashed line at each highest-energy frame.
+# The energy or enthalpy profile, and the dashed line at each of its highest frames.
 ENERGY: Style = {"color": "black", "marker": "o", "markersize": 3.6, "markerfacecolor": "black"}
 PEAK: Style = {"color": "0.45", "linewidth": 0.7, "linestyle": (0, (4, 2.5)), "zorder": 0.5}
 STYLE = {
@@ -491,6 +503,33 @@ def _check_record_frames(analysis: Mapping[str, Any], position: Mapping[int, int
                 )
 
 
+def _record_warnings(
+    record: object, barrier: Mapping[str, Any], pressure_gpa: float, frames: list[Frame]
+) -> list[str]:
+    """Say where a figure at this pressure departs from the analysis it reads."""
+
+    if not isinstance(record, Mapping):
+        return []
+    found: list[str] = []
+    recorded = record.get("pressure_gpa")
+    if recorded is not None and recorded != pressure_gpa:
+        found.append(f"The analysis used {recorded} GPa; this figure uses {pressure_gpa} GPa.")
+    placed = list(record.get("frames", []))
+    if barrier["frames"] and placed != barrier["frames"]:
+        names = {frame.index: frame.label for frame in frames}
+        new, old = (
+            ", ".join(names.get(index, str(index)) for index in indices)
+            for indices in (barrier["frames"], placed)
+        )
+        found.append(
+            f"The highest-enthalpy frame at {pressure_gpa} GPa is {new}, but the analysis placed "
+            f"its events against {old or 'no frame'}. barrier_position in this output follows the "
+            "figure; analysis.json, events.csv, and the report keep their labels until the "
+            f"analysis runs with project.pressure_gpa = {pressure_gpa}."
+        )
+    return found
+
+
 def write_path_figure(
     analysis: Mapping[str, Any],
     output: str | Path,
@@ -499,13 +538,16 @@ def write_path_figure(
     atoms: Iterable[str],
     limits: Mapping[str, tuple[float, float]],
     overwrite: bool,
+    pressure_gpa: float | None = None,
 ) -> dict[str, Any]:
     """Draw *analysis* as a path figure and write it as PDF, SVG, and a 600 dpi PNG.
 
     *bonds* name atom pairs (``C41-H227`` or ``41-227``) or bond IDs (``B00334``) and
     *atoms* name atoms (``H227`` or ``227``), by 0-based POSCAR index. *output* is the
-    file path without its suffix. Returns the files, the plotted values (null where
-    missing), each series' events with the panels that mark them, and warnings.
+    file path without its suffix. *pressure_gpa* replaces the pressure the analysis
+    recorded, if any; with either, the figure uses the enthalpy H = E + PV. Returns the
+    files, the plotted values (null where missing), each series' events with the panels
+    that mark them, and warnings.
     """
 
     if importlib.util.find_spec("matplotlib") is None:
@@ -528,23 +570,48 @@ def write_path_figure(
     position = {frame.index: number for number, frame in enumerate(frames)}
     _check_record_frames(analysis, position)
     warnings: list[str] = []
+    series_kind = str((analysis.get("project") or {}).get("series_kind", ""))
+    barrier_record = analysis.get("barrier")
+    pressure = pressure_gpa
+    if pressure is None and isinstance(barrier_record, Mapping):
+        pressure = barrier_record.get("pressure_gpa")
+    if pressure is not None:
+        pressure = _number(pressure, "the pressure")
+        if series_kind == "pressure":
+            raise ValueError(
+                "a pressure applies to a path at one pressure, but this analysis is a pressure "
+                "series, which has no barrier"
+            )
 
-    known = [number for number, frame in enumerate(frames) if frame.energy is not None]
+    profile = _profile(frames, pressure)
+    known = [number for number, value in enumerate(profile) if value is not None]
     energy: list[float] | None = None
     if not known:
         warnings.append("No frame has an energy, so the figure has no energy panel.")
     else:
-        reference = cast(float, frames[known[0]].energy)
-        energy = [math.nan if item.energy is None else item.energy - reference for item in frames]
+        reference = cast(float, profile[known[0]])
+        energy = [math.nan if value is None else value - reference for value in profile]
         if known[0]:
             warnings.append(
-                f"Frame {labels[0]} has no energy, so energies are relative to frame "
+                f"Frame {labels[0]} has no energy, so "
+                f"{'energies' if pressure is None else 'enthalpies'} are relative to frame "
                 f"{labels[known[0]]}."
             )
         if len(known) < len(frames):
             missing = _labels_at(labels, set(range(len(frames))) - set(known))
             warnings.append(f"No energy for frame(s) {missing}; the profile has gaps there.")
-    barrier = analysis.get("barrier")
+    warnings.extend(_barrier_warnings(frames, series_kind, pressure))
+    barrier = barrier_record
+    events = analysis.get("events", [])
+    if pressure is not None:
+        # The record may hold another quantity, so the peak and the events' places follow
+        # this profile. At the recorded pressure they equal the record.
+        barrier = _locate_barrier(Sequence(tuple(frames)), series_kind, pressure)
+        events = [
+            {**event, "barrier_position": _barrier_position(event, barrier["frames"])}
+            for event in events
+        ]
+        warnings.extend(_record_warnings(barrier_record, barrier, pressure, frames))
     peaks: list[int] = []
     if not isinstance(barrier, Mapping):
         barrier = {}
@@ -558,7 +625,7 @@ def write_path_figure(
         "bond": _bond_series(bond_choices, analysis, frames, elements, focus, warnings),
         "atom": _atom_series(atom_choices, analysis, frames, elements, focus, warnings),
     }
-    _attach_events(series, analysis.get("events", []))
+    _attach_events(series, events)
     present = {"energy": energy is not None} | {
         name: any(
             item.extras.get(name) or not all(math.isnan(value) for value in item.values[name])
@@ -577,7 +644,6 @@ def write_path_figure(
             "none of the chosen bonds or atoms has values in this analysis. " + " ".join(warnings)
         )
 
-    series_kind = str((analysis.get("project") or {}).get("series_kind", ""))
     _render(paths, groups, labels, series_kind, energy, peaks, barrier, series, position, limits)
 
     def record(item: _Series, quantities: Mapping[str, str]) -> dict[str, Any]:
@@ -604,10 +670,15 @@ def write_path_figure(
         "panels": [name for group in groups for name in group],
         "energy": None
         if energy is None
-        else {"reference_frame": labels[known[0]], "relative_ev": _json_values(energy)},
+        else {
+            "reference_frame": labels[known[0]],
+            "relative_ev": _json_values(energy),
+            **_barrier_basis(pressure),
+        },
         "barrier": {
             "frames": [labels[number] for number in peaks],
             "rise_from_first": barrier.get("rise_from_first") if peaks else None,
+            **_barrier_basis(pressure),
         },
         "bonds": [record(item, {"rho": "rho", "distance": "distance"}) for item in series["bond"]],
         "atoms": [
@@ -677,7 +748,7 @@ def _render(
             axes[name] = figure.add_subplot(grid[row], sharex=axes[names[0]] if row else None)
         for name, ax in axes.items():
             if name == "energy" and energy is not None:
-                ax.plot(x, energy, gid="energy", **ENERGY)
+                ax.plot(x, energy, gid=barrier.get("quantity", "energy"), **ENERGY)
             kind = OWNER.get(name, "")
             for item, style in zip(series.get(kind, []), styles.get(kind, []), strict=True):
                 values = item.values[name]
@@ -716,7 +787,8 @@ def _render(
                 ax.axhline(0.0, color="0.6", linewidth=0.5, linestyle=(0, (1, 1.5)), zorder=0.5)
             for peak in peaks:
                 ax.axvline(peak, gid="peak", **PEAK)
-            ax.set_ylabel(AXIS_LABELS[name])
+            enthalpy = name == "energy" and barrier.get("quantity") == "enthalpy"
+            ax.set_ylabel(ENTHALPY_LABEL if enthalpy else AXIS_LABELS[name])
             ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10]))
             ax.xaxis.set_major_locator(FixedLocator(list(range(0, count, step))))
             ax.xaxis.set_minor_locator(FixedLocator(list(range(count))))

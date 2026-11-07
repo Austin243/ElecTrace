@@ -4,6 +4,23 @@
 
 ### Added
 
+- `[project] pressure_gpa` and `electrace figure --pressure` (GPa) for variable-cell
+  paths at one pressure. `barrier`, `barrier_position`, the report, and the figure then
+  use the enthalpy H = E + PV, with V from each frame's cell, and the figure's axis reads
+  ΔH. ΔE is not a barrier at constant pressure when the cell changes: for three 288-atom
+  acetonitrile bands, PBE-D3 barriers are 3.08, 0.47, and 0.84 eV against ΔE of 3.19,
+  0.85, and 1.35 eV, all 33 images match enthalpies from separate single points within
+  0.001 eV, and in N249r at 20 GPa the peak moves from image 5 to 6, which changes the
+  label of 43 of 207 events. `barrier` gains `quantity` and `pressure_gpa`, frames gain
+  `enthalpy`, and `figure --json` names both under `energy` and `barrier`; a workflow
+  manifest takes `project.pressure_gpa`. `figure --pressure` recomputes the peak and
+  event labels from `analysis.json`, with a warning when they differ from those in the
+  file. A pressure series refuses a pressure. Under `PSTRESS`, `OSZICAR`'s `F` and `E0`
+  already include PV and `OUTCAR`'s `TOTEN` does not, so energies from `OSZICAR` with a
+  pressure give a warning. A collected workflow now keeps each energy under the name of
+  the file it was read from, so `energy_source` and that warning describe the source
+  frame. Without a pressure every number is unchanged, and a new warning says when frame
+  volumes differ by more than one part in 10⁶.
 - Opt-in `[outputs] atom_groups` (named lists of 0-based atom indices) and
   `molecule_groups` (each molecule of the first frame, under the bond cutoffs of
   `focus_atoms = "auto"`). `atom_groups` in `analysis.json`, `atom_groups.csv`, and the

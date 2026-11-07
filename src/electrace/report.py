@@ -99,7 +99,7 @@ _HTML = """<!doctype html>
     <div class="cards" id="cards"></div>
     <div id="focus"></div>
     <div class="grid">
-      <section><h2>Energy profile</h2><div id="energy"></div></section>
+      <section><h2 id="energy-title">Energy profile</h2><div id="energy"></div></section>
       <section><h2>Event composition</h2><div id="composition"></div></section>
     </div>
     <section><h2>Electronic event timeline</h2><div class="timeline" id="timeline"></div></section>
@@ -152,8 +152,13 @@ _HTML = """<!doctype html>
     const barrier = data.barrier || {};
     const peaks = Array.isArray(barrier.frames) ? barrier.frames : [];
     const placeLabels = {before: "before barrier", spanning: "spans barrier", after: "after barrier"};
+    // With project.pressure_gpa, the profile and its peak are enthalpies.
+    const enthalpy = barrier.quantity === "enthalpy";
+    const profileQuantity = enthalpy ? "enthalpy" : "energy";
+    const profileTitle = enthalpy ? `Enthalpy profile (H = E + PV at ${barrier.pressure_gpa} GPa)` : "Energy profile";
+    document.getElementById("energy-title").textContent = profileTitle;
     function energyChart() {
-      const points = frames.map((f,i) => ({x:i, y:f.energy == null ? null : Number(f.energy), label:f.label ?? String(i)})).filter(p => Number.isFinite(p.y));
+      const points = frames.map((f,i) => { const value = enthalpy ? f.enthalpy : f.energy; return {x:i, y:value == null ? null : Number(value), label:f.label ?? String(i)}; }).filter(p => Number.isFinite(p.y));
       if (!points.length) return '<div class="empty">No energies were discovered.</div>';
       const width=720, height=270, left=56, right=18, top=18, bottom=42;
       const minY=Math.min(...points.map(p=>p.y)), maxY=Math.max(...points.map(p=>p.y));
@@ -165,7 +170,7 @@ _HTML = """<!doctype html>
       const low=Math.min(...peakX), high=Math.max(...peakX), middle=(low+high)/2;
       const anchor=middle < left+50 ? 'start' : middle > width-right-50 ? 'end' : 'middle';
       const labelX=anchor === 'start' ? low : anchor === 'end' ? high : middle;
-      const peak=peakX.length ? `<rect class="peak-band" x="${low}" y="${top}" width="${high-low}" height="${height-top-bottom}"/>${peakX.map(x=>`<line class="peak-line" x1="${x}" y1="${top}" x2="${x}" y2="${height-bottom}"/>`).join('')}<text class="chart-label" text-anchor="${anchor}" x="${labelX}" y="${top-6}">highest energy</text>` : '';
+      const peak=peakX.length ? `<rect class="peak-band" x="${low}" y="${top}" width="${high-low}" height="${height-top-bottom}"/>${peakX.map(x=>`<line class="peak-line" x1="${x}" y1="${top}" x2="${x}" y2="${height-bottom}"/>`).join('')}<text class="chart-label" text-anchor="${anchor}" x="${labelX}" y="${top-6}">highest ${profileQuantity}</text>` : '';
       // One marker per step: a large cell can put hundreds of events on one step.
       const steps=new Map();
       for (const e of events) {
@@ -185,12 +190,12 @@ _HTML = """<!doctype html>
       let note='';
       if (peaks.length) {
         const where=peaks.length > 1 ? `shared by frames ${peaks.map(frameName).join(", ")}` : `at frame ${frameName(peaks[0])}`;
-        const endpoint=peaks.includes(frames[0]?.index) || peaks.includes(frames[frames.length-1]?.index) ? " An endpoint has the highest energy, so no interior frame stands above both ends." : "";
-        note=`Highest energy ${where}: ${fmt(barrier.rise_from_first)} eV above the first frame and ${fmt(barrier.rise_from_last)} eV above the last.${endpoint} Each marker counts the events between two frames; amber markers touch a highest-energy frame.`;
+        const endpoint=peaks.includes(frames[0]?.index) || peaks.includes(frames[frames.length-1]?.index) ? ` An endpoint has the highest ${profileQuantity}, so no interior frame stands above both ends.` : "";
+        note=`Highest ${profileQuantity} ${where}: ${fmt(barrier.rise_from_first)} eV above the first frame and ${fmt(barrier.rise_from_last)} eV above the last.${endpoint} Each marker counts the events between two frames; amber markers touch a highest-${profileQuantity} frame.`;
       } else if (barrier.reason) {
         note=barrier.reason;
       }
-      return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Energy profile"><line class="axis" x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}"/><line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}"/><text class="chart-label" x="4" y="${top+6}">${fmt(maxY)}</text><text class="chart-label" x="4" y="${height-bottom}">${fmt(minY)}</text><text class="chart-label" x="${left}" y="${height-10}">first frame</text><text class="chart-label" text-anchor="end" x="${width-right}" y="${height-10}">last frame</text>${peak}<path class="energy-line" d="${path}"/>${dots}${markers}</svg>${note ? `<p class="muted chart-note">${esc(note)}</p>` : ''}`;
+      return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(profileTitle)}"><line class="axis" x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}"/><line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}"/><text class="chart-label" x="4" y="${top+6}">${fmt(maxY)}</text><text class="chart-label" x="4" y="${height-bottom}">${fmt(minY)}</text><text class="chart-label" x="${left}" y="${height-10}">first frame</text><text class="chart-label" text-anchor="end" x="${width-right}" y="${height-10}">last frame</text>${peak}<path class="energy-line" d="${path}"/>${dots}${markers}</svg>${note ? `<p class="muted chart-note">${esc(note)}</p>` : ''}`;
     }
     document.getElementById("energy").innerHTML = energyChart();
 
@@ -351,7 +356,7 @@ _HTML = """<!doctype html>
     const hasNet = Object.keys(netSums).length > 0;
     const netCell = f => hasNet ? `<td>${Object.entries(netSums[f.index] || {}).map(([p, v]) => `${esc(p)} ${Number(v) > 0 ? "+" : ""}${fmt(v, 6)}`).join(", ") || "—"}</td>` : "";
     const cpCell = f => cpCounts.length ? `<td>${cpCounts.filter(c => c.frame === f.index).map(c => esc(c.n == null ? "—" : `${c.n}/${c.b}/${c.r}/${c.c}${c.unclassified ? ` + ${c.unclassified} unclassified` : ""} (${sumText(c.morse_sum)})`)).join(", ") || "—"}</td>` : "";
-    document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th><th>Atoms</th><th>Features</th><th>Cell volume</th>${hasNet ? "<th>Net charge sum</th>" : ""}${cpCounts.length ? "<th>critic2 n/b/r/c (sum)</th>" : ""}</tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td><td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td>${netCell(f)}${cpCell(f)}</tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
+    document.getElementById("frames").innerHTML = frames.length ? `<table><thead><tr><th>Frame</th><th>Energy</th>${enthalpy ? "<th>Enthalpy</th>" : ""}<th>Atoms</th><th>Features</th><th>Cell volume</th>${hasNet ? "<th>Net charge sum</th>" : ""}${cpCounts.length ? "<th>critic2 n/b/r/c (sum)</th>" : ""}</tr></thead><tbody>${frames.map((f,i)=>`<tr><td>${esc(f.label ?? i)}</td><td>${fmt(f.energy,6)}</td>${enthalpy ? `<td>${fmt(f.enthalpy,6)}</td>` : ""}<td>${esc(f.atom_count ?? (f.atoms||[]).length)}</td><td>${esc(f.feature_count ?? (f.features||[]).length)}</td><td>${fmt(f.cell_volume,3)}</td>${netCell(f)}${cpCell(f)}</tr>`).join('')}</tbody></table>` : '<div class="empty">No frame records.</div>';
 
     const audit = {configuration:data.configuration||{}, provenance:data.provenance||{}, warnings:data.warnings||[]};
     document.getElementById("audit").innerHTML = `<details open><summary>Warnings (${audit.warnings.length})</summary>${audit.warnings.length?`<ul>${audit.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:'<p class="muted">No pipeline warnings.</p>'}</details><details><summary>Configuration</summary><pre>${esc(JSON.stringify(audit.configuration,null,2))}</pre></details><details><summary>Provenance</summary><pre>${esc(JSON.stringify(audit.provenance,null,2))}</pre></details><details><summary>Canonical analysis JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;

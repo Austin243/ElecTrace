@@ -461,10 +461,16 @@ def figure(
     ylim: list[str] = typer.Option(
         [], "--ylim", help="Axis limits as QUANTITY=LOW:HIGH, such as rho=0:0.4."
     ),
+    pressure: float | None = typer.Option(
+        None,
+        "--pressure",
+        help="External pressure in GPa: draw the enthalpy H = E + PV, with its peak and event "
+        "placement. Replaces a pressure the analysis recorded; without either, the energy.",
+    ),
     force: bool = typer.Option(False, "--force", help="Replace existing figure files."),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Draw the energy, bond critical points, and atom charges and spins along the path."""
+    """Draw the energy or enthalpy, bond critical points, and atom charges and spins."""
 
     try:
         analysis = _read_analysis(target)
@@ -477,6 +483,7 @@ def figure(
             atoms=atom,
             limits=parse_limits(ylim),
             overwrite=force,
+            pressure_gpa=pressure,
         )
     except ImportError as exc:
         _fail("figure", as_json, str(exc), error_code="missing_dependency")

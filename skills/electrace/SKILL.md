@@ -70,14 +70,20 @@ list and the match edges out of `analysis.json` and the report; tracks, events, 
 summaries do not change. Rerun with the default before reviewing a surprising match.
 When every frame has an energy, events carry
 `barrier_position` (`before`, `spanning`, or `after` the highest-energy frame); that
-frame is not a located transition state.
+frame is not a located transition state. For a variable-cell path at one pressure, set
+`[project] pressure_gpa` (GPa; `PSTRESS` is in kB) so that the barrier and those labels
+use H = E + PV; without it they use E, and a warning says when frame volumes differ.
+Under `PSTRESS`, `OSZICAR`'s `F` and `E0` already include PV and `OUTCAR`'s `TOTEN` does
+not, so report the warning about `OSZICAR` energies.
 
 To draw chosen bonds and atoms along the path, install `electrace[plot]` and run
 `electrace figure RESULTS --bond C41-H227 --atom H227 --output NAME --json`. It
 writes PDF, SVG, and a 600 dpi PNG of the energy, the bond-critical-point densities
 over the distances, and the net charges over the spins, with events marked. Report
 its warnings: a missing panel, an atom outside the focus, or a density gap is
-missing evidence, not zero. Use `--ylim` to put several figures on the same scales.
+missing evidence, not zero. Use `--ylim` to put several figures on the same scales,
+and `--pressure GPA` to draw ΔH from an analysis made without a pressure; if a warning
+says the peak moved, `analysis.json` and `events.csv` still hold the old labels.
 
 ## Missing calculations
 

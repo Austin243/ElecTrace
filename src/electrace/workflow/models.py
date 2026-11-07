@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypeAlias, cast
 
+from electrace.config import _number
+
 from .selection import frame_selectors
 
 WORKFLOW_SCHEMA_VERSION = "electrace.workflow.v1"
@@ -78,15 +80,25 @@ class WorkflowProject:
     workspace: str
     structure: str
     fallback: str
+    pressure_gpa: float | None = None
 
     @classmethod
     def from_dict(cls, value: object) -> WorkflowProject:
         data = _mapping(value, "project")
         keys = {"root", "series_kind", "workspace", "structure", "fallback"}
-        _fields(data, keys, keys, "project")
-        project = cls(**{key: _text(data[key], f"project.{key}") for key in keys})
+        _fields(data, keys, {*keys, "pressure_gpa"}, "project")
+        project = cls(
+            **{key: _text(data[key], f"project.{key}") for key in keys},
+            pressure_gpa=_number(data["pressure_gpa"], "project.pressure_gpa")
+            if "pressure_gpa" in data
+            else None,
+        )
         if project.series_kind not in _SERIES_KINDS:
             raise ValueError(f"unsupported project.series_kind: {project.series_kind}")
+        if project.series_kind == "pressure" and project.pressure_gpa is not None:
+            raise ValueError(
+                "project.pressure_gpa applies to a path at one pressure, not to a pressure series"
+            )
         _check_basename(project.structure, "project.structure")
         _check_basename(project.fallback, "project.fallback")
         return project
@@ -261,9 +273,12 @@ class WorkflowManifest:
         return manifest
 
     def to_dict(self) -> dict[str, Any]:
+        project = asdict(self.project)
+        if self.project.pressure_gpa is None:
+            del project["pressure_gpa"]
         return {
             "schema_version": self.schema_version,
-            "project": asdict(self.project),
+            "project": project,
             "frames": self.frames,
             "executables": {name: value.to_dict() for name, value in self.executables.items()},
             "scheduler": asdict(self.scheduler),

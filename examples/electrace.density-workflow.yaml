@@ -10,6 +10,8 @@ project:
   workspace: ./.electrace-density
   structure: CONTCAR
   fallback: POSCAR
+  # External pressure in GPa of a variable-cell path: barriers then compare H = E + PV.
+  # pressure_gpa: 35.0
 
 frames: all
 

@@ -48,7 +48,8 @@ charges.
 
 `electrace figure RESULTS --bond A-B --atom A --output NAME` (with
 `electrace[plot]`) reads `analysis.json` only and writes `NAME.pdf`, `NAME.svg`, and
-a 600 dpi `NAME.png`: the energy, the critical-point density over the distance of each
+a 600 dpi `NAME.png`: the energy (ΔH with `[project] pressure_gpa` or `--pressure GPA`),
+the critical-point density over the distance of each
 bond, and the net charge over the spin of each atom. Gaps stay gaps, and atoms or
 bonds that a focus left out are not drawn.
 

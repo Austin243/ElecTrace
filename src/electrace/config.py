@@ -26,7 +26,7 @@ _CRITICAL_POINT_KINDS = ("bond_critical_point", "ring_critical_point", "cage_cri
 _ROOT_KEYS = frozenset(
     {"project", "inputs", "matching", "events", "outputs", "plugins", "metadata"}
 )
-_PROJECT_KEYS = frozenset({"name", "series_kind"})
+_PROJECT_KEYS = frozenset({"name", "series_kind", "pressure_gpa"})
 _ELEMENT = re.compile(r"[A-Z][a-z]{0,2}")
 _MOLECULE_ID = re.compile(r"M\d+")
 # Bounds for _number: a strictly positive value, or a fraction between 0 and 1.
@@ -365,6 +365,8 @@ class ElecTraceConfig:
 
     project_name: str = "ElecTrace analysis"
     series_kind: str = "auto"
+    # With a pressure, barriers compare the enthalpy H = E + PV instead of the energy.
+    pressure_gpa: float | None = None
     inputs: InputConfig = field(default_factory=InputConfig)
     matching: MatchingSettings = field(default_factory=MatchingSettings)
     events: EventSettings = field(default_factory=EventSettings)
@@ -378,6 +380,8 @@ class ElecTraceConfig:
         if self.series_kind not in _SERIES_KINDS:
             choices = ", ".join(sorted(_SERIES_KINDS))
             raise ValueError(f"project.series_kind must be one of {choices}")
+        if self.pressure_gpa is not None:
+            self.pressure_gpa = _number(self.pressure_gpa, "project.pressure_gpa")
         plugins: dict[str, dict[str, Any]] = {}
         for name, options in self.plugins.items():
             normalized_name = _string(name, "plugin name", normalize=True)
@@ -399,6 +403,8 @@ class ElecTraceConfig:
 
         result = asdict(self)
         # At their defaults, record the configuration exactly as before these options existed.
+        if self.pressure_gpa is None:
+            del result["pressure_gpa"]
         for name in ("focus_atoms", "focus_bond_cutoffs", "atom_groups", "molecule_groups"):
             if not result["outputs"][name]:
                 del result["outputs"][name]
@@ -435,6 +441,7 @@ def load_config(path: str | Path) -> ElecTraceConfig:
     return ElecTraceConfig(
         project_name=project.get("name", "ElecTrace analysis"),
         series_kind=project.get("series_kind", "auto"),
+        pressure_gpa=project.get("pressure_gpa"),
         inputs=InputConfig(**_section(data, "inputs")),
         matching=MatchingSettings(**_section(data, "matching")),
         events=EventSettings(**_section(data, "events")),
@@ -452,6 +459,9 @@ name = "ElecTrace analysis"
 # auto: neb for numeric directories, pressure when every name states one (5GPa, p20),
 # otherwise the natural order of the names. An OUTCAR's stress alone never sorts frames.
 series_kind = "auto"
+# External pressure in GPa (VASP's PSTRESS is in kB) of a path at one pressure. Barriers
+# and event placement then compare H = E + PV, with V from each frame's cell, not E.
+# pressure_gpa = 35.0
 
 [inputs]
 root = "."

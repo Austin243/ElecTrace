@@ -105,8 +105,8 @@ spectators; read `molecules` and `steps` before trusting the floor's upper
 percentiles.
 
 A path figure draws only what `analysis.json` holds for the chosen bonds and atoms.
-Its dashed line marks the highest-energy sampled frame, not a located saddle point,
-and a dot places an event within one step of the sampled frames. A gap in a bond's
+Its dashed line marks the highest sampled frame of the energy or enthalpy profile, not
+a located saddle point, and a dot places an event within one step of the sampled frames. A gap in a bond's
 density means that no critical point tied the two atoms in that frame; an incomplete
 critic2 search gives the same gap, so check the frame's Morse sum in
 `critical_point_counts` before reading a gap as a broken bond. The distance continues
@@ -116,13 +116,20 @@ through such gaps because it comes from the geometry, not from a critical point.
 evidence it leaves out is what a review of a surprising mapping needs, so rerun with
 the default before reviewing one.
 
-Barrier labels compare each event's step with the highest-energy sampled frame. For an
+Barrier labels compare each event's step with the highest-energy sampled frame, or with
+`pressure_gpa` the highest-enthalpy one. For an
 NEB this is the highest image, not the saddle point; for a static scan it is the scan
 maximum. A spanning event changes on a step that touches that frame, which the frame
 spacing cannot resolve further. No energy tolerance is applied, so a peak that differs
 from its neighbors only by numerical noise still counts; read the rises recorded in
 `barrier`. A rise of zero means an endpoint is the highest frame and the profile has
 no interior maximum.
+
+An energy difference across frames of different volume is not a barrier at constant
+pressure, so a variable-cell path needs `pressure_gpa`. H = E + PV adds only the PV work
+at the stated pressure to each frame's electronic energy: no zero-point or thermal terms.
+ElecTrace does not check that the path was relaxed at that pressure, and it cannot tell
+whether an `OSZICAR` energy already includes PV.
 
 - Bader and DDEC charges depend on the partitioning scheme and are not automatically
   formal oxidation states.
