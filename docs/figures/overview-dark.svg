@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 530" width="1200" height="530" role="img" aria-labelledby="et-overview-title et-overview-desc" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">
+<title id="et-overview-title">ElecTrace: trace charges, critical points, and bonds across the frames of a reaction path.</title>
+<desc id="et-overview-desc">Seven frames of the HCN to HNC example in the repository, a hand-defined static scan, not an optimized path. Each column is one frame drawn to scale with the C–N axis vertical, and the area of each atom is its Bader electron population. Ribbons join the bond critical points frame by frame, and the width of a ribbon at a frame is the density there. The C–N ribbon stays near 0.49 a.u. The other ribbon is one critical point on one track, tied to C and H through frame 02 and to N and H from frame 03, a candidate change of neighbors with confidence 0.19.</desc>
+<defs><linearGradient id="et-overview-cn-0" gradientUnits="userSpaceOnUse" x1="118" y1="0" x2="283.13" y2="0"><stop offset="0" stop-color="#46617a" stop-opacity="0.86"/><stop offset="0.16" stop-color="#46617a" stop-opacity="0.6"/><stop offset="0.84" stop-color="#46617a" stop-opacity="0.6"/><stop offset="1" stop-color="#46617a" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-cn-1" gradientUnits="userSpaceOnUse" x1="283.13" y1="0" x2="447.21" y2="0"><stop offset="0" stop-color="#46617a" stop-opacity="0.86"/><stop offset="0.16" stop-color="#46617a" stop-opacity="0.6"/><stop offset="0.84" stop-color="#46617a" stop-opacity="0.6"/><stop offset="1" stop-color="#46617a" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-cn-2" gradientUnits="userSpaceOnUse" x1="447.21" y1="0" x2="611.22" y2="0"><stop offset="0" stop-color="#46617a" stop-opacity="0.86"/><stop offset="0.16" stop-color="#46617a" stop-opacity="0.6"/><stop offset="0.84" stop-color="#46617a" stop-opacity="0.6"/><stop offset="1" stop-color="#46617a" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-cn-3" gradientUnits="userSpaceOnUse" x1="611.22" y1="0" x2="779.69" y2="0"><stop offset="0" stop-color="#46617a" stop-opacity="0.86"/><stop offset="0.16" stop-color="#46617a" stop-opacity="0.6"/><stop offset="0.84" stop-color="#46617a" stop-opacity="0.6"/><stop offset="1" stop-color="#46617a" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-cn-4" gradientUnits="userSpaceOnUse" x1="779.69" y1="0" x2="946.21" y2="0"><stop offset="0" stop-color="#46617a" stop-opacity="0.86"/><stop offset="0.16" stop-color="#46617a" stop-opacity="0.6"/><stop offset="0.84" stop-color="#46617a" stop-opacity="0.6"/><stop offset="1" stop-color="#46617a" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-cn-5" gradientUnits="userSpaceOnUse" x1="946.21" y1="0" x2="1108" y2="0"><stop offset="0" stop-color="#46617a" stop-opacity="0.86"/><stop offset="0.16" stop-color="#46617a" stop-opacity="0.6"/><stop offset="0.84" stop-color="#46617a" stop-opacity="0.6"/><stop offset="1" stop-color="#46617a" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-h-0" gradientUnits="userSpaceOnUse" x1="118" y1="0" x2="324.15" y2="0"><stop offset="0" stop-color="#c48506" stop-opacity="0.86"/><stop offset="0.16" stop-color="#c48506" stop-opacity="0.6"/><stop offset="0.84" stop-color="#c48506" stop-opacity="0.6"/><stop offset="1" stop-color="#c48506" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-h-1" gradientUnits="userSpaceOnUse" x1="324.15" y1="0" x2="517.04" y2="0"><stop offset="0" stop-color="#c48506" stop-opacity="0.86"/><stop offset="0.16" stop-color="#c48506" stop-opacity="0.6"/><stop offset="0.84" stop-color="#c48506" stop-opacity="0.6"/><stop offset="1" stop-color="#c48506" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-h-2" gradientUnits="userSpaceOnUse" x1="517.04" y1="0" x2="700.17" y2="0"><stop offset="0" stop-color="#c48506" stop-opacity="0.86"/><stop offset="1" stop-color="#00a8b6" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-h-2-edge" gradientUnits="userSpaceOnUse" x1="517.04" y1="0" x2="700.17" y2="0"><stop offset="0" stop-color="#ffcc66" stop-opacity="1"/><stop offset="1" stop-color="#56d7e4" stop-opacity="1"/></linearGradient><linearGradient id="et-overview-h-3" gradientUnits="userSpaceOnUse" x1="700.17" y1="0" x2="862.87" y2="0"><stop offset="0" stop-color="#00a8b6" stop-opacity="0.86"/><stop offset="0.16" stop-color="#00a8b6" stop-opacity="0.6"/><stop offset="0.84" stop-color="#00a8b6" stop-opacity="0.6"/><stop offset="1" stop-color="#00a8b6" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-h-4" gradientUnits="userSpaceOnUse" x1="862.87" y1="0" x2="992.04" y2="0"><stop offset="0" stop-color="#00a8b6" stop-opacity="0.86"/><stop offset="0.16" stop-color="#00a8b6" stop-opacity="0.6"/><stop offset="0.84" stop-color="#00a8b6" stop-opacity="0.6"/><stop offset="1" stop-color="#00a8b6" stop-opacity="0.86"/></linearGradient><linearGradient id="et-overview-h-5" gradientUnits="userSpaceOnUse" x1="992.04" y1="0" x2="1108" y2="0"><stop offset="0" stop-color="#00a8b6" stop-opacity="0.86"/><stop offset="0.16" stop-color="#00a8b6" stop-opacity="0.6"/><stop offset="0.84" stop-color="#00a8b6" stop-opacity="0.6"/><stop offset="1" stop-color="#00a8b6" stop-opacity="0.86"/></linearGradient></defs>
+<rect x="0.5" y="0.5" width="1199" height="529" rx="18" fill="#071019" stroke="#1d3142"/>
+<line x1="118" y1="161.56" x2="118" y2="466" stroke="#26404f" stroke-width="1"/>
+<line x1="283" y1="161.56" x2="283" y2="466" stroke="#26404f" stroke-width="1"/>
+<line x1="448" y1="161.56" x2="448" y2="466" stroke="#26404f" stroke-width="1"/>
+<line x1="613" y1="161.56" x2="613" y2="466" stroke="#26404f" stroke-width="1"/>
+<line x1="778" y1="156" x2="778" y2="466" stroke="#26404f" stroke-width="1"/>
+<line x1="943" y1="156" x2="943" y2="466" stroke="#26404f" stroke-width="1"/>
+<line x1="1108" y1="156" x2="1108" y2="466" stroke="#26404f" stroke-width="1"/>
+<text x="44" y="80" font-size="62" font-weight="760" letter-spacing="-1.2" fill="#e9f2f8">ElecTrace</text>
+<text x="46" y="118" font-size="26" fill="#a7bac8">Trace charges, critical points, and bonds</text>
+<text x="46" y="150" font-size="26" fill="#a7bac8">across the frames of a reaction path.</text>
+<polygon points="118,237.82 283.13,237.92 283.13,296.56 118,296.05" fill="url(#et-overview-cn-0)"/>
+<path d="M118 263.93L283.13 264.24M118 269.93L283.13 270.24M118 257.93L283.13 258.24M118 275.93L283.13 276.24M118 251.93L283.13 252.24M118 281.93L283.13 282.24M118 245.93L283.13 246.24M118 287.93L283.13 288.24M118 239.93L283.13 240.24M118 293.93L283.13 294.24" fill="none" stroke="#a9c1d4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M118 237.82L283.13 237.92M118 296.05L283.13 296.56" fill="none" stroke="#a9c1d4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="283.13,237.92 447.21,238.5 447.21,297.85 283.13,296.56" fill="url(#et-overview-cn-1)"/>
+<path d="M283.13 264.24L447.21 265.17M283.13 270.24L447.21 271.17M283.13 258.24L447.21 259.17M283.13 276.24L447.21 277.17M283.13 252.24L447.21 253.17M283.13 282.24L447.21 283.17M283.13 246.24L447.21 247.17M283.13 288.24L447.21 289.17M283.13 240.24L447.21 241.17M283.13 294.24L447.21 295.17" fill="none" stroke="#a9c1d4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M283.13 237.92L447.21 238.5M283.13 296.56L447.21 297.85" fill="none" stroke="#a9c1d4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="447.21,238.5 611.22,238.03 611.22,298.2 447.21,297.85" fill="url(#et-overview-cn-2)"/>
+<path d="M447.21 265.17L611.22 265.11M447.21 271.17L611.22 271.11M447.21 259.17L611.22 259.11M447.21 277.17L611.22 277.11M447.21 253.17L611.22 253.11M447.21 283.17L611.22 283.11M447.21 247.17L611.22 247.11M447.21 289.17L611.22 289.11M447.21 241.17L611.22 241.11M447.21 295.17L611.22 295.11" fill="none" stroke="#a9c1d4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M447.21 238.5L611.22 238.03M447.21 297.85L611.22 298.2" fill="none" stroke="#a9c1d4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="611.22,238.03 779.69,237.71 779.69,298.12 611.22,298.2" fill="url(#et-overview-cn-3)"/>
+<path d="M611.22 265.11L779.69 264.91M611.22 271.11L779.69 270.91M611.22 259.11L779.69 258.91M611.22 277.11L779.69 276.91M611.22 253.11L779.69 252.91M611.22 283.11L779.69 282.91M611.22 247.11L779.69 246.91M611.22 289.11L779.69 288.91M611.22 241.11L779.69 240.91M611.22 295.11L779.69 294.91" fill="none" stroke="#a9c1d4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M611.22 238.03L779.69 237.71M611.22 298.2L779.69 298.12" fill="none" stroke="#a9c1d4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="779.69,237.71 946.21,239.83 946.21,296.33 779.69,298.12" fill="url(#et-overview-cn-4)"/>
+<path d="M779.69 264.91L946.21 265.08M779.69 270.91L946.21 271.08M779.69 258.91L946.21 259.08M779.69 276.91L946.21 277.08M779.69 252.91L946.21 253.08M779.69 282.91L946.21 283.08M779.69 246.91L946.21 247.08M779.69 288.91L946.21 289.08M779.69 240.91L946.21 241.08M779.69 294.91L946.21 295.08" fill="none" stroke="#a9c1d4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M779.69 237.71L946.21 239.83M779.69 298.12L946.21 296.33" fill="none" stroke="#a9c1d4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="946.21,239.83 1108,240.83 1108,295.3 946.21,296.33" fill="url(#et-overview-cn-5)"/>
+<path d="M946.21 265.08L1108 265.07M946.21 271.08L1108 271.07M946.21 259.08L1108 259.07M946.21 277.08L1108 277.07M946.21 253.08L1108 253.07M946.21 283.08L1108 283.07M946.21 247.08L1108 247.07M946.21 289.08L1108 289.07M946.21 241.08L1108 241.07M946.21 295.08L1108 295.07" fill="none" stroke="#a9c1d4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M946.21 239.83L1108 240.83M946.21 296.33L1108 295.3" fill="none" stroke="#a9c1d4" stroke-width="1.3" stroke-opacity="0.9"/>
+<rect x="116.3" y="237.82" width="3.4" height="58.24" fill="#a9c1d4"/>
+<rect x="281.43" y="237.92" width="3.4" height="58.64" fill="#a9c1d4"/>
+<rect x="445.51" y="238.5" width="3.4" height="59.35" fill="#a9c1d4"/>
+<rect x="609.52" y="238.03" width="3.4" height="60.17" fill="#a9c1d4"/>
+<rect x="777.99" y="237.71" width="3.4" height="60.41" fill="#a9c1d4"/>
+<rect x="944.51" y="239.83" width="3.4" height="56.5" fill="#a9c1d4"/>
+<rect x="1106.3" y="240.83" width="3.4" height="54.47" fill="#a9c1d4"/>
+<polygon points="118,382.36 324.15,360.24 324.15,400.28 118,417.45" fill="url(#et-overview-h-0)"/>
+<path d="M118 396.91L324.15 377.26M118 402.91L324.15 383.26M118 390.91L324.15 371.26M118 408.91L324.15 389.26M118 384.91L324.15 365.26M118 414.91L324.15 395.26" fill="none" stroke="#ffcc66" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M118 382.36L324.15 360.24M118 417.45L324.15 400.28" fill="none" stroke="#ffcc66" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="324.15,360.24 517.04,315.24 517.04,354.92 324.15,400.28" fill="url(#et-overview-h-1)"/>
+<path d="M324.15 377.26L517.04 332.08M324.15 383.26L517.04 338.08M324.15 371.26L517.04 326.08M324.15 389.26L517.04 344.08M324.15 365.26L517.04 320.08M324.15 395.26L517.04 350.08" fill="none" stroke="#ffcc66" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M324.15 360.24L517.04 315.24M324.15 400.28L517.04 354.92" fill="none" stroke="#ffcc66" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="517.04,315.24 700.17,229.56 700.17,254.86 517.04,354.92" fill="url(#et-overview-h-2)"/>
+<path d="M517.04 332.08L700.17 239.21M517.04 338.08L700.17 245.21M517.04 326.08L700.17 233.21M517.04 344.08L700.17 251.21M517.04 320.08L640.3 257.57M517.04 350.08L640.3 287.57" fill="none" stroke="url(#et-overview-h-2-edge)" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M517.04 315.24L700.17 229.56M517.04 354.92L700.17 254.86" fill="none" stroke="url(#et-overview-h-2-edge)" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="700.17,229.56 862.87,135.66 862.87,177.69 700.17,254.86" fill="url(#et-overview-h-3)"/>
+<path d="M700.17 239.21L862.87 153.67M700.17 245.21L862.87 159.67M700.17 233.21L862.87 147.67M700.17 251.21L862.87 165.67M745.89 203.18L862.87 141.67M745.89 233.18L862.87 171.67M862.52 135.86L862.87 135.67M862.52 177.86L862.87 177.67" fill="none" stroke="#56d7e4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M700.17 229.56L862.87 135.66M700.17 254.86L862.87 177.69" fill="none" stroke="#56d7e4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="862.87,135.66 992.04,82.81 992.04,125.8 862.87,177.69" fill="url(#et-overview-h-4)"/>
+<path d="M862.87 153.67L992.04 101.31M862.87 159.67L992.04 107.31M862.87 147.67L992.04 95.31M862.87 165.67L992.04 113.31M862.87 141.67L992.04 89.31M862.87 171.67L992.04 119.31M862.87 135.67L992.04 83.31M862.87 177.67L992.04 125.31" fill="none" stroke="#56d7e4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M862.87 135.66L992.04 82.81M862.87 177.69L992.04 125.8" fill="none" stroke="#56d7e4" stroke-width="1.3" stroke-opacity="0.9"/>
+<polygon points="992.04,82.81 1108,65.68 1108,104.58 992.04,125.8" fill="url(#et-overview-h-5)"/>
+<path d="M992.04 101.31L1108 82.13M992.04 107.31L1108 88.13M992.04 95.31L1108 76.13M992.04 113.31L1108 94.13M992.04 89.31L1108 70.13M992.04 119.31L1108 100.13M992.04 83.31L1020.27 78.64M992.04 125.31L1020.27 120.64" fill="none" stroke="#56d7e4" stroke-width="0.9" stroke-opacity="0.32"/>
+<path d="M992.04 82.81L1108 65.68M992.04 125.8L1108 104.58" fill="none" stroke="#56d7e4" stroke-width="1.3" stroke-opacity="0.9"/>
+<rect x="116.3" y="382.36" width="3.4" height="35.09" fill="#ffcc66"/>
+<rect x="322.45" y="360.24" width="3.4" height="40.04" fill="#ffcc66"/>
+<rect x="515.34" y="315.24" width="3.4" height="39.68" fill="#ffcc66"/>
+<rect x="698.47" y="229.56" width="3.4" height="25.3" fill="#56d7e4"/>
+<rect x="861.17" y="135.66" width="3.4" height="42.04" fill="#56d7e4"/>
+<rect x="990.34" y="82.81" width="3.4" height="43" fill="#56d7e4"/>
+<rect x="1106.3" y="65.68" width="3.4" height="38.9" fill="#56d7e4"/>
+<path d="M118 314.44L118 266.93L118 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M118 440.7L118 399.91L118 314.44" fill="none" stroke="#ffcc66" stroke-width="2"/>
+<polygon points="118,261.43 123.5,266.93 118,272.43 112.5,266.93" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="118,394.41 123.5,399.91 118,405.41 112.5,399.91" fill="#ffcc66" stroke="#071019" stroke-width="1.5"/>
+<circle cx="118" cy="314.44" r="11.94" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="118" y="319.22" font-size="13.38" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="118" cy="177.56" r="16.05" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="118" y="183.98" font-size="17.98" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="118" cy="440.7" r="5.94" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="118" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">00</text>
+<path d="M283 314.44L283.13 267.24L283 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M347.9 413.76L324.15 380.26L283 314.44" fill="none" stroke="#ffcc66" stroke-width="2"/>
+<polygon points="283.13,261.74 288.63,267.24 283.13,272.74 277.63,267.24" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="324.15,374.76 329.65,380.26 324.15,385.76 318.65,380.26" fill="#ffcc66" stroke="#071019" stroke-width="1.5"/>
+<circle cx="283" cy="314.44" r="11.96" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="283" y="319.22" font-size="13.4" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="283" cy="177.56" r="16.02" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="283" y="183.97" font-size="17.94" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="347.9" cy="413.76" r="5.99" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="283" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">01</text>
+<path d="M448 314.44L447.21 268.17L448 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M560.41 342.37L517.04 335.08L448 314.44" fill="none" stroke="#ffcc66" stroke-width="2"/>
+<polygon points="447.21,262.67 452.71,268.17 447.21,273.67 441.71,268.17" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="517.04,329.58 522.54,335.08 517.04,340.58 511.54,335.08" fill="#ffcc66" stroke="#071019" stroke-width="1.5"/>
+<circle cx="448" cy="314.44" r="11.95" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="448" y="319.22" font-size="13.39" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="448" cy="177.56" r="16.05" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="448" y="183.98" font-size="17.98" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="560.41" cy="342.37" r="5.92" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="448" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">02</text>
+<path d="M613 314.44L611.22 268.11L613 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M742.8 246L700.17 242.21L613 177.56" fill="none" stroke="#56d7e4" stroke-width="2"/>
+<polygon points="611.22,262.61 616.72,268.11 611.22,273.61 605.72,268.11" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="700.17,236.71 705.67,242.21 700.17,247.71 694.67,242.21" fill="#56d7e4" stroke="#071019" stroke-width="1.5"/>
+<circle cx="613" cy="314.44" r="11.65" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="613" y="319.1" font-size="13.05" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="613" cy="177.56" r="16.57" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="613" y="184.19" font-size="18.56" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="742.8" cy="246" r="5.02" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="613" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">03</text>
+<path d="M778 314.44L779.69 267.91L778 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M890.41 150.62L862.87 156.67L778 177.56" fill="none" stroke="#56d7e4" stroke-width="2"/>
+<polygon points="779.69,262.41 785.19,267.91 779.69,273.41 774.19,267.91" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="862.87,151.17 868.37,156.67 862.87,162.17 857.37,156.67" fill="#56d7e4" stroke="#071019" stroke-width="1.5"/>
+<circle cx="778" cy="314.44" r="11.9" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="778" y="319.2" font-size="13.33" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="778" cy="177.56" r="16.61" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="778" y="184.2" font-size="18.6" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="890.41" cy="150.62" r="4.26" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="778" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">04</text>
+<path d="M943 314.44L946.21 268.08L943 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M1007.9 81.64L992.04 104.31L943 177.56" fill="none" stroke="#56d7e4" stroke-width="2"/>
+<polygon points="946.21,262.58 951.71,268.08 946.21,273.58 940.71,268.08" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="992.04,98.81 997.54,104.31 992.04,109.81 986.54,104.31" fill="#56d7e4" stroke="#071019" stroke-width="1.5"/>
+<circle cx="943" cy="314.44" r="11.49" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="943" y="319.04" font-size="12.87" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="943" cy="177.56" r="16.97" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="943" y="184.35" font-size="19.01" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="1007.9" cy="81.64" r="3.94" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="943" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">05</text>
+<path d="M1108 314.44L1108 268.07L1108 177.56" fill="none" stroke="#a9c1d4" stroke-width="2"/>
+<path d="M1108 57.2L1108 85.13L1108 177.56" fill="none" stroke="#56d7e4" stroke-width="2"/>
+<polygon points="1108,262.57 1113.5,268.07 1108,273.57 1102.5,268.07" fill="#a9c1d4" stroke="#071019" stroke-width="1.5"/>
+<polygon points="1108,79.63 1113.5,85.13 1108,90.63 1102.5,85.13" fill="#56d7e4" stroke="#071019" stroke-width="1.5"/>
+<circle cx="1108" cy="314.44" r="11.59" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="1108" y="319.08" font-size="12.98" font-weight="700" text-anchor="middle" fill="#071019">C</text>
+<circle cx="1108" cy="177.56" r="16.9" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="1108" y="184.32" font-size="18.93" font-weight="700" text-anchor="middle" fill="#071019">N</text>
+<circle cx="1108" cy="57.2" r="3.94" fill="#c9d8e3" stroke="#071019" stroke-width="1.5"/>
+<text x="1108" y="492" font-size="23" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" text-anchor="middle" fill="#a7bac8">06</text>
+<text x="44" y="492" font-size="22" fill="#7f96a7">frame</text>
+<text x="152" y="371.91" font-size="24" font-weight="650" fill="#e9f2f8">C–H</text>
+<text x="1048" y="224.07" font-size="24" font-weight="650" fill="#e9f2f8">C–N</text>
+<text x="900.04" y="70.31" font-size="24" font-weight="650" fill="#e9f2f8">N–H</text>
+</svg>

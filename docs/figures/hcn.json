@@ -1,0 +1,538 @@
+{
+ "electrace_version": "0.1.0a5",
+ "electrace_commit": "d906f01",
+ "frames": [
+  {
+   "label": "00",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 6.35,
+     "y": 8.0
+    }
+   ]
+  },
+  {
+   "label": "01",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 6.5783,
+     "y": 8.55
+    }
+   ]
+  },
+  {
+   "label": "02",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 7.1833,
+     "y": 8.9526
+    }
+   ]
+  },
+  {
+   "label": "03",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 8.0,
+     "y": 9.1
+    }
+   ]
+  },
+  {
+   "label": "04",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 8.8083,
+     "y": 8.9526
+    }
+   ]
+  },
+  {
+   "label": "05",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 9.3929,
+     "y": 8.55
+    }
+   ]
+  },
+  {
+   "label": "06",
+   "atoms": [
+    {
+     "element": "C",
+     "x": 7.42,
+     "y": 8.0
+    },
+    {
+     "element": "N",
+     "x": 8.58,
+     "y": 8.0
+    },
+    {
+     "element": "H",
+     "x": 9.6,
+     "y": 8.0
+    }
+   ]
+  }
+ ],
+ "tracks": [
+  {
+   "kind": "atomic_charge",
+   "points": [
+    {
+     "frame": 0,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.2744,
+     "field": null
+    },
+    {
+     "frame": 1,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.2849,
+     "field": null
+    },
+    {
+     "frame": 2,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.2802,
+     "field": null
+    },
+    {
+     "frame": 3,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.1157,
+     "field": null
+    },
+    {
+     "frame": 4,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.2524,
+     "field": null
+    },
+    {
+     "frame": 5,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.0324,
+     "field": null
+    },
+    {
+     "frame": 6,
+     "neighbors": [
+      0
+     ],
+     "x": 7.42,
+     "y": 8.0,
+     "population": 3.084,
+     "field": null
+    }
+   ]
+  },
+  {
+   "kind": "atomic_charge",
+   "points": [
+    {
+     "frame": 0,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 5.9157,
+     "field": null
+    },
+    {
+     "frame": 1,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 5.8901,
+     "field": null
+    },
+    {
+     "frame": 2,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 5.9164,
+     "field": null
+    },
+    {
+     "frame": 3,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 6.3063,
+     "field": null
+    },
+    {
+     "frame": 4,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 6.3303,
+     "field": null
+    },
+    {
+     "frame": 5,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 6.6113,
+     "field": null
+    },
+    {
+     "frame": 6,
+     "neighbors": [
+      1
+     ],
+     "x": 8.58,
+     "y": 8.0,
+     "population": 6.5593,
+     "field": null
+    }
+   ]
+  },
+  {
+   "kind": "atomic_charge",
+   "points": [
+    {
+     "frame": 0,
+     "neighbors": [
+      2
+     ],
+     "x": 6.35,
+     "y": 8.0,
+     "population": 0.8099,
+     "field": null
+    },
+    {
+     "frame": 1,
+     "neighbors": [
+      2
+     ],
+     "x": 6.5783,
+     "y": 8.55,
+     "population": 0.8249,
+     "field": null
+    },
+    {
+     "frame": 2,
+     "neighbors": [
+      2
+     ],
+     "x": 7.1833,
+     "y": 8.9526,
+     "population": 0.8034,
+     "field": null
+    },
+    {
+     "frame": 3,
+     "neighbors": [
+      2
+     ],
+     "x": 8.0,
+     "y": 9.1,
+     "population": 0.5779,
+     "field": null
+    },
+    {
+     "frame": 4,
+     "neighbors": [
+      2
+     ],
+     "x": 8.8083,
+     "y": 8.9526,
+     "population": 0.4172,
+     "field": null
+    },
+    {
+     "frame": 5,
+     "neighbors": [
+      2
+     ],
+     "x": 9.3929,
+     "y": 8.55,
+     "population": 0.3563,
+     "field": null
+    },
+    {
+     "frame": 6,
+     "neighbors": [
+      2
+     ],
+     "x": 9.6,
+     "y": 8.0,
+     "population": 0.3567,
+     "field": null
+    }
+   ]
+  },
+  {
+   "kind": "bond_critical_point",
+   "points": [
+    {
+     "frame": 0,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.8226,
+     "y": 8.0,
+     "population": null,
+     "field": 0.4853
+    },
+    {
+     "frame": 1,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.82,
+     "y": 8.0011,
+     "population": null,
+     "field": 0.4887
+    },
+    {
+     "frame": 2,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.8121,
+     "y": 7.9933,
+     "population": null,
+     "field": 0.4946
+    },
+    {
+     "frame": 3,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.8126,
+     "y": 7.9849,
+     "population": null,
+     "field": 0.5014
+    },
+    {
+     "frame": 4,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.8143,
+     "y": 8.0143,
+     "population": null,
+     "field": 0.5034
+    },
+    {
+     "frame": 5,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.8129,
+     "y": 8.0272,
+     "population": null,
+     "field": 0.4708
+    },
+    {
+     "frame": 6,
+     "neighbors": [
+      0,
+      1
+     ],
+     "x": 7.813,
+     "y": 8.0,
+     "population": null,
+     "field": 0.4539
+    }
+   ]
+  },
+  {
+   "kind": "bond_critical_point",
+   "points": [
+    {
+     "frame": 0,
+     "neighbors": [
+      0,
+      2
+     ],
+     "x": 6.6957,
+     "y": 8.0,
+     "population": null,
+     "field": 0.2924
+    },
+    {
+     "frame": 1,
+     "neighbors": [
+      0,
+      2
+     ],
+     "x": 6.8622,
+     "y": 8.3487,
+     "population": null,
+     "field": 0.3337
+    },
+    {
+     "frame": 2,
+     "neighbors": [
+      0,
+      2
+     ],
+     "x": 7.2451,
+     "y": 8.5851,
+     "population": null,
+     "field": 0.3307
+    },
+    {
+     "frame": 3,
+     "neighbors": [
+      1,
+      2
+     ],
+     "x": 8.0321,
+     "y": 8.7387,
+     "population": null,
+     "field": 0.2108
+    },
+    {
+     "frame": 4,
+     "neighbors": [
+      1,
+      2
+     ],
+     "x": 8.757,
+     "y": 8.7192,
+     "population": null,
+     "field": 0.3503
+    },
+    {
+     "frame": 5,
+     "neighbors": [
+      1,
+      2
+     ],
+     "x": 9.2008,
+     "y": 8.4156,
+     "population": null,
+     "field": 0.3583
+    },
+    {
+     "frame": 6,
+     "neighbors": [
+      1,
+      2
+     ],
+     "x": 9.3633,
+     "y": 8.0,
+     "population": null,
+     "field": 0.3242
+    }
+   ]
+  }
+ ],
+ "reassignment_confidence": 0.19
+}

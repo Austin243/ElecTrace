@@ -1,4 +1,7 @@
-# ElecTrace
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/overview-dark.svg">
+  <img alt="ElecTrace banner. Seven frames of the HCN to HNC example, each drawn to scale, with ribbons joining the bond critical points from frame to frame. A ribbon's width is the density at its critical point. One critical point stays on one track as it changes from tying C and H to tying N and H" src="docs/figures/overview-light.svg" width="100%">
+</picture>
 
 ElecTrace tracks how electronic-structure features change across ordered periodic
 structures, including VASP NEB images and static or pressure series. It combines
