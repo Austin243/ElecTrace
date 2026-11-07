@@ -276,6 +276,22 @@ These change results on inputs that used to run without complaint.
   a pressure series when its names or a collected `OUTCAR` show the pressures. Numeric
   directories under `auto` or `neb` are unaffected. `discover_static_series` takes
   `mode` in place of `require_pressure`.
+- Under `PSTRESS`, a frame's pressure from `OUTCAR` is now the pressure of the cell. VASP
+  prints `external pressure` as the stress-tensor pressure minus `PSTRESS`, so a 300 GPa
+  run ending in `external pressure = -9.36 kB  Pullay stress = 3000.00 kB` reported
+  −0.94 GPa, and a pressure series at different `PSTRESS` values was sorted by its
+  residuals. ElecTrace now adds `Pullay stress`. The sum equals the trace of the `in kB`
+  stress within rounding at all 106 ionic steps of two real `PSTRESS = 3000` runs (VASP
+  5.4.1), which end at 299.06 and 301.07 GPa, not the nominal 300; a name such as `300GPa`
+  still takes precedence. Without `PSTRESS` the numbers are unchanged. A last line cut off
+  inside `Pullay stress` no longer counts as a record.
+- A warning names the frames when one path takes its energies from both `OUTCAR` and
+  `OSZICAR`. `OUTCAR`'s `free energy TOTEN` and `OSZICAR`'s `E0` differ by the smearing
+  term and, under `PSTRESS`, by PV, since only `E0` includes it: one frame of a real
+  300 GPa run reads 25.04 and 194.35 eV, so two copies of it, one without its `OUTCAR`,
+  showed a 169.3 eV rise with no warning. `workflow validate`, `workflow stage`, and
+  `workflow analyze` check the selected source frames, because collection writes every
+  energy to `OSZICAR`. Paths that read one file are unchanged.
 - A descriptor file missing from some frames no longer gives false births and deaths.
   Removing `03/ACF.dat` from the HCN example gave 3 deaths and 3 births at confidence
   0.75, confirmed, and no warning named the file; a charge change on the step before the

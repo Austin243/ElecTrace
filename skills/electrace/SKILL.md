@@ -28,7 +28,8 @@ provenance. Do not silently add `--permissive` to relax frame discovery.
 Check the frame order that `analyze` prints against the path, since every event depends
 on it. Frames keep the natural order of their directory names; a warning says when
 numbers in the names do not set that order (`IS`, `TS`, `FS`), and only
-`series_kind = "pressure"` sorts frames by `OUTCAR` stress.
+`series_kind = "pressure"` sorts frames by `OUTCAR` pressure: `external pressure` plus
+`Pullay stress`, the pressure of the cell, which under `PSTRESS` is not the nominal value.
 
 `missing_descriptors` in `analysis.json` names any output that some frames lack, with
 the births and deaths left out for it. Tell the user which analysis to run or repair;
@@ -75,6 +76,8 @@ frame is not a located transition state. For a variable-cell path at one pressur
 use H = E + PV; without it they use E, and a warning says when frame volumes differ.
 Under `PSTRESS`, `OSZICAR`'s `F` and `E0` already include PV and `OUTCAR`'s `TOTEN` does
 not, so report the warning about `OSZICAR` energies.
+Report the warning too when a path takes energies from both `OUTCAR` and `OSZICAR`:
+under `PSTRESS` they differ by PV, so any barrier across them is unreliable.
 
 To draw chosen bonds and atoms along the path, install `electrace[plot]` and run
 `electrace figure RESULTS --bond C41-H227 --atom H227 --output NAME --json`. It

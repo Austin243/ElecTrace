@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from electrace._files import COLLECTION_RECORD
 from electrace.models import Frame, Sequence
 
 from .descriptors import (
@@ -16,7 +17,7 @@ from .descriptors import (
     attach_spin_populations,
     load_descriptor,
 )
-from .discovery import FrameSource, discover_path
+from .discovery import FrameSource, discover_path, energy_source_warnings
 from .vasp import read_poscar
 
 _CANONICAL_DESCRIPTOR_ALIASES = ("electrace.features.json", "features.json")
@@ -199,12 +200,17 @@ def load_sequence(
         if spin_paths:
             frame = attach_spin_populations(frame, spin_paths[0])
         frames.append(attach_net_charges(frame, source.directory))
+    warnings = list(discovered.warnings)
+    # Collection writes each staged energy to OSZICAR, and a copied ZVAL OUTCAR can take over,
+    # so the file read there says nothing about the source. Staging checked the source frames.
+    if not (root.parent / COLLECTION_RECORD).is_file():
+        warnings.extend(energy_source_warnings(discovered.frames))
     return Sequence(
         frames=tuple(frames),
         metadata={
             "source_root": str(root),
             "series_kind": discovered.kind,
-            "discovery_warnings": list(discovered.warnings),
+            "discovery_warnings": warnings,
             "descriptor_evidence": _descriptor_evidence(loaded),
         },
     )

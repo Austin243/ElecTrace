@@ -738,7 +738,7 @@ def analyze_sequence(
         )
         _summarize_groups(groups)
 
-    carried = config.metadata.get("workflow_order_warnings")
+    carried = config.metadata.get("workflow_warnings")
     warnings = [
         *sequence.metadata.get("discovery_warnings", ()),
         *(map(str, carried) if isinstance(carried, list) else ()),

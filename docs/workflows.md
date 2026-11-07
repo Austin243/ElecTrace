@@ -33,7 +33,7 @@ prints the order it used, and `[project] series_kind` sets it:
 | `neb` | numeric directories, by number; other names stop with an error | `neb` |
 | `ordered` | natural order of the directory names, so `image_2` before `image_10` | `pressure` when every name states one, otherwise `static` |
 | `static` | the same | `static` |
-| `pressure` | by pressure, from each name or else the last `external pressure` in `OUTCAR`; a frame without one stops with an error | `pressure` |
+| `pressure` | by pressure, from each name or else the last `external pressure` plus `Pullay stress` in `OUTCAR`; a frame without one stops with an error | `pressure` |
 | `auto` | as `neb` for two or more numeric directories; by pressure when every name states one (`5GPa`, `p20`, `100kbar`); otherwise the natural order of the names | as that order |
 
 An `OUTCAR`'s stress alone never sorts frames, because every VASP run prints one. A
@@ -41,6 +41,14 @@ warning says when the order differs from the names' order, and when numbers in t
 names do not set it: `IS`, `TS`, and `FS` come out as `FS`, `IS`, `TS`, and no rule can
 tell. Name or link such directories `00`, `01`, ... to set the order. A pressure series
 places no event on a barrier.
+
+VASP prints `external pressure` as the stress-tensor pressure minus `PSTRESS`, which it
+labels `Pullay stress`, so under `PSTRESS` it is only the residual. ElecTrace reads their
+sum, the pressure of the cell rather than the nominal value: a `PSTRESS = 3000` run ending
+in `external pressure = -9.36 kB  Pullay stress = 3000.00 kB` reads as 299.06 GPa. Name a
+directory `300GPa` to use the nominal pressure. Without `PSTRESS` the sum is `external
+pressure` itself. If `PSTRESS` only offsets a basis-set Pulay stress, the sum is the stress
+before that correction.
 
 `workflow analyze` keeps the staged order and repeats any warning about it in its
 results. A workflow with `series_kind: pressure` stays a pressure series there only if
@@ -170,12 +178,17 @@ state. ElecTrace does not take it from a calculation, where each image has its o
 computed pressure and, under `PSTRESS`, `external pressure` in `OUTCAR` is the residual,
 not the target.
 
-The energy must not already include PV. Under `PSTRESS`, `free energy TOTEN` in `OUTCAR`
-leaves it out, while `F` and `E0` in `OSZICAR` include it. ElecTrace takes a frame's
-energy from `OUTCAR` when it has one, so keep the `OUTCAR` of such runs. A warning lists
-the frames whose energy comes from `OSZICAR`, because ElecTrace cannot tell whether those
-runs set `PSTRESS`. `TOTEN` is the free energy and `E0` the sigma → 0 energy, so for a
-metallic path the two files also differ by the smearing term.
+The energy must not already include PV. A frame's energy is the last `free energy TOTEN`
+in its `OUTCAR` or, if that has none, the last `E0` in its `OSZICAR`. These are different
+quantities. Under `PSTRESS`, `TOTEN` leaves PV out, while `F` and `E0` in `OSZICAR`
+include it; one frame of a real `PSTRESS = 3000` run reads 25.04 eV from `OUTCAR` and
+194.35 eV from `OSZICAR`. `TOTEN` is also the free energy and `E0` the sigma → 0 energy,
+so for a metallic path the two files differ by the smearing term as well. Keep the
+`OUTCAR` of such runs. With a stated pressure, a warning lists the frames whose energy
+comes from `OSZICAR`, because ElecTrace cannot tell whether those runs set `PSTRESS`.
+Another warning names the frames of each file when one path uses both; give every frame
+a complete `OUTCAR`, or none. For a workflow, `workflow validate`, `workflow stage`, and
+`workflow analyze` make this check on the selected source frames.
 
 ## Focus on the reacting atoms
 

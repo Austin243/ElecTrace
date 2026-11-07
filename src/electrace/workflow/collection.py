@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from electrace._files import publish_directory
+from electrace._files import COLLECTION_RECORD, publish_directory
 from electrace.config import EventSettings, MatchingSettings, OutputConfig, load_config
 from electrace.io.descriptors import NET_CHARGE_SOURCES, SPIN_DESCRIPTOR, load_descriptor
 from electrace.io.discovery import pressure_from_label, pressure_from_outcar
@@ -21,7 +21,6 @@ from .staging import StagedFrame, StagedWorkflow, descriptor_outputs, load_stage
 
 COLLECTION_SCHEMA_VERSION = "electrace.collection.v1"
 COLLECTION_DIRECTORY = "analysis"
-COLLECTION_RECORD = ".electrace-collection.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +81,9 @@ def _render_config(staged: StagedWorkflow, final_root: Path, series_kind: str) -
         "workflow_analysis_labels": [frame.analysis_label for frame in staged.frames],
     }
     if staged.warnings:
-        # Collected labels always number the order, so analysis cannot see the source names.
-        metadata["workflow_order_warnings"] = list(staged.warnings)
+        # Collection renumbers the frames and rewrites their energies, so analysis cannot see
+        # the source names or energy files.
+        metadata["workflow_warnings"] = list(staged.warnings)
     pressure = staged.manifest.project.pressure_gpa
     lines = [
         "[project]",

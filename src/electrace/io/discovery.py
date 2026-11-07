@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -63,8 +64,9 @@ _PRESSURE_PATTERNS = (
     ),
 )
 _GPA_PER_UNIT = {"gpa": 1.0, "kbar": 0.1, "kb": 0.1, "bar": 1.0e-4}
+_KILOBARS = r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)\s*kB"
 _OUTCAR_PRESSURE = re.compile(
-    r"external\s+pressure\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)\s*kB",
+    rf"external\s+pressure\s*=\s*{_KILOBARS}(?:\s+Pull?ay\s+stress\s*=\s*{_KILOBARS}|\s*$)",
     re.IGNORECASE,
 )
 
@@ -136,7 +138,14 @@ def pressure_from_label(label: str) -> float | None:
 
 
 def pressure_from_outcar(source: Path) -> float | None:
-    """Extract the last VASP external pressure and convert kbar to GPa."""
+    """Return the cell's pressure in GPa from the last complete stress record in an OUTCAR.
+
+    VASP prints ``external pressure`` as the stress-tensor pressure minus ``Pullay stress``,
+    which is PSTRESS, so under PSTRESS it is only the residual. Their sum is the pressure of
+    the cell rather than the nominal PSTRESS: -9.36 and 3000.00 kB read as 299.064 GPa. A
+    record with no ``Pullay stress`` field reads as ``external pressure``; one cut off inside
+    that field does not count, because it would read as the residual.
+    """
 
     if not source.is_file():
         return None
@@ -145,8 +154,28 @@ def pressure_from_outcar(source: Path) -> float | None:
         for line in handle:
             match = _OUTCAR_PRESSURE.search(line)
             if match is not None:
-                last = float(match.group(1)) * 0.1
+                external, pullay = match.groups()
+                last = (float(external) + float(pullay or 0.0)) * 0.1
     return last
+
+
+def energy_source_warnings(frames: Iterable[FrameSource]) -> tuple[str, ...]:
+    """Warn when frames of one path take their energies from different files."""
+
+    labels: dict[str, list[str]] = {}
+    for frame in frames:
+        if "energy_source" in frame.metadata:
+            labels.setdefault(frame.metadata["energy_source"], []).append(frame.label)
+    if len(labels) < 2:
+        return ()
+    files = "; ".join(f"{name} for {', '.join(names)}" for name, names in labels.items())
+    return (
+        f"Frame energies come from different files ({files}), and those are different "
+        "quantities: OUTCAR's free energy TOTEN and OSZICAR's E0 differ by the smearing term "
+        "and, under PSTRESS, by PV, since only E0 includes it. Energy differences across these "
+        "frames, and any barrier from them, are unreliable. Give every frame a complete OUTCAR, "
+        "or none.",
+    )
 
 
 def _check_contiguous(indices: list[int]) -> None:
@@ -263,8 +292,8 @@ def discover_static_series(
     every VASP run prints a residual stress, so it does not place a frame on a path.
     Only two things order frames by pressure, and their order is warned about when it
     differs from the names': ``mode="pressure"``, which reads each pressure from the name
-    or else the last ``external pressure`` record in OUTCAR and rejects a frame without
-    one, and ``mode="auto"`` when every name states a pressure. ``mode="static"`` and
+    or else with :func:`pressure_from_outcar` and rejects a frame without one, and
+    ``mode="auto"`` when every name states a pressure. ``mode="static"`` and
     ``mode="ordered"`` always keep the name order; ``ordered`` still calls a series
     whose names all state a pressure a pressure series, and ``static`` never does.
 
