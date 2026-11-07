@@ -46,7 +46,10 @@ def _workspace_warnings(workspace: Path) -> tuple[str, ...]:
         raise ValueError(
             f"workflow workspace already exists and is not ElecTrace-managed: {workspace}"
         )
-    return (f"workflow workspace already exists; staging it again requires --force: {workspace}",)
+    return (
+        "workflow workspace already exists; staging it again requires --force, and "
+        f"--discard-results if it holds results: {workspace}",
+    )
 
 
 def _executable_warnings(
@@ -76,7 +79,7 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
         step.id: _staging._template_files(step, source_manifest.parent) for step in manifest.steps
     }
 
-    frames = _staging._selected_frames(manifest, source_root, workspace)
+    frames, order_warnings = _staging._selected_frames(manifest, source_root, workspace)
     species_warnings = tuple(
         warning
         for step in manifest.steps
@@ -96,6 +99,7 @@ def validate_workflow(manifest_path: str | Path) -> WorkflowValidation:
                 # cannot be seeded before anything is written.
                 _staging._periodic_input(step, frame.structure)
     warnings = (
+        *order_warnings,
         *_workspace_warnings(workspace),
         *_executable_warnings(manifest, source_manifest.parent),
         *species_warnings,

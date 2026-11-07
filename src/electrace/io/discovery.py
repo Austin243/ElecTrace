@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -46,9 +47,11 @@ class DiscoveredPath:
     root: Path
     kind: str  # "neb", "static", or "pressure"
     frames: tuple[FrameSource, ...]
+    warnings: tuple[str, ...] = ()
 
 
 _NUMERIC_DIRECTORY = re.compile(r"^[0-9]+$")
+_MOST_MISSING_LISTED = 100
 _PRESSURE_PATTERNS = (
     re.compile(
         r"(?i)(?<![a-z0-9])(?:p(?:ressure)?[_=-]?)?"
@@ -146,6 +149,19 @@ def pressure_from_outcar(source: Path) -> float | None:
     return last
 
 
+def _check_contiguous(indices: list[int]) -> None:
+    """Stop on missing image numbers, without building a range a stray number makes huge."""
+
+    gaps = [(low + 1, high - 1) for low, high in pairwise(indices) if high - low > 1]
+    if not gaps:
+        return
+    if sum(high - low + 1 for low, high in gaps) <= _MOST_MISSING_LISTED:
+        missing = str([index for low, high in gaps for index in range(low, high + 1)])
+    else:
+        missing = ", ".join(f"{low} to {high}" for low, high in gaps)
+    raise DiscoveryError(f"NEB image indices are not contiguous; missing {missing}")
+
+
 def discover_neb(
     root: str | Path,
     *,
@@ -174,7 +190,10 @@ def discover_neb(
         if child.is_dir() and _NUMERIC_DIRECTORY.fullmatch(child.name)
     ]
     if not numeric:
-        raise DiscoveryError(f"no numeric NEB image directories found under {base}")
+        raise DiscoveryError(
+            f"no numeric NEB image directories found under {base}; name the images 00, 01, ... "
+            'or set series_kind = "ordered" to keep the order of other names'
+        )
 
     by_index: dict[int, tuple[Path, Path]] = {}
     for directory in numeric:
@@ -199,10 +218,7 @@ def discover_neb(
         raise DiscoveryError("a NEB path requires at least two usable numeric image directories")
     ordered_indices = sorted(by_index)
     if strict:
-        expected = list(range(ordered_indices[0], ordered_indices[-1] + 1))
-        if ordered_indices != expected:
-            missing = sorted(set(expected) - set(ordered_indices))
-            raise DiscoveryError(f"NEB image indices are not contiguous; missing {missing}")
+        _check_contiguous(ordered_indices)
 
     frames = tuple(
         _frame_source(canonical_index, *by_index[directory_index], directory_index=directory_index)
@@ -216,26 +232,51 @@ def _natural_key(value: str) -> tuple[tuple[int, int | str], ...]:
     return tuple((0, int(piece)) if piece.isdigit() else (1, piece) for piece in pieces if piece)
 
 
+def _number_decides(left: str, right: str) -> bool:
+    """Return whether the first difference between two names is a plain number.
+
+    ``re.split`` puts digit runs at odd positions. Digits after a decimal point are a
+    fraction, which the natural order misreads when their lengths differ (0.5, 0.25).
+    """
+
+    first, second = (re.split(r"(\d+)", name.casefold()) for name in (left, right))
+    for position, (a, b) in enumerate(zip(first, second, strict=False)):
+        if position % 2 == 0:
+            if a != b:
+                return False
+        elif int(a) != int(b):
+            return first[position - 1] != "." or len(a) == len(b)
+    return False
+
+
 def discover_static_series(
     root: str | Path,
     *,
     prefer_contcar: bool = True,
     structure_name: str = "CONTCAR",
     fallback_structure_name: str = "POSCAR",
-    require_pressure: bool = False,
+    mode: str = "auto",
 ) -> DiscoveredPath:
     """Discover an ordered series of VASP static-calculation directories.
 
-    Pressure is read from the directory name first, then from the last
-    ``external pressure`` record in OUTCAR.  If every frame has pressure, the
-    path is ordered numerically by pressure; otherwise it uses natural-name
-    ordering.  ``require_pressure=True`` rejects mixed or non-pressure series.
+    Frames keep the natural order of their directory names, whatever an OUTCAR says:
+    every VASP run prints a residual stress, so it does not place a frame on a path.
+    Only two things order frames by pressure, and their order is warned about when it
+    differs from the names': ``mode="pressure"``, which reads each pressure from the name
+    or else the last ``external pressure`` record in OUTCAR and rejects a frame without
+    one, and ``mode="auto"`` when every name states a pressure. ``mode="static"`` and
+    ``mode="ordered"`` always keep the name order; ``ordered`` still calls a series
+    whose names all state a pressure a pressure series, and ``static`` never does.
+
+    A warning also says when numbers in the names do not set their order, as in ``IS``,
+    ``TS``, ``FS``, because no rule can then tell the path order from the names.
     """
 
     base = Path(root).expanduser().resolve()
     if not base.is_dir():
         raise DiscoveryError(f"path root is not a directory: {base}")
     found: list[tuple[Path, Path, float | None]] = []
+    names_state_pressure = True
     for directory in base.iterdir():
         if not directory.is_dir():
             continue
@@ -246,6 +287,7 @@ def discover_static_series(
             continue
         pressure = pressure_from_label(directory.name)
         if pressure is None:
+            names_state_pressure = False
             pressure = pressure_from_outcar(directory / "OUTCAR")
         found.append((directory, structure, pressure))
     if not found:
@@ -254,23 +296,42 @@ def discover_static_series(
             f"found under {base}"
         )
     missing = sorted(directory.name for directory, _, pressure in found if pressure is None)
-    if require_pressure and missing:
+    if mode == "pressure" and missing:
         raise DiscoveryError(f"pressure is missing for static frames: {', '.join(missing)}")
 
-    is_pressure = not missing
-    if is_pressure:
+    found.sort(key=lambda item: (_natural_key(item[0].name), item[0].name))
+    names = [directory.name for directory, _, _ in found]
+    warnings: list[str] = []
+    is_pressure = mode == "pressure" or (names_state_pressure and mode != "static")
+    pressures = [pressure for _, _, pressure in found]
+    if is_pressure and len(pressures) != len(set(pressures)):
+        raise DiscoveryError("pressure series contains duplicate pressure values")
+    if is_pressure and mode != "ordered":
         found.sort(key=lambda item: (item[2], _natural_key(item[0].name)))
-        pressures = [pressure for _, _, pressure in found]
-        if len(pressures) != len(set(pressures)):
-            raise DiscoveryError("pressure series contains duplicate pressure values")
-    else:
-        found.sort(key=lambda item: _natural_key(item[0].name))
+        order = [directory.name for directory, _, _ in found]
+        if order != names:
+            warnings.append(
+                f"Frames are ordered by pressure ({', '.join(order)}), not by name "
+                f'({", ".join(names)}). Set series_kind = "ordered" to keep the name order.'
+            )
+    elif not all(_number_decides(left, right) for left, right in pairwise(names)):
+        warnings.append(
+            f"Frames are in the natural order of their names ({', '.join(names)}), but numbers "
+            "in those names do not set it, so this may not be the path order, and every event "
+            "and barrier label depends on it. Name or link the frame directories 00, 01, ... "
+            "to set the order."
+        )
 
     frames = tuple(
         _frame_source(index, directory, structure, pressure)
         for index, (directory, structure, pressure) in enumerate(found)
     )
-    return DiscoveredPath(root=base, kind="pressure" if is_pressure else "static", frames=frames)
+    return DiscoveredPath(
+        root=base,
+        kind="pressure" if is_pressure else "static",
+        frames=frames,
+        warnings=tuple(warnings),
+    )
 
 
 def discover_path(
@@ -296,7 +357,8 @@ def discover_path(
                 and _structure_in(child, prefer_contcar, structure_name, fallback_structure_name)
                 is not None
             )
-        mode = "neb" if numeric_with_structures >= 2 else "static"
+        if numeric_with_structures >= 2:
+            mode = "neb"
     if mode == "neb":
         return discover_neb(
             root,
@@ -305,13 +367,13 @@ def discover_path(
             fallback_structure_name=fallback_structure_name,
             strict=strict,
         )
-    if mode in {"static", "ordered", "pressure"}:
+    if mode in {"auto", "static", "ordered", "pressure"}:
         return discover_static_series(
             root,
             prefer_contcar=prefer_contcar,
             structure_name=structure_name,
             fallback_structure_name=fallback_structure_name,
-            require_pressure=mode == "pressure",
+            mode=mode,
         )
     raise DiscoveryError(
         f"unknown discovery mode {mode!r}; expected auto, neb, static/ordered, or pressure"

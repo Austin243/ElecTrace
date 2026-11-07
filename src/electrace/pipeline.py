@@ -226,20 +226,60 @@ def _critical_point_counts(sequence: Sequence) -> tuple[list[dict[str, Any]], li
             "may not be chemistry. The counts use every critical point, before any density "
             "cutoff or focus."
         )
-    missing = unknown.pop(_NO_CRITIC2, [])
-    if missing:
-        warnings.append(
-            "No critic2 critical points were loaded for frame(s): "
-            + ", ".join(missing)
-            + "; they are missing there, not absent, so critical-point births and deaths at "
-            "those frames are not chemistry."
-        )
+    # A frame without a critic2 document gets the general missing-output warning.
+    unknown.pop(_NO_CRITIC2, None)
     warnings.extend(
         f"critic2 Morse sum unknown for frame(s) {', '.join(labels)} ({reason}); those "
         "searches cannot be checked for missing critical points."
         for reason, labels in unknown.items()
     )
     return entries, warnings
+
+
+def _missing_descriptor_warnings(gaps: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Say which output each frame lacks and which births and deaths were left out for it."""
+
+    warnings: list[str] = []
+    for gap in gaps:
+        output = f"{gap['producer']} output" + (f" {gap['file']}" if gap["file"] else "")
+        left_out = " and ".join(
+            f"{count} {kind}{'' if count == 1 else 's'}"
+            for kind, count in (
+                ("death", gap["events_left_out"]["death"]),
+                ("birth", gap["events_left_out"]["birth"]),
+            )
+            if count
+        )
+        warnings.append(
+            f"{output} is missing from frame(s) {', '.join(gap['frame_labels'])}, though other "
+            "frames have it. Its features are unknown there, not absent: their tracks stop and "
+            "restart at those frames, and a change across them is not reported"
+            + (f"; {left_out} there are left out of events." if left_out else ".")
+        )
+    return warnings
+
+
+def _untracked_density_warnings(sequence: Sequence, thresholds: Mapping[str, float]) -> list[str]:
+    """Say when critic2 density or Laplacian values exist but no threshold can flag them."""
+
+    examples = {"field": "field = 0.05", "laplacian": "laplacian = 0.25"}
+    unset = [
+        name
+        for name in examples
+        if name not in thresholds
+        and any(
+            _as_finite_float(item.attributes.get(name)) is not None
+            for frame in sequence.frames
+            for item in frame.features
+        )
+    ]
+    if not unset:
+        return []
+    return [
+        f"{' and '.join(unset)} values are in bonds.csv and the tracks but raise no events, "
+        "because [events.descriptor_thresholds] sets no threshold for them. To flag their "
+        f"changes, add a threshold there, for example {' and '.join(examples[n] for n in unset)}."
+    ]
 
 
 def _observation(
@@ -614,13 +654,21 @@ def analyze_sequence(
         )
         _summarize_groups(groups)
 
-    warnings = [*descriptor_warnings, *bond_warnings]
+    carried = config.metadata.get("workflow_order_warnings")
+    warnings = [
+        *sequence.metadata.get("discovery_warnings", ()),
+        *(map(str, carried) if isinstance(carried, list) else ()),
+        *descriptor_warnings,
+        *bond_warnings,
+    ]
     missing_features = [frame.label for frame in sequence.frames if not frame.features]
     if missing_features:
         warnings.append(
             "No electronic features were loaded for frame(s): " + ", ".join(missing_features)
         )
+    warnings.extend(_missing_descriptor_warnings(tracking.descriptor_gaps))
     warnings.extend(count_warnings)
+    warnings.extend(_untracked_density_warnings(sequence, config.events.descriptor_thresholds))
     spin_frames = {
         frame.label
         for frame in sequence.frames
@@ -752,6 +800,8 @@ def analyze_sequence(
     }
     if groups is not None:
         analysis["atom_groups"] = groups
+    if tracking.descriptor_gaps:
+        analysis["missing_descriptors"] = list(tracking.descriptor_gaps)
     if min_field:
         analysis["suppressed_events"] = {
             "critical_point_min_field": dict(min_field),

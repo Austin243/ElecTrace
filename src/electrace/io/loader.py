@@ -29,6 +29,7 @@ _NATIVE_DESCRIPTOR_FILENAMES = (
     "DDEC6_even_tempered_net_atomic_charges.xyz",
     "ACF.dat",
 )
+_SEPARATE_LISTS = frozenset({"ICOHPLIST.lobster", "ICOBILIST.lobster"})
 
 
 def _descriptor_filenames(name: str) -> tuple[str, ...]:
@@ -81,7 +82,39 @@ def _spin_candidates(
     return _unique_paths(candidates)
 
 
-def load_path(
+def _descriptor_evidence(
+    documents_by_frame: Iterable[list[tuple[str, str, tuple[str, ...]]]],
+) -> list[dict[tuple[str, str | None], tuple[str, ...]]]:
+    """Return each frame's feature IDs by descriptor output, from (producer, file, IDs).
+
+    An output is a producer, whatever its files are called, because frames can use
+    different layouts (``00.json``, ``00/critic2.features.json``). Only LOBSTER's two
+    lists count separately, since one can exist without the other. An output is named by
+    its native file when the frames use just one.
+    """
+
+    frames = list(documents_by_frame)
+    natives: dict[tuple[str, str], set[str]] = {}
+
+    def output(producer: str, name: str) -> tuple[str, str]:
+        return producer, name if name in _SEPARATE_LISTS else ""
+
+    for documents in frames:
+        for producer, name, _ in documents:
+            if name in _NATIVE_DESCRIPTOR_FILENAMES:
+                natives.setdefault(output(producer, name), set()).add(name)
+    evidence: list[dict[tuple[str, str | None], tuple[str, ...]]] = []
+    for documents in frames:
+        held: dict[tuple[str, str | None], tuple[str, ...]] = {}
+        for producer, name, features in documents:
+            names = natives.get(output(producer, name), set())
+            key = (producer, next(iter(names)) if len(names) == 1 else None)
+            held[key] = (*held.get(key, ()), *features)
+        evidence.append(held)
+    return evidence
+
+
+def load_sequence(
     path: str | Path,
     *,
     descriptor_dir: Path | None = None,
@@ -92,8 +125,8 @@ def load_path(
     prefer_contcar: bool = True,
     structure_name: str = "CONTCAR",
     fallback_structure_name: str = "POSCAR",
-) -> list[Frame]:
-    """Discover and load a VASP path into ordered core ``Frame`` objects.
+) -> Sequence:
+    """Discover and load a VASP path into an ordered core ``Sequence``.
 
     ``path`` may contain numeric VASP NEB images or named static/pressure
     calculation directories. ``structure_name`` and ``fallback_structure_name`` must be
@@ -109,8 +142,9 @@ def load_path(
     external science tools are never run while loading.
     """
 
+    root = Path(path).expanduser().resolve()
     discovered = discover_path(
-        path,
+        root,
         mode=mode,
         strict=strict,
         prefer_contcar=prefer_contcar,
@@ -120,6 +154,7 @@ def load_path(
     if descriptor_source == "auto":
         descriptor_source = "local" if descriptor_dir is None else "external"
     frames: list[Frame] = []
+    loaded: list[list[tuple[str, str, tuple[str, ...]]]] = []
     for source in discovered.frames:
         metadata = {
             "path_root": str(discovered.root),
@@ -146,6 +181,12 @@ def load_path(
             descriptor_source=descriptor_source,
         )
         documents = [load_descriptor(candidate, frame=frame) for candidate in descriptor_paths]
+        loaded.append(
+            [
+                (document.producer, candidate.name, tuple(item.id for item in document.features))
+                for candidate, document in zip(descriptor_paths, documents, strict=True)
+            ]
+        )
         if documents:
             frame = attach_descriptors(frame, documents)
             frame.metadata["descriptor_sources"] = list(map(str, descriptor_paths))
@@ -158,15 +199,18 @@ def load_path(
         if spin_paths:
             frame = attach_spin_populations(frame, spin_paths[0])
         frames.append(attach_net_charges(frame, source.directory))
-    return frames
-
-
-def load_sequence(path: str | Path, **options: Any) -> Sequence:
-    """Load a path with :func:`load_path` and wrap it in the core ``Sequence`` model."""
-
-    root = Path(path).expanduser().resolve()
-    frames = load_path(root, **options)
     return Sequence(
         frames=tuple(frames),
-        metadata={"source_root": str(root), "series_kind": frames[0].metadata["series_kind"]},
+        metadata={
+            "source_root": str(root),
+            "series_kind": discovered.kind,
+            "discovery_warnings": list(discovered.warnings),
+            "descriptor_evidence": _descriptor_evidence(loaded),
+        },
     )
+
+
+def load_path(path: str | Path, **options: Any) -> list[Frame]:
+    """Load a path with :func:`load_sequence` and return its frames."""
+
+    return list(load_sequence(path, **options).frames)

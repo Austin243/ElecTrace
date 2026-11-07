@@ -25,12 +25,47 @@ critic2 `CPREPORT` JSON, LOBSTER integrated bond lists, Chargemol/DDEC charges, 
 per-atom spin populations from spin-polarized runs.
 `analysis.json` is the canonical result; CSV and HTML files are derived views.
 
+Events compare adjacent frames, so the frame order decides what is reported. `analyze`
+prints the order it used, and `[project] series_kind` sets it:
+
+| `series_kind` | Frame order | Series kind in the results |
+| --- | --- | --- |
+| `neb` | numeric directories, by number; other names stop with an error | `neb` |
+| `ordered` | natural order of the directory names, so `image_2` before `image_10` | `pressure` when every name states one, otherwise `static` |
+| `static` | the same | `static` |
+| `pressure` | by pressure, from each name or else the last `external pressure` in `OUTCAR`; a frame without one stops with an error | `pressure` |
+| `auto` | as `neb` for two or more numeric directories; by pressure when every name states one (`5GPa`, `p20`, `100kbar`); otherwise the natural order of the names | as that order |
+
+An `OUTCAR`'s stress alone never sorts frames, because every VASP run prints one. A
+warning says when the order differs from the names' order, and when numbers in the
+names do not set it: `IS`, `TS`, and `FS` come out as `FS`, `IS`, `TS`, and no rule can
+tell. Name or link such directories `00`, `01`, ... to set the order. A pressure series
+places no event on a barrier.
+
+`workflow analyze` keeps the staged order and repeats any warning about it in its
+results. A workflow with `series_kind: pressure` stays a pressure series there only if
+the frames' names state their pressures or an `OUTCAR` is collected as their ZVAL source;
+otherwise its results say `static`.
+
 By default, atoms are re-matched at every step by element and minimum-image distance
 (`[matching] atom_identity = "geometric"`), with `max_atom_displacement` as the
 motion cutoff. For NEB images and other paths that keep one atom order, set
 `atom_identity = "index"`. ElecTrace then pairs the i-th atom of each frame, stops
 with an error if the element sequences differ, and records each displacement without
 letting it lower match confidence; `max_atom_displacement` is not used.
+
+Each event in `events.csv` and `analysis.json` gives its step as `frame_before` and
+`frame_after`, which is what the report's timeline shows. `start_frame` repeats
+`frame_after`, and `end_frame` is the last frame its lineage reaches, shown in the
+timeline as "holds through".
+
+Critic2 densities and Laplacians (`field`, `laplacian`) are tracked and listed in
+`bonds.csv` but raise events only with a threshold under
+`[events.descriptor_thresholds]`, and a warning says when they have none. The starter
+configuration leaves them commented out, with the values in `examples/hcn-hnc`. On that
+example they take the events from 10 to 20: all ten new ones cross the Laplacian
+threshold, two also cross the density threshold, and five are on the C–N bond, whose
+length the scan holds fixed. Check what they flag before relying on them.
 
 Events compare adjacent frames only. `track_summary.csv`, `track_summary` in
 `analysis.json`, and the report's whole-path table give one row per feature track:
@@ -311,6 +346,17 @@ themselves. Per-atom spin populations are read from `spin/ACF.dat` in a frame
 directory, or from `descriptors/<label>/spin/ACF.dat` in a mirrored external
 directory.
 
+An output that some frames have and others lack, such as one frame without `ACF.dat`,
+is missing evidence, not a change. A warning names the producer, the file, and the
+frames, and `missing_descriptors` in `analysis.json` records them. Births and deaths
+that only the missing output explains are left out of events and counted there. The
+features' tracks stop and restart at those frames, so a change across them is not
+reported, and an event whose persistence the gap cuts short is `right_censored`, as at
+the end of a path. A document with an empty feature list is not missing: it says the
+tool looked and found nothing. An output is a producer, whatever its files are called,
+and LOBSTER's two lists count separately. Two documents from one producer in a frame
+therefore count as one output, and losing one of them is not noticed.
+
 A LOBSTER list gives one bond feature per atom-pair row. Orbital-resolved rows,
 whose labels name an orbital (`Na1_3s`, `Fe1_3d_z^2`), split the atom-pair row above
 them by orbital. They are checked against that row, skipped, and counted as
@@ -500,6 +546,13 @@ or Python-style slices:
 Staging writes an isolated workspace and does not execute a program. Review the
 generated commands and inputs before authorizing work.
 
+Staging over an existing workspace needs `--force`, which replaces it. It stops if the
+workspace holds files a fresh stage would not write, such as job outputs, logs, run and
+Slurm records, and collected analyses, and names them. `--force --discard-results`
+deletes them, including under queued or running jobs. Removing a step or frame from the
+manifest also asks for `--discard-results`, because its staged files cannot be told
+from results. Hand edits to staged inputs are not kept.
+
 ## Supported calculation steps
 
 | Goal | Step | Capability | Collected output |
@@ -522,8 +575,12 @@ earlier steps; see [All-electron density analysis](#all-electron-density-analysi
 Each step points to an executable entry and may declare a template directory,
 dependencies, expected outputs, environment variables, and plugin options. VASP
 templates normally provide `INCAR`, `KPOINTS`, and `POTCAR`; ElecTrace places the
-selected structure at `POSCAR`. Descriptor steps can consume files from dependency
-steps with `options.input_links`.
+selected structure at `POSCAR`. A VASP step's `incar_overrides` sets a tag wherever
+the template states it, including on a line it shares with other tags (`ENCUT = 520;
+ISPIN = 2`) and in every repeat of the tag, and adds it at the end otherwise; all
+other tags and comments stay as written. A tag inside a nested `{ }` block is a
+different tag and stays. Descriptor steps can consume files from dependency steps with
+`options.input_links`.
 
 VASP pairs `POSCAR` species with `POTCAR` entries by position, so validation and
 staging stop when a frame's species order differs from the template `POTCAR`'s

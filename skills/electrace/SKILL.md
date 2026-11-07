@@ -25,6 +25,15 @@ electrace analyze electrace.toml --json
 Use `analysis.json` as the canonical result. Report warnings, missing frames, and
 provenance. Do not silently add `--permissive` to relax frame discovery.
 
+Check the frame order that `analyze` prints against the path, since every event depends
+on it. Frames keep the natural order of their directory names; a warning says when
+numbers in the names do not set that order (`IS`, `TS`, `FS`), and only
+`series_kind = "pressure"` sorts frames by `OUTCAR` stress.
+
+`missing_descriptors` in `analysis.json` names any output that some frames lack, with
+the births and deaths left out for it. Tell the user which analysis to run or repair;
+nothing is known about those features in those frames.
+
 For NEB images and other paths that keep one atom order, set
 `[matching] atom_identity = "index"`; the default `"geometric"` re-matches atoms by
 element and distance at every step. Events compare adjacent frames only, so also read
@@ -104,7 +113,9 @@ electrace workflow analyze electrace-workflow.yaml --json
 - Never invent a `POTCAR`, executable, credential, or private input.
 - If validation reports a POSCAR/POTCAR species-order mismatch, ask the user for a
   `POTCAR` in the structure's species order; do not reorder structure files.
-- Never add `--yes`, `--force`, or `--permissive` merely to make a command succeed.
+- Never add `--yes`, `--force`, `--discard-results`, or `--permissive` merely to make a
+  command succeed. `workflow stage --force --discard-results` deletes job outputs, and
+  needs the user's authorization for that deletion.
 - Treat Bader/DDEC values, ELF/QTAIM topology, and ICOHP/ICOBI as method-dependent
   evidence, not unique oxidation states, bonds, mechanisms, or energies.
 - Treat missing evidence as missing and surface external-tool failures.

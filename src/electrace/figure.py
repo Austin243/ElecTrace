@@ -209,7 +209,8 @@ def _bond_series(
             if choice not in by_id:
                 raise ValueError(f"no bond rows have bond_id {choice}")
             row = by_id[choice][0]
-            wanted.append(((int(row["atom_a"]), int(row["atom_b"])), choice))
+            pair = (_atom(str(row["atom_a"]), elements), _atom(str(row["atom_b"]), elements))
+            wanted.append((pair, choice))
             continue
         name = f"{elements[choice[0]]}{choice[0]}–{elements[choice[1]]}{choice[1]}"
         ids = ids_of.get(choice, [])
@@ -465,6 +466,31 @@ def _json_values(values: list[float]) -> list[float | None]:
     return [None if math.isnan(value) else value for value in values]
 
 
+def _check_record_frames(analysis: Mapping[str, Any], position: Mapping[int, int]) -> None:
+    """Stop before drawing anything when a record names a frame the analysis does not have."""
+
+    barrier = analysis.get("barrier")
+    records = (
+        ("a bond row", [row["frame"] for row in analysis.get("bonds") or []]),
+        ("the barrier record", barrier.get("frames", []) if isinstance(barrier, Mapping) else []),
+        (
+            "an event",
+            [
+                event[key]
+                for event in analysis.get("events", [])
+                for key in ("frame_before", "frame_after")
+            ],
+        ),
+    )
+    for name, frames in records:
+        for frame in frames:
+            if frame not in position:
+                raise ValueError(
+                    f"{name} in this analysis names frame {frame!r}, which is not one of "
+                    "its frames; the file may be damaged or edited"
+                )
+
+
 def write_path_figure(
     analysis: Mapping[str, Any],
     output: str | Path,
@@ -500,6 +526,7 @@ def write_path_figure(
     focus = {int(item["index"]) for item in (analysis.get("focus") or {}).get("atoms", [])}
     labels = [frame.label for frame in frames]
     position = {frame.index: number for number, frame in enumerate(frames)}
+    _check_record_frames(analysis, position)
     warnings: list[str] = []
 
     known = [number for number, frame in enumerate(frames) if frame.energy is not None]

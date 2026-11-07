@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -31,6 +32,9 @@ from .selection import parse_frame_selection
 WORKSPACE_SCHEMA_VERSION = "electrace.workspace.v1"
 WORKSPACE_RECORD = ".electrace-workspace.json"
 _INCAR_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# A quoted value, a comment, a line continuation, a statement's end, or anything else.
+_INCAR_QUOTED = re.compile(r'"[^"]*"')
+_INCAR_TOKEN = re.compile(r'"[^"]*"|[#!][^\n]*|\\[ \t]*\n|[;\n]|[^"#!;\\\n]+|["\\]')
 _SAFE_LABEL = re.compile(r"[^A-Za-z0-9_.-]+")
 _LOBSTER_BOND_REQUEST = re.compile(r"(?im)^\s*(?:cohpgenerator|cohpbetween)\b")
 _LOBSTER_SKIP_COBI = re.compile(r"(?im)^\s*skipcobi\b")
@@ -128,6 +132,7 @@ class StagedWorkflow:
     workspace: Path
     frames: tuple[StagedFrame, ...]
     jobs: tuple[JobSpec, ...]
+    warnings: tuple[str, ...] = ()
 
     @property
     def record_path(self) -> Path:
@@ -158,6 +163,59 @@ def _replace_file(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def _rewrite_incar(text: str, overrides: Mapping[str, str]) -> tuple[str, set[str]]:
+    """Set every statement of an overridden tag and keep all other text as written.
+
+    Follows the INCAR syntax in the VASP wiki: a semicolon separates statements on a line,
+    ``#`` and ``!`` start a comment, a backslash continues a statement on the next line,
+    and double quotes hold a value across lines. A tag inside a nested ``{ }`` block is a
+    different tag and stays. A line holding only an overridden statement becomes
+    ``TAG = value``, without its comment, which may describe the old value. Returns the
+    text and the tags it set.
+    """
+
+    applied: set[str] = set()
+    depth = 0
+
+    def replacement(statement: str) -> str | None:
+        nonlocal depth
+        tag, equals, value = _INCAR_QUOTED.sub("", statement).partition("=")
+        top_level = depth == 0
+        # Before the equals sign a brace opens a block; after it, one only closes a block.
+        closed = max(0, value.count("}") - value.count("{"))
+        depth = max(0, depth + tag.count("{") - tag.count("}") - closed)
+        key = tag.strip().upper()
+        if not top_level or not equals or key not in overrides:
+            return None
+        applied.add(key)
+        return f"{key} = {overrides[key]}"
+
+    def rewrite_line(statements: list[str], comment: str) -> str:
+        new = [replacement(item) for item in statements]
+        if any(new) and sum(bool(item.strip()) for item in statements) == 1:
+            return next(item for item in new if item)
+        kept = (
+            item if value is None else item.replace(item.strip(), value, 1)
+            for item, value in zip(statements, new, strict=True)
+        )
+        return ";".join(kept) + comment
+
+    lines: list[str] = []
+    statements, comment = [""], ""
+    for token in _INCAR_TOKEN.findall(text):
+        if token == "\n":
+            lines.append(rewrite_line(statements, comment))
+            statements, comment = [""], ""
+        elif token == ";":
+            statements.append("")
+        elif token[0] in "#!":
+            comment = token
+        else:
+            statements[-1] += token
+    lines.append(rewrite_line(statements, comment))
+    return "\n".join(lines), applied
+
+
 def _apply_incar_overrides(path: Path, raw: JSONValue | None) -> None:
     if raw is None:
         return
@@ -170,13 +228,10 @@ def _apply_incar_overrides(path: Path, raw: JSONValue | None) -> None:
         overrides[key.upper()] = (
             ".TRUE." if value is True else ".FALSE." if value is False else str(value)
         )
-    result: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        content = line.split("!", 1)[0].split("#", 1)[0]
-        key = content.split("=", 1)[0].strip().upper() if "=" in content else ""
-        result.append(f"{key} = {overrides.pop(key)}" if key in overrides else line)
-    result.extend(f"{key} = {value}" for key, value in overrides.items())
-    atomic_write_text(path, "\n".join(result).rstrip() + "\n")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    text, applied = _rewrite_incar("\n".join(lines), overrides)
+    added = [f"{key} = {value}" for key, value in overrides.items() if key not in applied]
+    atomic_write_text(path, "\n".join(([text] if lines else []) + added).rstrip() + "\n")
 
 
 def _plugin_options(step: WorkflowStep) -> dict[str, JSONValue]:
@@ -609,15 +664,18 @@ def load_project(manifest_path: str | Path) -> tuple[Path, WorkflowManifest, Pat
 
 def _selected_frames(
     manifest: WorkflowManifest, source_root: Path, workspace: Path
-) -> tuple[StagedFrame, ...]:
-    sources = discover_path(
+) -> tuple[tuple[StagedFrame, ...], tuple[str, ...]]:
+    """Return the selected frames and any warning about the order they were found in."""
+
+    discovered = discover_path(
         source_root,
         mode=manifest.project.series_kind,
         structure_name=manifest.project.structure,
         fallback_structure_name=manifest.project.fallback,
-    ).frames
+    )
+    sources = discovered.frames
     selected = (sources[index] for index in parse_frame_selection(manifest.frames, len(sources)))
-    return tuple(
+    frames = tuple(
         StagedFrame(
             source.index,
             source.label,
@@ -629,6 +687,7 @@ def _selected_frames(
         )
         for order, source in enumerate(selected)
     )
+    return frames, discovered.warnings
 
 
 def _workspace_is_managed(path: Path) -> bool:
@@ -660,14 +719,53 @@ def _rebase_job(job: JobSpec, source_root: Path, destination_root: Path) -> JobS
     )
 
 
-def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> StagedWorkflow:
+def _files_under(root: Path) -> set[Path]:
+    return {
+        path.relative_to(root) for path in root.rglob("*") if path.is_symlink() or not path.is_dir()
+    }
+
+
+def _check_no_results_lost(workspace: Path, fresh: Path) -> None:
+    """Stop before deleting files a fresh stage would not write, which may be results.
+
+    Job outputs, logs, run and submission records, and collected analyses are all such
+    files. Generated Slurm scripts are not, since submitting writes them again. A step
+    or frame removed from the manifest also counts, because nothing here can tell its
+    files from results.
+    """
+
+    record = Path("slurm", "submissions.json")
+    extra = sorted(
+        path
+        for path in _files_under(workspace) - _files_under(fresh)
+        if not (
+            path.parent == record.parent
+            and (path.suffix == ".slurm" or path.name == "scripts.json")
+        )
+    )
+    if not extra:
+        return
+    examples = ", ".join(str(path) for path in extra[:3])
+    running = " A Slurm submission record exists, so jobs may be queued or running." * (
+        record in extra
+    )
+    raise ValueError(
+        f"refusing to replace workflow workspace {workspace}: it holds {len(extra)} file(s) a "
+        f"fresh stage would not write, such as {examples}, which may be results.{running} "
+        "Copy what you need, or repeat with --force --discard-results to delete them."
+    )
+
+
+def stage_workflow(
+    manifest_path: str | Path, *, overwrite: bool = False, discard_results: bool = False
+) -> StagedWorkflow:
     source_manifest, manifest, source_root, workspace = load_project(manifest_path)
     manifest_hash = sha256_file(source_manifest)
     if not source_root.is_dir():
         raise FileNotFoundError(f"workflow project root is not a directory: {source_root}")
     if workspace.exists() and (not overwrite or not _workspace_is_managed(workspace)):
         raise ValueError(f"refusing existing or unmarked workflow workspace: {workspace}")
-    frames = _selected_frames(manifest, source_root, workspace)
+    frames, warnings = _selected_frames(manifest, source_root, workspace)
     templates = {step.id: _template_files(step, source_manifest.parent) for step in manifest.steps}
     for step in manifest.steps:
         _check_vasp_species(step, templates[step.id], frames)
@@ -685,7 +783,14 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
                 jobs.append(_rebase_job(job, temporary, workspace))
                 prior[step.id] = step
         result = StagedWorkflow(
-            manifest, source_manifest, manifest_hash, source_root, workspace, frames, tuple(jobs)
+            manifest,
+            source_manifest,
+            manifest_hash,
+            source_root,
+            workspace,
+            frames,
+            tuple(jobs),
+            warnings,
         )
         atomic_write_json(
             temporary / WORKSPACE_RECORD,
@@ -701,6 +806,8 @@ def stage_workflow(manifest_path: str | Path, *, overwrite: bool = False) -> Sta
             raise ValueError("workflow manifest changed while staging")
         if workspace.exists() and (not overwrite or not _workspace_is_managed(workspace)):
             raise ValueError(f"refusing to replace unmarked workflow workspace: {workspace}")
+        if workspace.exists() and not discard_results:
+            _check_no_results_lost(workspace, temporary)
         publish_directory(temporary, workspace)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -721,7 +828,7 @@ def load_staged_workflow(manifest_path: str | Path) -> StagedWorkflow:
     )
     if recorded != expected:
         raise ValueError("staged workflow no longer matches its manifest")
-    frames = _selected_frames(manifest, source_root, workspace)
+    frames, warnings = _selected_frames(manifest, source_root, workspace)
     jobs = tuple(
         _build_job(
             manifest, source_manifest.parent, frame, step, frame.workspace_directory / step.id
@@ -730,7 +837,7 @@ def load_staged_workflow(manifest_path: str | Path) -> StagedWorkflow:
         for step in manifest.steps
     )
     return StagedWorkflow(
-        manifest, source_manifest, manifest_hash, source_root, workspace, frames, jobs
+        manifest, source_manifest, manifest_hash, source_root, workspace, frames, jobs, warnings
     )
 
 

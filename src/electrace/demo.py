@@ -123,7 +123,7 @@ def generate_demo(destination: Path, *, overwrite: bool = False) -> Path:
                     "bond_critical_point",
                     (c_x + n_x) / 2,
                     neighbors=[0, 1],
-                    rho=0.06 + 0.025 * (index - 2),
+                    field=0.06 + 0.025 * (index - 2),
                     laplacian=0.18 - 0.07 * (index - 2),
                     icohp=-(0.4 + 0.55 * (index - 2)),
                 )
@@ -138,7 +138,6 @@ def generate_demo(destination: Path, *, overwrite: bool = False) -> Path:
                     charge=0.18 + 0.04 * (index - 4),
                     volume=1.1 + 0.15 * (index - 4),
                     neighbors=[0, 1],
-                    rho=0.045 + 0.005 * (index - 4),
                 )
             )
 

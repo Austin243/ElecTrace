@@ -308,3 +308,4 @@ class TrackingResult:
     feature_matches: tuple[MatchResult, ...]
     events: tuple[Event, ...]
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    descriptor_gaps: tuple[dict[str, Any], ...] = ()

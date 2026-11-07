@@ -382,6 +382,75 @@ def detect_transition_events(
     )
 
 
+# A descriptor output: its producer and, for a native file, the file name.
+_Source = tuple[str, str | None]
+_Gaps = Mapping[_Source | None, tuple[int, ...]]
+
+
+def _descriptor_coverage(sequence: Sequence) -> tuple[list[dict[str, _Source]], _Gaps]:
+    """Return each frame's feature-to-output map and the frames each output is missing from.
+
+    An output counts as missing only from a frame when another frame has it. A sequence
+    not loaded from files records no outputs, so nothing counts as missing.
+    """
+
+    frames = range(len(sequence.frames))
+    held = sequence.metadata.get("descriptor_evidence") or [{} for _ in frames]
+    source_of = [
+        {feature: source for source, features in item.items() for feature in features}
+        for item in held
+    ]
+    sources = sorted(
+        {source for item in held for source in item}, key=lambda item: (item[0], item[1] or "")
+    )
+    missing = {
+        source: tuple(position for position in frames if source not in held[position])
+        for source in sources
+    }
+    return source_of, {source: positions for source, positions in missing.items() if positions}
+
+
+def _unseen_source(
+    event: Event, position: int, source_of: list[dict[str, _Source]], gaps: _Gaps
+) -> _Source | None:
+    """Return the missing output that explains a birth or death at step *position*, if any.
+
+    A feature is unknown, not absent, in a frame without its producer's output, so its
+    track ending there or starting after there says nothing about the chemistry.
+    """
+
+    if event.event_type is EventType.DEATH:
+        source = source_of[position].get(str(event.source_ids[0]))
+        other = position + 1
+    elif event.event_type is EventType.BIRTH:
+        source = source_of[position + 1].get(str(event.target_ids[0]))
+        other = position
+    else:
+        return None
+    return source if other in gaps.get(source, ()) else None
+
+
+def _observable_end(
+    event: Event, transition_index: int, last: int, source_of: list[dict[str, _Source]], gaps: _Gaps
+) -> int:
+    """Return the last frame position where an event's outcome can be followed.
+
+    The outcome is its target features or, for a death, the absence of its source feature.
+    """
+
+    after = transition_index + 1
+    followed = [(after, item) for item in event.target_ids] or [
+        (transition_index, item) for item in event.source_ids
+    ]
+    later = [
+        position
+        for frame, item in followed
+        for position in gaps.get(source_of[frame].get(str(item)), ())
+        if position > after
+    ]
+    return min(later) - 1 if later else last
+
+
 def _next_lineage(ids: set[str], result: MatchResult) -> set[str]:
     """Advance a lineage only when every current participant has a match."""
 
@@ -399,7 +468,7 @@ def _next_lineage(ids: set[str], result: MatchResult) -> set[str]:
 def _consecutive_persistence(
     event: Event,
     transition_index: int,
-    frames: TypingSequence[Frame],
+    observable_end: int,
     matches: TypingSequence[MatchResult],
 ) -> tuple[int, int]:
     """Count consecutive frames with a surviving target or absent source lineage."""
@@ -418,7 +487,7 @@ def _consecutive_persistence(
 
     # Feature identifiers are frame-local, so a later reuse of the same label is
     # not evidence that the ended lineage reappeared.
-    return len(frames) - transition_index - 1, len(frames) - 1
+    return observable_end - transition_index, observable_end
 
 
 def _annotate_persistence(
@@ -426,6 +495,8 @@ def _annotate_persistence(
     frames: TypingSequence[Frame],
     matches: TypingSequence[MatchResult],
     config: EventDetectionConfig,
+    source_of: list[dict[str, _Source]],
+    gaps: _Gaps,
 ) -> list[Event]:
     transition_by_frames = {
         (frame.index, next_frame.index): index
@@ -434,10 +505,12 @@ def _annotate_persistence(
     annotated: list[Event] = []
     for event in events:
         transition_index = transition_by_frames[event.frame_before, event.frame_after]
+        # A frame missing the features' output ends what can be observed, as the path's end does.
+        observable_end = _observable_end(event, transition_index, len(frames) - 1, source_of, gaps)
         persistence, end_position = _consecutive_persistence(
-            event, transition_index, frames, matches
+            event, transition_index, observable_end, matches
         )
-        maximum_observable = len(frames) - transition_index - 1
+        maximum_observable = observable_end - transition_index
         metadata = dict(event.metadata)
         evidence = dict(event.evidence)
         evidence["minimum_persistence"] = config.min_persistence
@@ -445,7 +518,7 @@ def _annotate_persistence(
         if persistence >= config.min_persistence:
             status = "confirmed"
             confidence = event.confidence
-        elif end_position == len(frames) - 1 and maximum_observable < config.min_persistence:
+        elif end_position == observable_end and maximum_observable < config.min_persistence:
             status = "right_censored"
             confidence = event.confidence * 0.85
         else:
@@ -479,15 +552,24 @@ def track_sequence(
     atom_results: list[MatchResult] = []
     feature_results: list[MatchResult] = []
     raw_events: list[Event] = []
-    for previous, current in pairwise(sequence.frames):
+    source_of, gaps = _descriptor_coverage(sequence)
+    left_out: Counter[tuple[_Source, str]] = Counter()
+    for position, (previous, current) in enumerate(pairwise(sequence.frames)):
         atoms = match_atoms(previous, current, atom_settings)
         features = match_features(previous, current, atoms, feature_settings)
         atom_results.append(atoms)
         feature_results.append(features)
-        raw_events.extend(
-            detect_transition_events(previous, current, features, settings, atom_matches=atoms)
-        )
-    events = _annotate_persistence(raw_events, sequence.frames, feature_results, settings)
+        for event in detect_transition_events(
+            previous, current, features, settings, atom_matches=atoms
+        ):
+            source = _unseen_source(event, position, source_of, gaps)
+            if source is None:
+                raw_events.append(event)
+            else:
+                left_out[(source, event.event_type.value)] += 1
+    events = _annotate_persistence(
+        raw_events, sequence.frames, feature_results, settings, source_of, gaps
+    )
     return TrackingResult(
         atom_matches=tuple(atom_results),
         feature_matches=tuple(feature_results),
@@ -499,6 +581,20 @@ def track_sequence(
             "reported_events": len(events),
             "minimum_persistence": settings.min_persistence,
         },
+        descriptor_gaps=tuple(
+            {
+                "producer": source[0],
+                "file": source[1],
+                "frames": [sequence.frames[position].index for position in positions],
+                "frame_labels": [sequence.frames[position].label for position in positions],
+                "events_left_out": {
+                    kind: left_out[(source, kind)]
+                    for kind in (EventType.BIRTH.value, EventType.DEATH.value)
+                },
+            }
+            for source, positions in gaps.items()
+            if source is not None
+        ),
     )
 
 

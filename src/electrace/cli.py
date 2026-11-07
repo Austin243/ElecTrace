@@ -183,6 +183,15 @@ def _analysis_warnings(analysis: dict[str, Any]) -> tuple[str, ...]:
     return tuple(str(item) for item in analysis.get("warnings", []))
 
 
+def _warning_lines(warnings: Sequence[str]) -> tuple[str, ...]:
+    return tuple(f"[yellow]Warning:[/yellow] {escape(warning)}" for warning in warnings)
+
+
+def _frame_order_line(analysis: dict[str, Any]) -> str:
+    labels = (str(frame["label"]) for frame in analysis["frames"])
+    return f"Frame order: {escape(', '.join(labels))}"
+
+
 def _discover_frames(root: Path, settings: ElecTraceConfig) -> tuple[FrameSource, ...]:
     return discover_path(
         root,
@@ -337,7 +346,9 @@ def analyze(
         f"[green]Analysis complete[/green]: {artifacts.output_directory}",
         f"{len(analysis['frames'])} frames · {len(analysis['tracks'])} feature observations · "
         f"{len(analysis['events'])} events · {len(analysis['warnings'])} warnings",
+        _frame_order_line(analysis),
         *(f"  [dim]{item.name}[/dim]" for item in artifacts.files),
+        *_warning_lines(_analysis_warnings(analysis)),
         warnings=_analysis_warnings(analysis),
     )
 
@@ -366,7 +377,7 @@ def _print_analysis_summary(analysis: dict[str, Any]) -> None:
     if warnings:
         console.print(f"[yellow]{len(warnings)} warning(s)[/yellow]")
         for warning in warnings:
-            console.print(f"  - {warning}")
+            console.print(f"  - {escape(str(warning))}")
 
 
 @app.command()
@@ -395,6 +406,7 @@ def inspect(
         _fail("inspect", as_json, "Expected electrace.toml, analysis.json, or an input directory")
     with _report_errors("inspect", as_json):
         sequence = load_sequence(target)
+    series_warnings = sequence.metadata["discovery_warnings"]
     if as_json:
         _emit_json(
             "inspect",
@@ -412,6 +424,7 @@ def inspect(
                     for frame in sequence.frames
                 ],
             },
+            warnings=series_warnings,
         )
         return
     table = Table(title=f"Ordered series: {target.name}")
@@ -429,6 +442,8 @@ def inspect(
             "—" if frame.energy is None else f"{frame.energy:.6f}",
         )
     console.print(table)
+    for line in _warning_lines(series_warnings):
+        console.print(line)
 
 
 @app.command()
@@ -465,6 +480,8 @@ def figure(
         )
     except ImportError as exc:
         _fail("figure", as_json, str(exc), error_code="missing_dependency")
+    except KeyError as exc:
+        _fail("figure", as_json, f"the analysis has a record without {exc}")
     except (OSError, TypeError, ValueError) as exc:
         _fail_exception(exc, "figure", as_json)
     warnings = payload.pop("warnings")
@@ -653,7 +670,7 @@ def workflow_validate(
         f"{len(validation.selected_frames)} selected frames",
         f"Workspace: {validation.workspace}",
         f"Scheduler: {validation.scheduler.kind}",
-        *(f"[yellow]Warning:[/yellow] {escape(warning)}" for warning in validation.warnings),
+        *_warning_lines(validation.warnings),
         warnings=validation.warnings,
     )
 
@@ -661,19 +678,32 @@ def workflow_validate(
 @workflow_app.command("stage")
 def workflow_stage(
     manifest: Path = typer.Argument(...),
-    force: bool = typer.Option(False, "--force"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing ElecTrace workspace, unless it holds files a fresh stage "
+        "would not write.",
+    ),
+    discard_results: bool = typer.Option(
+        False,
+        "--discard-results",
+        help="With --force, also delete those files: job outputs, logs, run and Slurm "
+        "records, and collected analyses. Queued or running jobs lose their directories.",
+    ),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Select frames and stage auditable jobs without executing anything."""
 
     with _report_errors("workflow.stage", as_json, KeyError):
-        staged = stage_workflow(manifest, overwrite=force)
+        staged = stage_workflow(manifest, overwrite=force, discard_results=discard_results)
     _finish(
         "workflow.stage",
         staged.to_dict(),
         as_json,
         f"[green]Staged[/green] {len(staged.jobs)} jobs in {staged.workspace}",
         f"Selected frames: {', '.join(frame.label for frame in staged.frames)}",
+        *_warning_lines(staged.warnings),
+        warnings=staged.warnings,
     )
 
 
@@ -852,6 +882,8 @@ def workflow_analyze(
         f"[green]Workflow analysis complete[/green]: {artifacts.output_directory}",
         f"{len(analysis['frames'])} frames · {len(analysis['tracks'])} feature observations · "
         f"{len(analysis['events'])} events · {len(analysis['warnings'])} warnings",
+        _frame_order_line(analysis),
+        *_warning_lines(_analysis_warnings(analysis)),
         warnings=_analysis_warnings(analysis),
     )
 

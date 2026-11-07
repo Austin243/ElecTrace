@@ -359,6 +359,28 @@
       },
       "additionalProperties": false
     },
+    "missing_descriptors": {
+      "type": "array",
+      "description": "Present only when a descriptor output exists in some frames and not others. Its features are unknown in those frames, not absent, so births and deaths that only the missing output explains are left out of events and counted here.",
+      "items": {
+        "type": "object",
+        "required": ["producer", "file", "frames", "frame_labels", "events_left_out"],
+        "properties": {
+          "producer": {"type": "string"},
+          "file": {"type": ["string", "null"]},
+          "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+          "frame_labels": {"type": "array", "items": {"type": "string"}},
+          "events_left_out": {
+            "type": "object",
+            "required": ["birth", "death"],
+            "properties": {
+              "birth": {"type": "integer", "minimum": 0},
+              "death": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
+      }
+    },
     "suppressed_events": {
       "type": "object",
       "description": "Present only with events.critical_point_min_field: the cutoffs, and how many births, deaths, and connectivity changes of weaker critical points were left out of events, per kind and event type, over every atom before any focus. Reporting only.",

@@ -68,10 +68,10 @@ _HTML = """<!doctype html>
     .chart-note { font-size: .82rem; margin: .6rem 0 0; }
     .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
     .timeline { display: grid; gap: .45rem; }
-    .event { display: grid; grid-template-columns: 6.5rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
+    .event { display: grid; grid-template-columns: 8rem 7rem minmax(0, 1fr) 5.5rem; gap: .7rem; align-items: center; border-top: 1px solid var(--line); padding: .75rem .2rem; }
     .event:first-child { border-top: 0; }
     .badge { border: 1px solid currentColor; border-radius: 999px; padding: .2rem .55rem; width: fit-content; font: 700 .7rem ui-monospace, monospace; text-transform: uppercase; }
-    .birth { color: var(--green); } .death { color: var(--red); } .split, .merge { color: var(--violet); } .change, .descriptor_change, .connectivity_change { color: var(--amber); }
+    .birth { color: var(--green); } .death { color: var(--red); } .split, .merge, .rearrangement { color: var(--violet); } .change, .property_change, .connectivity_change { color: var(--amber); }
     .confidence { height: 5px; background: #1b3040; border-radius: 10px; overflow: hidden; margin-top: .25rem; }
     .confidence i { display:block; height:100%; background: var(--cyan); }
     .muted { color: var(--muted); }
@@ -85,7 +85,7 @@ _HTML = """<!doctype html>
     pre { overflow: auto; background: #07131d; border: 1px solid var(--line); padding: .8rem; border-radius: 8px; font-size: .74rem; }
     .scroll { overflow-x: auto; }
     footer { color: var(--muted); text-align: center; font-size: .78rem; padding: 1.5rem; }
-    @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .grid { grid-template-columns: 1fr; } .event { grid-template-columns: 5.5rem 5rem 1fr; } .event > :last-child { display:none; } }
+    @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .grid { grid-template-columns: 1fr; } .event { grid-template-columns: 8rem 5rem 1fr; } .event > :last-child { display:none; } }
   </style>
 </head>
 <body>
@@ -231,16 +231,25 @@ _HTML = """<!doctype html>
       parts.push("The counts use every critical point, before any density cutoff or focus.");
       return `<p class="muted">${parts.join(" ")}</p>`;
     })() : "";
-    document.getElementById("timeline").innerHTML = cpNote + suppressedNote + (events.length ? events.map(e=>{
+    // Births and deaths at frames without a producer's output are left out of events.
+    const gaps = data.missing_descriptors || [];
+    const gapNote = gaps.map(g => {
+      const left = [["death", g.events_left_out?.death], ["birth", g.events_left_out?.birth]].filter(([, n]) => n).map(([kind, n]) => `${n} ${kind}${n === 1 ? "" : "s"}`).join(" and ");
+      const output = `${g.producer} output${g.file ? ` ${g.file}` : ""}`;
+      return `<p class="muted">${esc(`${output} is missing from frame ${(g.frame_labels || []).join(", ")}, so its features are unknown there, not absent, and a change across that frame is not reported.${left ? ` Not listed: ${left} there.` : ""}`)}</p>`;
+    }).join("");
+    document.getElementById("timeline").innerHTML = gapNote + cpNote + suppressedNote + (events.length ? events.map(e=>{
       const type=String(e.type||"change").toLowerCase(), confidence=Math.max(0,Math.min(1,Number(e.confidence||0)));
       const confidenceLabel=String(e.confidence_label||"unclassified").toLowerCase();
       const frameLabel = index => frames.find(f => f.index === index)?.label ?? index ?? "—";
-      const span=type === "connectivity_change" ? `${frameLabel(e.frame_before)}→${frameLabel(e.frame_after)}` : (e.end_frame!=null && e.end_frame!==e.start_frame ? `${e.start_frame}→${e.end_frame}` : String(e.start_frame ?? "—"));
+      // The step the change happened on; a matched connectivity change makes no claim past it.
+      const span=`${frameLabel(e.frame_before)}→${frameLabel(e.frame_after)}`;
+      const holds=type !== "connectivity_change" && e.end_frame!=null && e.end_frame!==e.frame_after ? `<br><small>holds through ${esc(frameLabel(e.end_frame))}</small>` : "";
       const badge=type === "connectivity_change" ? "connectivity" : type;
       const evidence=type === "connectivity_change" ? connectivityEvidence(e) : `<div class="confidence"><i style="width:${confidence*100}%"></i></div>`;
       const status=type === "connectivity_change" ? "review" : `${esc(confidenceLabel)} ${fmt(confidence,2)}`;
       const place=placeLabels[e.barrier_position] ? `<br><small>${esc(placeLabels[e.barrier_position])}</small>` : "";
-      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
+      return `<div class="event"><span class="badge ${esc(type)}">${esc(badge)}</span><span class="muted">frame ${esc(span)}${holds}${place}</span><div><div>${esc(e.description || `${type} event`)}</div>${evidence}${noiseNote(e)}</div><span>${status}</span></div>`;
     }).join('') : '<div class="empty">No persistent electronic events were detected.</div>');
 
     function noiseNote(e) {
@@ -319,11 +328,15 @@ _HTML = """<!doctype html>
       const heads = {field: "Field", laplacian: "Laplacian", icohp: "ICOHP (eV)", icobi: "ICOBI"};
       const shown = Object.keys(heads).filter(q => bonds.some(b => b[q] != null));
       // A row begins or ends where the neighboring frame has no row for that bond.
+      // A frame missing the output behind a row cannot show that its bond began or ended.
       const present = new Set(bonds.map(b => `${b.bond_id}@${position(b.frame)}`));
+      const producers = new Map(gaps.length ? tracks.map(t => [`${t.frame}@${t.feature_id}`, t.attributes?.descriptor_producer]) : []);
+      const unseen = (b, i) => gaps.some(g => (g.frames || []).includes(frames[i].index) && (b.feature_ids || []).some(id => producers.get(`${b.frame}@${id}`) === g.producer));
+      const absent = (b, i) => !present.has(`${b.bond_id}@${i}`) && !unseen(b, i);
       const last = frames.length - 1;
       const body = bonds.map(b => {
         const i = position(b.frame);
-        const marks = [i > 0 && !present.has(`${b.bond_id}@${i-1}`) ? "begins" : "", i < last && !present.has(`${b.bond_id}@${i+1}`) ? "ends" : ""].filter(Boolean).join(", ");
+        const marks = [i > 0 && absent(b, i-1) ? "begins" : "", i < last && absent(b, i+1) ? "ends" : ""].filter(Boolean).join(", ");
         return `<tr><td>${esc(b.element_a)}[${esc(b.atom_a)}]–${esc(b.element_b)}[${esc(b.atom_b)}] <small class="muted">${esc(b.bond_id)}</small></td><td>${esc(frameName(b.frame))}${marks ? ` <small class="muted">${marks}</small>` : ""}</td><td>${fmt(b.distance)}</td>${shown.map(q => `<td>${fmt(b[q], 4)}</td>`).join("")}<td>${esc((b.track_ids || []).join(", "))}</td></tr>`;
       }).join("");
       return `<p class="muted">One row per atom pair, periodic image, and frame for each feature tied to exactly two atoms, such as a critic2 bond critical point or a LOBSTER bond; features on one pair and image are joined. Atoms are 0-based POSCAR indices. Distance is the minimum image unless the feature names a lattice translation. Field and Laplacian are critic2's values at the critical point in its units; ICOHP is in eV. Rows begin or end where no feature ties a pair, so a bond that forms or breaks, or a critical point that moves to another pair, starts or stops rows; rows are never joined across pairs, although one feature track can cross several.</p><div class="scroll"><table><thead><tr><th>Atoms</th><th>Frame</th><th>Distance (Å)</th>${shown.map(q => `<th>${heads[q]}</th>`).join("")}<th>Tracks</th></tr></thead><tbody>${body}</tbody></table></div>`;
