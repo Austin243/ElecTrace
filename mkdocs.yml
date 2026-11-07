@@ -4,6 +4,9 @@ site_url: https://Austin243.github.io/ElecTrace/
 repo_url: https://github.com/Austin243/ElecTrace
 repo_name: Austin243/ElecTrace
 strict: true
+# The README banner and its sources stay out of the site.
+exclude_docs: |
+  figures/
 theme:
   name: material
   features:
